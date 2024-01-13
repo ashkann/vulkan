@@ -15,6 +15,8 @@ import Control.Exception (bracket, bracket_)
 import Control.Monad.Except (ExceptT (ExceptT), MonadError (throwError), runExceptT)
 import Control.Monad.Extra (whileM)
 import Control.Monad.Managed (Managed, MonadIO (liftIO), MonadManaged, managed, managed_, runManaged)
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.Maybe
 import Data.Bits (testBit, (.&.), (.|.))
 import Data.ByteString qualified as BS (readFile)
 import Data.ByteString.Char8 qualified as BS (pack, unpack)
@@ -24,7 +26,7 @@ import Data.Functor ((<&>))
 import Data.Traversable (for)
 import Data.Vector qualified as V
 import Data.Vector.Storable qualified as SV
-import Foreign (Bits (zeroBits), Ptr, Word32, castPtr, copyArray, withForeignPtr)
+import Foreign (Bits (zeroBits), Word32, castPtr, copyArray, withForeignPtr)
 import Foreign.C (peekCAString, peekCString)
 import Foreign.Storable (sizeOf)
 import SDL qualified
@@ -33,7 +35,9 @@ import Vulkan qualified as Vk
 import Vulkan qualified as VkApplicationInfo (ApplicationInfo (..))
 import Vulkan qualified as VkAttachmentDescription (AttachmentDescription (..))
 import Vulkan qualified as VkAttachmentReference (AttachmentReference (..))
+import Vulkan qualified as VkBufferCopy (BufferCopy (..))
 import Vulkan qualified as VkBufferCreateInfo (BufferCreateInfo (..))
+import Vulkan qualified as VkCommandBufferAllocateInfo (CommandBufferAllocateInfo (..))
 import Vulkan qualified as VkCommandBufferBeginInfo (CommandBufferBeginInfo (..))
 import Vulkan qualified as VkCommandPoolCreateInfo (CommandPoolCreateInfo (..))
 import Vulkan qualified as VkComponentMapping (ComponentMapping (..))
@@ -104,46 +108,20 @@ main = runManaged $ do
       windowHeight
   say "Vulkan" "Creating vertex buffer"
   (imageAvailable, renderFinished) <- createSemaphores device
-  let vertices =
-        SV.fromList
-          [ -- v0
-            0.0, -- x
-            -0.5, -- y
-            1.0, -- r
-            0, -- g
-            0, -- b
-            -- v1
-            0.5,
-            0.5,
-            0,
-            1.0,
-            0,
-            -- v2
-            -0.5,
-            0.5,
-            0,
-            0,
-            1.0,
-            -- v3
-            -0.5,
-            -0.5,
-            0.5,
-            0.5,
-            0.5
-          ] ::
-          SV.Vector Float
-  let (src, len) = SV.unsafeToForeignPtr0 vertices
-  say "Game" $
-    "Vertex buffer address: " ++ show src ++ ", size: " ++ show len
-  vertexBuffer <- withVertexBuffer device 1024
   say "Vulkan" "Vertex Buffer created"
-  dst <-
-    withVertexBuffer2 gpu device vertexBuffer >>= \case
+  commandPool <-
+    let info =
+          Vk.zero
+            { VkCommandPoolCreateInfo.queueFamilyIndex = gfx,
+              VkCommandPoolCreateInfo.flags = Vk.COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT
+            }
+     in managed $ Vk.withCommandPool device info Nothing bracket
+  say "Vulkan" "Created command pool"
+  vertexBuffer <-
+    runMaybeT (withVertexBuffer gpu device commandPool gfxQueue) >>= \case
       Just x -> return x
       Nothing -> sayErr "Vulkan" "Failed to create vertex buffer"
-  say "Vulkan" "Vertex buffer created, allocated and mapped"
-  liftIO . withForeignPtr src $ \s -> copyArray (castPtr dst) s len
-  commandBuffers <- createCommandBuffers device gfx extent imageViews vertexBuffer
+  commandBuffers <- createCommandBuffers device commandPool extent imageViews vertexBuffer
   say "Game" "Show window"
   SDL.showWindow window
   SDL.raiseWindow window
@@ -160,20 +138,10 @@ main = runManaged $ do
         commandBuffers
   Vk.deviceWaitIdle device
 
-withVertexBuffer :: (MonadManaged m) => Vk.Device -> Vk.DeviceSize -> m Vk.Buffer
-withVertexBuffer device size =
-  let info =
-        Vk.zero
-          { VkBufferCreateInfo.size = size,
-            VkBufferCreateInfo.usage = Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT,
-            VkBufferCreateInfo.sharingMode = Vk.SHARING_MODE_EXCLUSIVE
-          }
-   in managed $ Vk.withBuffer device info Nothing bracket
-
-say :: (MonadIO m) => String -> String -> m ()
+say :: (MonadIO io) => String -> String -> io ()
 say prefix msg = liftIO . putStrLn $ prefix ++ ": " ++ msg
 
-sayErr :: (MonadIO m) => String -> String -> m a
+sayErr :: (MonadIO io) => String -> String -> io a
 sayErr prefix msg = liftIO . throwError . userError $ prefix ++ ": " ++ msg
 
 withDebug :: Vk.Instance -> Managed ()
@@ -199,20 +167,20 @@ debugUtilsMessengerCreateInfo =
 
 createCommandBuffers ::
   Vk.Device ->
-  Word32 ->
+  Vk.CommandPool ->
   VkExtent2D.Extent2D ->
   V.Vector Vk.ImageView ->
   Vk.Buffer ->
   Managed (V.Vector Vk.CommandBuffer)
-createCommandBuffers device gfx extent imageViews vertexBuffer = do
-  say "Vulkan" "Creating render pass"
+createCommandBuffers device pool extent imageViews vertexBuffer = do
   renderPass <- createRenderPass device
-  say "Vulkan" "Creating pipeline"
+  say "Vulkan" "Created render pass"
   pipeline <- withPipeline device renderPass extent
-  say "Vulkan" "Creating framebuffers"
+  say "Vulkan" "Created pipeline"
   framebuffers <- withFramebuffers renderPass
-  say "Vulkan" "Creating comamand buffers"
-  commandBuffers <- withCommandBuffers framebuffers
+  say "Vulkan" "Created framebuffers"
+  commandBuffers <- withCommandBuffers pool (V.length framebuffers)
+  say "Vulkan" "Created comamand buffers"
   _ <- liftIO . for (V.zip framebuffers commandBuffers) $ use renderPass pipeline
   return commandBuffers
   where
@@ -227,69 +195,160 @@ createCommandBuffers device gfx extent imageViews vertexBuffer = do
                   VkFramebufferCreateInfo.layers = 1
                 }
          in managed $ Vk.withFramebuffer device inf Nothing bracket
-    withCommandBuffers framebuffers = do
-      let inf1 = Vk.zero {VkCommandPoolCreateInfo.queueFamilyIndex = gfx}
-      commandPool <- managed $ Vk.withCommandPool device inf1 Nothing bracket
-      let inf2 =
+    withCommandBuffers commandPool count = do
+      let info =
             Vk.zero
               { Vk.commandPool = commandPool,
                 Vk.level = Vk.COMMAND_BUFFER_LEVEL_PRIMARY,
-                Vk.commandBufferCount = fromIntegral $ V.length framebuffers
+                Vk.commandBufferCount = fromIntegral count
               }
-      managed $ Vk.withCommandBuffers device inf2 bracket
-    use renderPass pipeline (framebuffer, commandBuffer) =
-      let render = do
-            Vk.cmdBindPipeline
-              commandBuffer
-              Vk.PIPELINE_BIND_POINT_GRAPHICS
-              pipeline
-            Vk.cmdBindVertexBuffers commandBuffer 0 [vertexBuffer] [0]
-            Vk.cmdDraw commandBuffer 4 1 0 0
-          pass =
-            Vk.cmdUseRenderPass
-              commandBuffer
-              ( Vk.zero
-                  { VkRenderPassBeginInfo.renderPass = renderPass,
-                    VkRenderPassBeginInfo.framebuffer = framebuffer,
-                    VkRenderPassBeginInfo.renderArea = Vk.Rect2D {VkRect2D.offset = Vk.zero, VkRect2D.extent = extent},
-                    VkRenderPassBeginInfo.clearValues = [Vk.Color (Vk.Float32 0.1 0.1 0.1 0)]
-                  }
-              )
-              Vk.SUBPASS_CONTENTS_INLINE
-              render
-       in Vk.useCommandBuffer
+       in managed $ Vk.withCommandBuffers device info bracket
+    use renderPass pipeline (framebuffer, commandBuffer) = Vk.useCommandBuffer commandBuffer info pass
+      where
+        info = Vk.zero {VkCommandBufferBeginInfo.flags = Vk.COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT}
+        pass =
+          Vk.cmdUseRenderPass
             commandBuffer
-            Vk.zero {VkCommandBufferBeginInfo.flags = Vk.COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT}
-            pass
+            subpass
+            Vk.SUBPASS_CONTENTS_INLINE
+            render
+        render = do
+          Vk.cmdBindPipeline commandBuffer Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
+          Vk.cmdBindVertexBuffers commandBuffer 0 [vertexBuffer] [0]
+          Vk.cmdDraw commandBuffer 4 1 0 0
+        subpass =
+          Vk.zero
+            { VkRenderPassBeginInfo.renderPass = renderPass,
+              VkRenderPassBeginInfo.framebuffer = framebuffer,
+              VkRenderPassBeginInfo.renderArea = Vk.Rect2D {VkRect2D.offset = Vk.zero, VkRect2D.extent = extent},
+              VkRenderPassBeginInfo.clearValues = [Vk.Color (Vk.Float32 0.0 0.0 0.0 0)]
+            }
 
-withVertexBuffer2 :: Vk.PhysicalDevice -> Vk.Device -> Vk.Buffer -> Managed (Maybe (Ptr ()))
-withVertexBuffer2 gpu device buffer = do
-  req <- Vk.getBufferMemoryRequirements device buffer
-  let size = VkMemoryRequirements.size req
-  props <- Vk.getPhysicalDeviceMemoryProperties gpu
-  case findMem req props of
-    Nothing -> return Nothing
-    Just (index, _) -> do
-      mem <- allocMem index size
-      say "Vulkan" "Memory allocated for buffer"
-      Vk.bindBufferMemory device buffer mem 0
-      say "Vulkan" "Buffer memory bound"
-      ptr <- managed $ Vk.withMappedMemory device mem 0 size (Vk.MemoryMapFlags 0) bracket
-      say "Vulkan" "Buffer memory mapped"
-      return $ Just ptr
+withVertexBuffer :: Vk.PhysicalDevice -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> MaybeT Managed Vk.Buffer
+withVertexBuffer gpu device pool queue = do
+  let size = 1024
+  (stagingBuffer, stagingBufferMemory) <-
+    withBuffer2
+      gpu
+      device
+      size
+      Vk.BUFFER_USAGE_TRANSFER_SRC_BIT
+      (Vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. Vk.MEMORY_PROPERTY_HOST_COHERENT_BIT)
+
+  _ <-
+    let action ptr = do
+          say "Vulkan" "Statging Buffer memory mapped"
+          let (src, len) = SV.unsafeToForeignPtr0 vertices
+          liftIO . withForeignPtr src $ \s -> copyArray (castPtr ptr) s len
+          say "Game" "Copied vertices into staging buffer"
+     in liftIO $
+          Vk.withMappedMemory
+            device
+            stagingBufferMemory
+            0
+            size
+            (Vk.MemoryMapFlags 0)
+            bracket
+            action
+
+  (vertexBuffer, _) <-
+    withBuffer2
+      gpu
+      device
+      1024
+      (Vk.BUFFER_USAGE_TRANSFER_DST_BIT .|. Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT)
+      Vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+
+  lift $ copyBuffer device pool queue stagingBuffer vertexBuffer size
+
+  return vertexBuffer
   where
-    findMem req props = do
+    vertices =
+      SV.fromList
+        [ -- v0
+          0.0, -- x
+          -0.5, -- y
+          1.0, -- r
+          0, -- g
+          0, -- b
+          -- v1
+          0.5,
+          0.5,
+          0,
+          1.0,
+          0,
+          -- v2
+          -0.5,
+          0.5,
+          0,
+          0,
+          1.0,
+          -- v3
+          -0.5,
+          -0.5,
+          0.5,
+          0.5,
+          0.5
+        ] ::
+        SV.Vector Float
+
+copyBuffer :: Vk.Device -> Vk.CommandPool -> Vk.Queue -> Vk.Buffer -> Vk.Buffer -> Vk.DeviceSize -> Managed ()
+copyBuffer device pool queue src dst size = do
+  buffer <-
+    let info =
+          Vk.zero
+            { VkCommandBufferAllocateInfo.level = Vk.COMMAND_BUFFER_LEVEL_PRIMARY,
+              VkCommandBufferAllocateInfo.commandPool = pool,
+              VkCommandBufferAllocateInfo.commandBufferCount = 1
+            }
+     in V.head <$> managed (Vk.withCommandBuffers device info bracket)
+  let info = Vk.zero {VkCommandBufferBeginInfo.flags = Vk.COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT}
+      copy = Vk.zero {VkBufferCopy.srcOffset = 0, VkBufferCopy.dstOffset = 0, VkBufferCopy.size = size}
+   in Vk.useCommandBuffer buffer info $ Vk.cmdCopyBuffer buffer src dst [copy]
+  let info = Vk.zero {VkSubmitInfo.commandBuffers = [Vk.commandBufferHandle buffer]}
+   in Vk.queueSubmit queue [Vk.SomeStruct info] Vk.NULL_HANDLE
+  Vk.queueWaitIdle queue
+
+withBuffer :: (MonadManaged m) => Vk.Device -> Vk.DeviceSize -> Vk.BufferUsageFlagBits -> m Vk.Buffer
+withBuffer device size usage =
+  let info =
+        Vk.zero
+          { VkBufferCreateInfo.size = size,
+            VkBufferCreateInfo.usage = usage,
+            VkBufferCreateInfo.sharingMode = Vk.SHARING_MODE_EXCLUSIVE
+          }
+   in managed $ Vk.withBuffer device info Nothing bracket
+
+withBuffer2 ::
+  Vk.PhysicalDevice ->
+  Vk.Device ->
+  Vk.DeviceSize ->
+  Vk.BufferUsageFlagBits ->
+  Vk.MemoryPropertyFlags ->
+  MaybeT Managed (Vk.Buffer, Vk.DeviceMemory)
+withBuffer2 gpu device size usage flags = do
+  buffer <- withBuffer device size usage
+  say "Vulkan" $ "Created buffer of size" ++ show size
+  req <- Vk.getBufferMemoryRequirements device buffer
+  (index, _) <- findMemType req
+  mem <- allocMem index $ VkMemoryRequirements.size req
+  say "Vulkan" "Memory allocated for buffer"
+  Vk.bindBufferMemory device buffer mem 0
+  say "Vulkan" "Buffer memory bound"
+  return (buffer, mem)
+  where
+    findMemType req = do
+      props <- Vk.getPhysicalDeviceMemoryProperties gpu
       let bits = VkMemoryRequirements.memoryTypeBits req
-          flags = Vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. Vk.MEMORY_PROPERTY_HOST_COHERENT_BIT
           good (i, typ) = (VkMemoryType.propertyFlags typ .&. flags == flags) && (bits `testBit` i)
           memTypes = zip [0 ..] (Vk.toList . Vk.memoryTypes $ props)
-      find good memTypes
+      MaybeT . pure $ find good memTypes
 
-    allocMem index size =
+    allocMem i s =
       let info =
             Vk.zero
-              { VkMemoryAllocateInfo.memoryTypeIndex = fromIntegral index,
-                VkMemoryAllocateInfo.allocationSize = size
+              { VkMemoryAllocateInfo.memoryTypeIndex = fromIntegral i,
+                VkMemoryAllocateInfo.allocationSize = s
               }
        in managed $ Vk.withMemory device info Nothing bracket
 

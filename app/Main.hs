@@ -122,10 +122,10 @@ main = runManaged $ do
       Just x -> return x
       Nothing -> sayErr "Vulkan" "Failed to create vertex buffer"
   commandBuffers <- createCommandBuffers device commandPool extent imageViews vertexBuffer
-  say "Game" "Show window"
+  say "Engine" "Show window"
   SDL.showWindow window
   SDL.raiseWindow window
-  say "Game" "Entering the main loop"
+  say "Engine" "Entering the main loop"
   liftIO $
     mainLoop $
       drawFrame
@@ -240,7 +240,7 @@ withVertexBuffer gpu device pool queue = do
           say "Vulkan" "Statging Buffer memory mapped"
           let (src, len) = SV.unsafeToForeignPtr0 vertices
           liftIO . withForeignPtr src $ \s -> copyArray (castPtr ptr) s len
-          say "Game" "Copied vertices into staging buffer"
+          say "Engine" "Copied vertices into staging buffer"
      in liftIO $
           Vk.withMappedMemory
             device

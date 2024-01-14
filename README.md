@@ -14,3 +14,4 @@ stack run
 - [ ] Allocate both index and vertex buffers in one buffer
 - [ ] More than one in-flight frame
 - [ ] Some memory is not properly freed before vulkan instance is destroyed
+- [ ] Don't map/unmap memory for vertex/index buffers every frame. Instead map/unmap once and just copy the data every frame

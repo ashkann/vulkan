@@ -26,7 +26,7 @@ import Data.Traversable (for)
 import Data.Vector ((!))
 import Data.Vector qualified as V
 import Data.Vector.Storable qualified as SV
-import Foreign (Bits (zeroBits), Word32, castPtr, copyArray, withForeignPtr)
+import Foreign (Bits (zeroBits), Storable, Word32, castPtr, copyArray, withForeignPtr)
 import Foreign.C (peekCAString, peekCString)
 import Foreign.Storable (sizeOf)
 import SDL qualified
@@ -146,13 +146,14 @@ main = runManaged $ do
               0.5
             ] ::
             SV.Vector Float
-     in runMaybeT (withVertexBuffer gpu device commandPool gfxQueue vertices) >>= \case
-          Just x -> return x
-          Nothing -> sayErr "Vulkan" "Failed to create vertex buffer"
+     in runMaybeT (withBuffer2 gpu device commandPool gfxQueue Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT vertices)
+          >>= \case
+            Just x -> return x
+            Nothing -> sayErr "Vulkan" "Failed to create vertex buffer"
   say "Vulkan" "Created vertex buffer"
   indexBuffer <-
     let indecies = SV.fromList [0, 1, 2, 2, 3, 0] :: SV.Vector Word32
-     in runMaybeT (withIndexBuffer gpu device commandPool gfxQueue indecies) >>= \case
+     in runMaybeT (withBuffer2 gpu device commandPool gfxQueue Vk.BUFFER_USAGE_INDEX_BUFFER_BIT indecies) >>= \case
           Just x -> return x
           Nothing -> sayErr "Vulkan" "Failed to create index buffer"
   say "Vulkan" "Created index buffer"
@@ -267,16 +268,18 @@ createCommandBuffers device pool extent imageViews vertexBuffer indexBuffer = do
           Vk.cmdBindIndexBuffer commandBuffer indexBuffer 0 Vk.INDEX_TYPE_UINT32
           Vk.cmdDrawIndexed commandBuffer 6 1 0 0 0
 
-withVertexBuffer ::
+withBuffer2 ::
+  (Storable a) =>
   Vk.PhysicalDevice ->
   Vk.Device ->
   Vk.CommandPool ->
   Vk.Queue ->
-  SV.Vector Float ->
+  Vk.BufferUsageFlagBits ->
+  SV.Vector a ->
   MaybeT Managed Vk.Buffer
-withVertexBuffer gpu device pool queue vertices = do
+withBuffer2 gpu device pool queue flags vertices = do
   let size = 1024
-  (stagingBuffer, stagingBufferMemory) <-
+  (staging, stagingMem) <-
     withBuffer
       gpu
       device
@@ -293,50 +296,7 @@ withVertexBuffer gpu device pool queue vertices = do
      in liftIO $
           Vk.withMappedMemory
             device
-            stagingBufferMemory
-            0
-            size
-            (Vk.MemoryMapFlags 0)
-            bracket
-            action
-
-  (vertexBuffer, _) <-
-    withBuffer
-      gpu
-      device
-      1024
-      (Vk.BUFFER_USAGE_TRANSFER_DST_BIT .|. Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT)
-      Vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT
-  lift $ copyBuffer device pool queue stagingBuffer vertexBuffer size
-  return vertexBuffer
-
-withIndexBuffer ::
-  Vk.PhysicalDevice ->
-  Vk.Device ->
-  Vk.CommandPool ->
-  Vk.Queue ->
-  SV.Vector Word32 ->
-  MaybeT Managed Vk.Buffer
-withIndexBuffer gpu device pool queue indecies = do
-  let size = 1024
-  (stagingBuffer, stagingBufferMemory) <-
-    withBuffer
-      gpu
-      device
-      size
-      Vk.BUFFER_USAGE_TRANSFER_SRC_BIT
-      (Vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. Vk.MEMORY_PROPERTY_HOST_COHERENT_BIT)
-
-  _ <-
-    let action ptr = do
-          say "Vulkan" "Statging Buffer memory mapped"
-          let (src, len) = SV.unsafeToForeignPtr0 indecies
-          liftIO . withForeignPtr src $ \s -> copyArray (castPtr ptr) s len
-          say "Engine" "Copied vertices into staging buffer"
-     in liftIO $
-          Vk.withMappedMemory
-            device
-            stagingBufferMemory
+            stagingMem
             0
             size
             (Vk.MemoryMapFlags 0)
@@ -348,10 +308,9 @@ withIndexBuffer gpu device pool queue indecies = do
       gpu
       device
       1024
-      (Vk.BUFFER_USAGE_TRANSFER_DST_BIT .|. Vk.BUFFER_USAGE_INDEX_BUFFER_BIT)
+      (Vk.BUFFER_USAGE_TRANSFER_DST_BIT .|. flags)
       Vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT
-
-  lift $ copyBuffer device pool queue stagingBuffer buffer size
+  lift $ copyBuffer device pool queue staging buffer size
   return buffer
 
 copyBuffer :: Vk.Device -> Vk.CommandPool -> Vk.Queue -> Vk.Buffer -> Vk.Buffer -> Vk.DeviceSize -> Managed ()

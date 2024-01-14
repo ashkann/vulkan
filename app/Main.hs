@@ -45,6 +45,7 @@ import Vulkan qualified as VkDebugUtilsMessengerCreateInfoEXT (DebugUtilsMesseng
 import Vulkan qualified as VkDeviceCreateInfo (DeviceCreateInfo (..))
 import Vulkan qualified as VkDeviceQueueCreateInfo (DeviceQueueCreateInfo (..))
 import Vulkan qualified as VkExtent2D (Extent2D (..))
+import Vulkan qualified as VkFenceCreateInfo (FenceCreateInfo (..))
 import Vulkan qualified as VkFramebufferCreateInfo (FramebufferCreateInfo (..))
 import Vulkan qualified as VkGraphicsPipelineCreateInfo (GraphicsPipelineCreateInfo (..))
 import Vulkan qualified as VkImageSubresourceRange (ImageSubresourceRange (..))
@@ -107,7 +108,6 @@ main = runManaged $ do
       windowWidth
       windowHeight
   say "Vulkan" "Creating vertex buffer"
-  (imageAvailable, renderFinished) <- createSemaphores device
   say "Vulkan" "Vertex Buffer created"
   commandPool <-
     let info =
@@ -122,21 +122,27 @@ main = runManaged $ do
       Just x -> return x
       Nothing -> sayErr "Vulkan" "Failed to create vertex buffer"
   commandBuffers <- createCommandBuffers device commandPool extent imageViews vertexBuffer
+  imageAvailable <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
+  renderFinished <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
+  inFlight <-
+    let info = Vk.zero {VkFenceCreateInfo.flags = Vk.FENCE_CREATE_SIGNALED_BIT}
+     in managed $ Vk.withFence device info Nothing bracket
   say "Engine" "Show window"
   SDL.showWindow window
   SDL.raiseWindow window
   say "Engine" "Entering the main loop"
-  liftIO $
-    mainLoop $
-      drawFrame
-        device
-        swapchain
-        gfxQueue
-        presentQueue
-        imageAvailable
-        renderFinished
-        commandBuffers
-  Vk.deviceWaitIdle device
+  let draw = do
+        drawFrame
+          device
+          swapchain
+          gfxQueue
+          presentQueue
+          imageAvailable
+          renderFinished
+          inFlight
+          commandBuffers
+        Vk.deviceWaitIdle device
+   in liftIO $ mainLoop draw
 
 say :: (MonadIO io) => String -> String -> io ()
 say prefix msg = liftIO . putStrLn $ prefix ++ ": " ++ msg
@@ -378,10 +384,13 @@ drawFrame ::
   Vk.Queue ->
   Vk.Semaphore ->
   Vk.Semaphore ->
+  Vk.Fence ->
   V.Vector Vk.CommandBuffer ->
   IO ()
-drawFrame dev swapchain gfx present imageAvailable renderFinished commandBuffers =
+drawFrame dev swapchain gfx present imageAvailable renderFinished inFlight commandBuffers =
   do
+    -- _ <- Vk.waitForFences dev [inFlight] True maxBound
+    -- Vk.resetFences dev [inFlight]
     (_, imageIndex) <-
       Vk.acquireNextImageKHR
         dev
@@ -410,9 +419,9 @@ drawFrame dev swapchain gfx present imageAvailable renderFinished commandBuffers
 
 createSemaphores :: Vk.Device -> Managed (Vk.Semaphore, Vk.Semaphore)
 createSemaphores dev = do
-  imageAvailableSemaphore <- managed $ Vk.withSemaphore dev Vk.zero Nothing bracket
-  renderFinishedSemaphore <- managed $ Vk.withSemaphore dev Vk.zero Nothing bracket
-  pure (imageAvailableSemaphore, renderFinishedSemaphore)
+  imageAvailable <- managed $ Vk.withSemaphore dev Vk.zero Nothing bracket
+  renderFinished <- managed $ Vk.withSemaphore dev Vk.zero Nothing bracket
+  pure (imageAvailable, renderFinished)
 
 withPipeline :: Vk.Device -> Vk.RenderPass -> Vk.Extent2D -> Managed Vk.Pipeline
 withPipeline dev renderPass swapchainExtent = do

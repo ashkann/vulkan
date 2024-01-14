@@ -121,7 +121,13 @@ main = runManaged $ do
     runMaybeT (withVertexBuffer gpu device commandPool gfxQueue) >>= \case
       Just x -> return x
       Nothing -> sayErr "Vulkan" "Failed to create vertex buffer"
-  commandBuffers <- createCommandBuffers device commandPool extent imageViews vertexBuffer
+  say "Vulkan" "Created vertex buffer"
+  indexBuffer <-
+    runMaybeT (withIndexBuffer gpu device commandPool gfxQueue) >>= \case
+      Just x -> return x
+      Nothing -> sayErr "Vulkan" "Failed to create index buffer"
+  say "Vulkan" "Created index buffer"
+  commandBuffers <- createCommandBuffers device commandPool extent imageViews vertexBuffer indexBuffer
   imageAvailable <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
   renderFinished <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
   inFlight <-
@@ -177,8 +183,9 @@ createCommandBuffers ::
   VkExtent2D.Extent2D ->
   V.Vector Vk.ImageView ->
   Vk.Buffer ->
+  Vk.Buffer ->
   Managed (V.Vector Vk.CommandBuffer)
-createCommandBuffers device pool extent imageViews vertexBuffer = do
+createCommandBuffers device pool extent imageViews vertexBuffer indexBuffer = do
   renderPass <- createRenderPass device
   say "Vulkan" "Created render pass"
   pipeline <- withPipeline device renderPass extent
@@ -212,6 +219,13 @@ createCommandBuffers device pool extent imageViews vertexBuffer = do
     use renderPass pipeline (framebuffer, commandBuffer) = Vk.useCommandBuffer commandBuffer info pass
       where
         info = Vk.zero {VkCommandBufferBeginInfo.flags = Vk.COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT}
+        subpass =
+          Vk.zero
+            { VkRenderPassBeginInfo.renderPass = renderPass,
+              VkRenderPassBeginInfo.framebuffer = framebuffer,
+              VkRenderPassBeginInfo.renderArea = Vk.Rect2D {VkRect2D.offset = Vk.zero, VkRect2D.extent = extent},
+              VkRenderPassBeginInfo.clearValues = [Vk.Color (Vk.Float32 0.0 0.0 0.0 0)]
+            }
         pass =
           Vk.cmdUseRenderPass
             commandBuffer
@@ -221,20 +235,14 @@ createCommandBuffers device pool extent imageViews vertexBuffer = do
         render = do
           Vk.cmdBindPipeline commandBuffer Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
           Vk.cmdBindVertexBuffers commandBuffer 0 [vertexBuffer] [0]
-          Vk.cmdDraw commandBuffer 4 1 0 0
-        subpass =
-          Vk.zero
-            { VkRenderPassBeginInfo.renderPass = renderPass,
-              VkRenderPassBeginInfo.framebuffer = framebuffer,
-              VkRenderPassBeginInfo.renderArea = Vk.Rect2D {VkRect2D.offset = Vk.zero, VkRect2D.extent = extent},
-              VkRenderPassBeginInfo.clearValues = [Vk.Color (Vk.Float32 0.0 0.0 0.0 0)]
-            }
+          Vk.cmdBindIndexBuffer commandBuffer indexBuffer 0 Vk.INDEX_TYPE_UINT32
+          Vk.cmdDrawIndexed commandBuffer 6 1 0 0 0
 
 withVertexBuffer :: Vk.PhysicalDevice -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> MaybeT Managed Vk.Buffer
 withVertexBuffer gpu device pool queue = do
   let size = 1024
   (stagingBuffer, stagingBufferMemory) <-
-    withBuffer2
+    withBuffer
       gpu
       device
       size
@@ -258,7 +266,7 @@ withVertexBuffer gpu device pool queue = do
             action
 
   (vertexBuffer, _) <-
-    withBuffer2
+    withBuffer
       gpu
       device
       1024
@@ -272,31 +280,72 @@ withVertexBuffer gpu device pool queue = do
     vertices =
       SV.fromList
         [ -- v0
-          0.0, -- x
-          -0.5, -- y
+          0.5, -- x
+          0.5, -- y
           1.0, -- r
           0, -- g
           0, -- b
           -- v1
-          0.5,
+          -0.5,
           0.5,
           0,
           1.0,
           0,
           -- v2
           -0.5,
-          0.5,
+          -0.5,
           0,
           0,
           1.0,
           -- v3
-          -0.5,
-          -0.5,
           0.5,
-          0.5,
-          0.5
+          -0.5,
+          0,
+          0,
+          1.0
         ] ::
         SV.Vector Float
+
+withIndexBuffer :: Vk.PhysicalDevice -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> MaybeT Managed Vk.Buffer
+withIndexBuffer gpu device pool queue = do
+  let size = 1024
+  (stagingBuffer, stagingBufferMemory) <-
+    withBuffer
+      gpu
+      device
+      size
+      Vk.BUFFER_USAGE_TRANSFER_SRC_BIT
+      (Vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. Vk.MEMORY_PROPERTY_HOST_COHERENT_BIT)
+
+  _ <-
+    let action ptr = do
+          say "Vulkan" "Statging Buffer memory mapped"
+          let (src, len) = SV.unsafeToForeignPtr0 indecies
+          liftIO . withForeignPtr src $ \s -> copyArray (castPtr ptr) s len
+          say "Engine" "Copied vertices into staging buffer"
+     in liftIO $
+          Vk.withMappedMemory
+            device
+            stagingBufferMemory
+            0
+            size
+            (Vk.MemoryMapFlags 0)
+            bracket
+            action
+
+  (buffer, _) <-
+    withBuffer
+      gpu
+      device
+      1024
+      (Vk.BUFFER_USAGE_TRANSFER_DST_BIT .|. Vk.BUFFER_USAGE_INDEX_BUFFER_BIT)
+      Vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+
+  lift $ copyBuffer device pool queue stagingBuffer buffer size
+
+  return buffer
+  where
+    indecies = SV.fromList [0, 1, 2, 2, 3, 0] :: SV.Vector Word32
 
 copyBuffer :: Vk.Device -> Vk.CommandPool -> Vk.Queue -> Vk.Buffer -> Vk.Buffer -> Vk.DeviceSize -> Managed ()
 copyBuffer device pool queue src dst size = do
@@ -315,25 +364,22 @@ copyBuffer device pool queue src dst size = do
    in Vk.queueSubmit queue [Vk.SomeStruct info] Vk.NULL_HANDLE
   Vk.queueWaitIdle queue
 
-withBuffer :: (MonadManaged m) => Vk.Device -> Vk.DeviceSize -> Vk.BufferUsageFlagBits -> m Vk.Buffer
-withBuffer device size usage =
-  let info =
-        Vk.zero
-          { VkBufferCreateInfo.size = size,
-            VkBufferCreateInfo.usage = usage,
-            VkBufferCreateInfo.sharingMode = Vk.SHARING_MODE_EXCLUSIVE
-          }
-   in managed $ Vk.withBuffer device info Nothing bracket
-
-withBuffer2 ::
+withBuffer ::
   Vk.PhysicalDevice ->
   Vk.Device ->
   Vk.DeviceSize ->
   Vk.BufferUsageFlagBits ->
   Vk.MemoryPropertyFlags ->
   MaybeT Managed (Vk.Buffer, Vk.DeviceMemory)
-withBuffer2 gpu device size usage flags = do
-  buffer <- withBuffer device size usage
+withBuffer gpu device size usage flags = do
+  buffer <-
+    let info =
+          Vk.zero
+            { VkBufferCreateInfo.size = size,
+              VkBufferCreateInfo.usage = usage,
+              VkBufferCreateInfo.sharingMode = Vk.SHARING_MODE_EXCLUSIVE
+            }
+     in managed $ Vk.withBuffer device info Nothing bracket
   say "Vulkan" $ "Created buffer of size" ++ show size
   req <- Vk.getBufferMemoryRequirements device buffer
   (index, _) <- findMemType req

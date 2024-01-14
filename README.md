@@ -9,3 +9,8 @@ stack build
 ```
 stack run
 ```
+
+## TODO
+- [ ] Allocate both index and vertex buffers in one buffer
+- [ ] More than one in-flight frame
+- [ ] Some memory is not properly freed before vulkan instance is destroyed

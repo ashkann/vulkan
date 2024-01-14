@@ -67,3 +67,12 @@ packages:
 extra-deps:
 - vulkan-3.26.1
 - vulkan-utils-0.5.10.6
+- dear-imgui-2.2.0
+
+flags:
+  dear-imgui:
+    vulkan: true
+    sdl: true
+    opengl2: false
+    opengl3: false
+    glfw: false

@@ -19,7 +19,9 @@ executable ashkan
   build-depends:
       base >=4.7 && <5
     , bytestring
+    , dear-imgui
     , extra
+    , linear
     , managed
     , mtl
     , sdl2

@@ -21,9 +21,9 @@ import Data.Bits (testBit, (.&.), (.|.))
 import Data.ByteString qualified as BS (readFile)
 import Data.ByteString.Char8 qualified as BS (pack, unpack)
 import Data.Foldable
-import Data.Foldable qualified as Vk
 import Data.Functor ((<&>))
 import Data.Traversable (for)
+import Data.Vector ((!))
 import Data.Vector qualified as V
 import Data.Vector.Storable qualified as SV
 import Foreign (Bits (zeroBits), Word32, castPtr, copyArray, withForeignPtr)
@@ -341,7 +341,7 @@ withBuffer2 gpu device size usage flags = do
       props <- Vk.getPhysicalDeviceMemoryProperties gpu
       let bits = VkMemoryRequirements.memoryTypeBits req
           good (i, typ) = (VkMemoryType.propertyFlags typ .&. flags == flags) && (bits `testBit` i)
-          memTypes = zip [0 ..] (Vk.toList . Vk.memoryTypes $ props)
+          memTypes = zip [0 ..] (V.toList . Vk.memoryTypes $ props)
       MaybeT . pure $ find good memTypes
 
     allocMem i s =
@@ -380,34 +380,32 @@ drawFrame ::
   Vk.Semaphore ->
   V.Vector Vk.CommandBuffer ->
   IO ()
-drawFrame dev swapchain graphicsQueue presentQueue imageAvailableSemaphore renderFinishedSemaphore commandBuffers =
+drawFrame dev swapchain gfx present imageAvailable renderFinished commandBuffers =
   do
     (_, imageIndex) <-
       Vk.acquireNextImageKHR
         dev
         swapchain
         maxBound
-        imageAvailableSemaphore
+        imageAvailable
         Vk.zero
-    let submitInfo =
+    let handle = Vk.commandBufferHandle $ commandBuffers ! fromIntegral imageIndex
+        info =
           Vk.zero
-            { VkSubmitInfo.waitSemaphores = [imageAvailableSemaphore],
+            { VkSubmitInfo.waitSemaphores = [imageAvailable],
               VkSubmitInfo.waitDstStageMask = [Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT],
-              VkSubmitInfo.commandBuffers =
-                [ Vk.commandBufferHandle $
-                    commandBuffers
-                      V.! fromIntegral imageIndex
-                ],
-              VkSubmitInfo.signalSemaphores = [renderFinishedSemaphore]
+              VkSubmitInfo.commandBuffers = [handle],
+              VkSubmitInfo.signalSemaphores = [renderFinished]
             }
-        presentInfo =
-          Vk.zero
-            { VkPresentInfoKHR.waitSemaphores = [renderFinishedSemaphore],
-              VkPresentInfoKHR.swapchains = [swapchain],
-              VkPresentInfoKHR.imageIndices = [imageIndex]
-            }
-    Vk.queueSubmit graphicsQueue [Vk.SomeStruct submitInfo] Vk.zero
-    _ <- Vk.queuePresentKHR presentQueue presentInfo
+     in Vk.queueSubmit gfx [Vk.SomeStruct info] Vk.zero
+    _ <-
+      let info =
+            Vk.zero
+              { VkPresentInfoKHR.waitSemaphores = [renderFinished],
+                VkPresentInfoKHR.swapchains = [swapchain],
+                VkPresentInfoKHR.imageIndices = [imageIndex]
+              }
+       in Vk.queuePresentKHR present info
     return ()
 
 createSemaphores :: Vk.Device -> Managed (Vk.Semaphore, Vk.Semaphore)
@@ -624,7 +622,7 @@ withSwapchain
       viewImages <- for images $ \i -> managed $ Vk.withImageView dev (imageViewCreateInfo i) Nothing bracket
       return (swapchain, viewImages, extent)
 
-createRenderPass :: (MonadManaged m) => Vk.Device -> m Vk.RenderPass
+createRenderPass :: Vk.Device -> Managed Vk.RenderPass
 createRenderPass dev = do
   let attchment :: Vk.AttachmentDescription
       attchment =

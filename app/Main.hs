@@ -389,8 +389,8 @@ drawFrame ::
   IO ()
 drawFrame dev swapchain gfx present imageAvailable renderFinished inFlight commandBuffers =
   do
-    -- _ <- Vk.waitForFences dev [inFlight] True maxBound
-    -- Vk.resetFences dev [inFlight]
+    _ <- Vk.waitForFences dev [inFlight] True maxBound
+    Vk.resetFences dev [inFlight]
     (_, imageIndex) <-
       Vk.acquireNextImageKHR
         dev
@@ -398,30 +398,27 @@ drawFrame dev swapchain gfx present imageAvailable renderFinished inFlight comma
         maxBound
         imageAvailable
         Vk.zero
-    let handle = Vk.commandBufferHandle $ commandBuffers ! fromIntegral imageIndex
+    let wait = [imageAvailable]
+        signal = [renderFinished]
+        handle = Vk.commandBufferHandle $ commandBuffers ! fromIntegral imageIndex
         info =
           Vk.zero
-            { VkSubmitInfo.waitSemaphores = [imageAvailable],
+            { VkSubmitInfo.waitSemaphores = wait,
               VkSubmitInfo.waitDstStageMask = [Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT],
               VkSubmitInfo.commandBuffers = [handle],
-              VkSubmitInfo.signalSemaphores = [renderFinished]
+              VkSubmitInfo.signalSemaphores = signal
             }
-     in Vk.queueSubmit gfx [Vk.SomeStruct info] Vk.zero
+     in Vk.queueSubmit gfx [Vk.SomeStruct info] inFlight
     _ <-
-      let info =
+      let wait = [renderFinished]
+          info =
             Vk.zero
-              { VkPresentInfoKHR.waitSemaphores = [renderFinished],
+              { VkPresentInfoKHR.waitSemaphores = wait,
                 VkPresentInfoKHR.swapchains = [swapchain],
                 VkPresentInfoKHR.imageIndices = [imageIndex]
               }
        in Vk.queuePresentKHR present info
     return ()
-
-createSemaphores :: Vk.Device -> Managed (Vk.Semaphore, Vk.Semaphore)
-createSemaphores dev = do
-  imageAvailable <- managed $ Vk.withSemaphore dev Vk.zero Nothing bracket
-  renderFinished <- managed $ Vk.withSemaphore dev Vk.zero Nothing bracket
-  pure (imageAvailable, renderFinished)
 
 withPipeline :: Vk.Device -> Vk.RenderPass -> Vk.Extent2D -> Managed Vk.Pipeline
 withPipeline dev renderPass swapchainExtent = do

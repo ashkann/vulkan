@@ -118,14 +118,43 @@ main = runManaged $ do
      in managed $ Vk.withCommandPool device info Nothing bracket
   say "Vulkan" "Created command pool"
   vertexBuffer <-
-    runMaybeT (withVertexBuffer gpu device commandPool gfxQueue) >>= \case
-      Just x -> return x
-      Nothing -> sayErr "Vulkan" "Failed to create vertex buffer"
+    let vertices =
+          SV.fromList
+            [ -- v0
+              0.5, -- x
+              0.5, -- y
+              1.0, -- r
+              0, -- g
+              0, -- b
+              -- v1
+              -0.5,
+              0.5,
+              0,
+              1.0,
+              0,
+              -- v2
+              -0.5,
+              -0.5,
+              0,
+              0,
+              1.0,
+              -- v3
+              0.5,
+              -0.5,
+              0.5,
+              0.5,
+              0.5
+            ] ::
+            SV.Vector Float
+     in runMaybeT (withVertexBuffer gpu device commandPool gfxQueue vertices) >>= \case
+          Just x -> return x
+          Nothing -> sayErr "Vulkan" "Failed to create vertex buffer"
   say "Vulkan" "Created vertex buffer"
   indexBuffer <-
-    runMaybeT (withIndexBuffer gpu device commandPool gfxQueue) >>= \case
-      Just x -> return x
-      Nothing -> sayErr "Vulkan" "Failed to create index buffer"
+    let indecies = SV.fromList [0, 1, 2, 2, 3, 0] :: SV.Vector Word32
+     in runMaybeT (withIndexBuffer gpu device commandPool gfxQueue indecies) >>= \case
+          Just x -> return x
+          Nothing -> sayErr "Vulkan" "Failed to create index buffer"
   say "Vulkan" "Created index buffer"
   commandBuffers <- createCommandBuffers device commandPool extent imageViews vertexBuffer indexBuffer
   imageAvailable <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
@@ -238,8 +267,14 @@ createCommandBuffers device pool extent imageViews vertexBuffer indexBuffer = do
           Vk.cmdBindIndexBuffer commandBuffer indexBuffer 0 Vk.INDEX_TYPE_UINT32
           Vk.cmdDrawIndexed commandBuffer 6 1 0 0 0
 
-withVertexBuffer :: Vk.PhysicalDevice -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> MaybeT Managed Vk.Buffer
-withVertexBuffer gpu device pool queue = do
+withVertexBuffer ::
+  Vk.PhysicalDevice ->
+  Vk.Device ->
+  Vk.CommandPool ->
+  Vk.Queue ->
+  SV.Vector Float ->
+  MaybeT Managed Vk.Buffer
+withVertexBuffer gpu device pool queue vertices = do
   let size = 1024
   (stagingBuffer, stagingBufferMemory) <-
     withBuffer
@@ -272,42 +307,17 @@ withVertexBuffer gpu device pool queue = do
       1024
       (Vk.BUFFER_USAGE_TRANSFER_DST_BIT .|. Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT)
       Vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT
-
   lift $ copyBuffer device pool queue stagingBuffer vertexBuffer size
-
   return vertexBuffer
-  where
-    vertices =
-      SV.fromList
-        [ -- v0
-          0.5, -- x
-          0.5, -- y
-          1.0, -- r
-          0, -- g
-          0, -- b
-          -- v1
-          -0.5,
-          0.5,
-          0,
-          1.0,
-          0,
-          -- v2
-          -0.5,
-          -0.5,
-          0,
-          0,
-          1.0,
-          -- v3
-          0.5,
-          -0.5,
-          0,
-          0,
-          1.0
-        ] ::
-        SV.Vector Float
 
-withIndexBuffer :: Vk.PhysicalDevice -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> MaybeT Managed Vk.Buffer
-withIndexBuffer gpu device pool queue = do
+withIndexBuffer ::
+  Vk.PhysicalDevice ->
+  Vk.Device ->
+  Vk.CommandPool ->
+  Vk.Queue ->
+  SV.Vector Word32 ->
+  MaybeT Managed Vk.Buffer
+withIndexBuffer gpu device pool queue indecies = do
   let size = 1024
   (stagingBuffer, stagingBufferMemory) <-
     withBuffer
@@ -342,10 +352,7 @@ withIndexBuffer gpu device pool queue = do
       Vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT
 
   lift $ copyBuffer device pool queue stagingBuffer buffer size
-
   return buffer
-  where
-    indecies = SV.fromList [0, 1, 2, 2, 3, 0] :: SV.Vector Word32
 
 copyBuffer :: Vk.Device -> Vk.CommandPool -> Vk.Queue -> Vk.Buffer -> Vk.Buffer -> Vk.DeviceSize -> Managed ()
 copyBuffer device pool queue src dst size = do

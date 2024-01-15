@@ -25,6 +25,27 @@ packages:
       size: 5432
   original:
     hackage: dear-imgui-2.2.0
+- completed:
+    hackage: geomancy-0.2.6.0@sha256:5b47feb19c1ff051a3b1f4feefbc03c09fc6585f89e3b69d6f3b47ad15253dc4,2332
+    pantry-tree:
+      sha256: f49f523550c6ff94f1da2b9cebe6b6d50be1c67f84d4628c5743432ae9216a84
+      size: 1881
+  original:
+    hackage: geomancy-0.2.6.0
+- completed:
+    hackage: gl-block-1.0@sha256:4b098e98a8c8b566cb583c6c105eeafe6be80f7f4a0f687f4d8781841acce8e4,1762
+    pantry-tree:
+      sha256: 61ba9f777adda84168a9cf888b474438d81ca877fdabb4a2473b047ac6719085
+      size: 546
+  original:
+    hackage: gl-block-1.0
+- completed:
+    hackage: ptrdiff-0@sha256:0aef162233f5dcf64bd6993e4df4769c31df693e0002c797fb06998df2fae10e,843
+    pantry-tree:
+      sha256: 44b24db00ca60d3c64c36720dbbb41ae212c4e587c51ad077395a788e63ff1f9
+      size: 272
+  original:
+    hackage: ptrdiff-0
 snapshots:
 - completed:
     sha256: 7d4b649cf368f9076d8aa049aa44efe58950971d105892734e9957b2a26a2186

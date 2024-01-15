@@ -13,8 +13,8 @@ dependencies:
   - mtl
   - extra
   - transformers
-  - linear
   - dear-imgui
+  - geomancy
 
 ghc-options:
   - -Wall

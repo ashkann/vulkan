@@ -68,6 +68,9 @@ extra-deps:
 - vulkan-3.26.1
 - vulkan-utils-0.5.10.6
 - dear-imgui-2.2.0
+- geomancy-0.2.6.0
+- gl-block-1.0
+- ptrdiff-0
 
 flags:
   dear-imgui:

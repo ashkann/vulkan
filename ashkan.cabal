@@ -21,7 +21,7 @@ executable ashkan
     , bytestring
     , dear-imgui
     , extra
-    , linear
+    , geomancy
     , managed
     , mtl
     , sdl2

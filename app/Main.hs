@@ -26,7 +26,7 @@ import Data.Traversable (for)
 import Data.Vector ((!))
 import Data.Vector qualified as V
 import Data.Vector.Storable qualified as SV
-import Foreign (Bits (zeroBits), Storable, Word32, castPtr, copyArray, withForeignPtr)
+import Foreign (Bits (zeroBits), Ptr, Storable, Word32, castPtr, copyArray, withForeignPtr)
 import Foreign.C (peekCAString, peekCString)
 import Foreign.Ptr (castFunPtr)
 import Foreign.Storable (sizeOf)
@@ -80,8 +80,10 @@ import Vulkan.CStruct.Extends qualified as Vk
 import Vulkan.Dynamic qualified as Vk
 import Vulkan.Utils.Debug qualified as Vk
 import Vulkan.Zero qualified as Vk
-import VulkanMemoryAllocator qualified as VMA
-import VulkanMemoryAllocator qualified as VMAAllocatorCreateInfo (AllocatorCreateInfo (..))
+import VulkanMemoryAllocator qualified as Vma
+import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCreateInfo (..))
+import VulkanMemoryAllocator qualified as VmaAllocationInfo (AllocationInfo (..))
+import VulkanMemoryAllocator qualified as VmaAllocatorCreateInfo (AllocatorCreateInfo (..))
 import Prelude hiding (init)
 
 main :: IO ()
@@ -154,14 +156,14 @@ main = runManaged $ do
               0.5
             ] ::
             SV.Vector Float
-     in runMaybeT (withBuffer2 gpu device commandPool gfxQueue Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT vertices)
+     in runMaybeT (withBuffer2 allocator gpu device commandPool gfxQueue Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT vertices)
           >>= \case
             Just x -> return x
             Nothing -> sayErr "Vulkan" "Failed to create vertex buffer"
   say "Vulkan" "Created vertex buffer"
   indexBuffer <-
     let indecies = SV.fromList [0, 1, 2, 2, 3, 0] :: SV.Vector Word32
-     in runMaybeT (withBuffer2 gpu device commandPool gfxQueue Vk.BUFFER_USAGE_INDEX_BUFFER_BIT indecies) >>= \case
+     in runMaybeT (withBuffer2 allocator gpu device commandPool gfxQueue Vk.BUFFER_USAGE_INDEX_BUFFER_BIT indecies) >>= \case
           Just x -> return x
           Nothing -> sayErr "Vulkan" "Failed to create index buffer"
   say "Vulkan" "Created index buffer"
@@ -194,24 +196,24 @@ say prefix msg = liftIO . putStrLn $ prefix ++ ": " ++ msg
 sayErr :: (MonadIO io) => String -> String -> io a
 sayErr prefix msg = liftIO . throwError . userError $ prefix ++ ": " ++ msg
 
-withMemoryAllocator :: Vk.Instance -> Vk.PhysicalDevice -> Vk.Device -> Managed VMA.Allocator
+withMemoryAllocator :: Vk.Instance -> Vk.PhysicalDevice -> Vk.Device -> Managed Vma.Allocator
 withMemoryAllocator vulkan gpu device =
   let insanceCmds = VkInstance.instanceCmds vulkan
       deviceCmds = VkDevice.deviceCmds device
       info =
         Vk.zero
-          { VMAAllocatorCreateInfo.vulkanApiVersion = Vk.API_VERSION_1_0,
-            VMAAllocatorCreateInfo.instance' = Vk.instanceHandle vulkan,
-            VMAAllocatorCreateInfo.physicalDevice = Vk.physicalDeviceHandle gpu,
-            VMAAllocatorCreateInfo.device = Vk.deviceHandle device,
-            VMAAllocatorCreateInfo.vulkanFunctions =
+          { VmaAllocatorCreateInfo.vulkanApiVersion = Vk.API_VERSION_1_0,
+            VmaAllocatorCreateInfo.instance' = Vk.instanceHandle vulkan,
+            VmaAllocatorCreateInfo.physicalDevice = Vk.physicalDeviceHandle gpu,
+            VmaAllocatorCreateInfo.device = Vk.deviceHandle device,
+            VmaAllocatorCreateInfo.vulkanFunctions =
               Just $
                 Vk.zero
-                  { VMA.vkGetInstanceProcAddr = castFunPtr $ Vk.pVkGetInstanceProcAddr insanceCmds,
-                    VMA.vkGetDeviceProcAddr = castFunPtr $ Vk.pVkGetDeviceProcAddr deviceCmds
+                  { Vma.vkGetInstanceProcAddr = castFunPtr $ Vk.pVkGetInstanceProcAddr insanceCmds,
+                    Vma.vkGetDeviceProcAddr = castFunPtr $ Vk.pVkGetDeviceProcAddr deviceCmds
                   }
           }
-   in managed $ VMA.withAllocator info bracket
+   in managed $ Vma.withAllocator info bracket
 
 withDebug :: Vk.Instance -> Managed ()
 withDebug vulkan = do
@@ -297,6 +299,7 @@ createCommandBuffers device pool extent imageViews vertexBuffer indexBuffer = do
 
 withBuffer2 ::
   (Storable a) =>
+  Vma.Allocator ->
   Vk.PhysicalDevice ->
   Vk.Device ->
   Vk.CommandPool ->
@@ -304,15 +307,33 @@ withBuffer2 ::
   Vk.BufferUsageFlagBits ->
   SV.Vector a ->
   MaybeT Managed Vk.Buffer
-withBuffer2 gpu device pool queue flags vertices = do
+withBuffer2 allocator gpu device pool queue flags vertices = do
   let size = 1024
-  (staging, stagingMem) <-
-    withBuffer
-      gpu
-      device
-      size
-      Vk.BUFFER_USAGE_TRANSFER_SRC_BIT
-      (Vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. Vk.MEMORY_PROPERTY_HOST_COHERENT_BIT)
+  {--
+  VkBufferCreateInfo bufCreateInfo = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+  bufCreateInfo.size = 65536;
+  bufCreateInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+
+  VmaAllocationCreateInfo allocCreateInfo = {};
+  allocCreateInfo.usage = VMA_MEMORY_USAGE_AUTO;
+  allocCreateInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+      VMA_ALLOCATION_CREATE_MAPPED_BIT;
+
+  VkBuffer buf;
+  VmaAllocation alloc;
+  VmaAllocationInfo allocInfo;
+  vmaCreateBuffer(allocator, &bufCreateInfo, &allocCreateInfo, &buf, &alloc, &allocInfo);
+  --}
+
+  -- (staging, stagingMem) <-
+  --   withBuffer
+  --     gpu
+  --     device
+  --     size
+  --     Vk.BUFFER_USAGE_TRANSFER_SRC_BIT
+  --     (Vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. Vk.MEMORY_PROPERTY_HOST_COHERENT_BIT)
+
+  (staging, stagingMem) <- vmaWithStagingBuffer allocator size
 
   _ <-
     let action ptr = do
@@ -320,15 +341,16 @@ withBuffer2 gpu device pool queue flags vertices = do
           let (src, len) = SV.unsafeToForeignPtr0 vertices
           liftIO . withForeignPtr src $ \s -> copyArray (castPtr ptr) s len
           say "Engine" "Copied vertices into staging buffer"
-     in liftIO $
-          Vk.withMappedMemory
-            device
-            stagingMem
-            0
-            size
-            (Vk.MemoryMapFlags 0)
-            bracket
-            action
+     in action stagingMem
+    --  in liftIO $
+    --       Vk.withMappedMemory
+    --         device
+    --         stagingMem
+    --         0
+    --         size
+    --         (Vk.MemoryMapFlags 0)
+    --         bracket
+    --         action
 
   (buffer, _) <-
     withBuffer
@@ -396,6 +418,39 @@ withBuffer gpu device size usage flags = do
                 VkMemoryAllocateInfo.allocationSize = s
               }
        in managed $ Vk.withMemory device info Nothing bracket
+
+vmaWithStagingBuffer :: Vma.Allocator -> Vk.DeviceSize -> MaybeT Managed (Vk.Buffer, Ptr ())
+vmaWithStagingBuffer allocator size = do
+  {--
+  VkBufferCreateInfo bufCreateInfo = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+  bufCreateInfo.size = 65536;
+  bufCreateInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+
+  VmaAllocationCreateInfo allocCreateInfo = {};
+  allocCreateInfo.usage = VMA_MEMORY_USAGE_AUTO;
+  allocCreateInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+      VMA_ALLOCATION_CREATE_MAPPED_BIT;
+
+  VkBuffer buf;
+  VmaAllocation alloc;
+  VmaAllocationInfo allocInfo;
+  vmaCreateBuffer(allocator, &bufCreateInfo, &allocCreateInfo, &buf, &alloc, &allocInfo);
+  --}
+  (buffer, _, Vma.AllocationInfo {Vma.mappedData = mem}) <-
+    let bufferInfo =
+          Vk.zero
+            { VkBufferCreateInfo.size = size,
+              VkBufferCreateInfo.usage = Vk.BUFFER_USAGE_TRANSFER_SRC_BIT,
+              VkBufferCreateInfo.sharingMode = Vk.SHARING_MODE_EXCLUSIVE
+            }
+        vmaInfo =
+          Vk.zero
+            { VmaAllocationCreateInfo.usage = Vma.MEMORY_USAGE_AUTO,
+              VmaAllocationCreateInfo.flags = Vma.ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT .|. Vma.ALLOCATION_CREATE_MAPPED_BIT
+            }
+     in managed $ Vma.withBuffer allocator bufferInfo vmaInfo bracket
+  say "Vulkan" $ "Created buffer of size" ++ show size
+  return (buffer, mem)
 
 mainLoop :: IO () -> IO ()
 mainLoop draw = whileM $ do

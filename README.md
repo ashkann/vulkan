@@ -20,5 +20,7 @@ stack run
 - [ ] Basic static (no animation) stripe
 - [ ] Somewhat model a single moving light source
 - [ ] Use normal maps on the static stripe to intract with the light sources
+- [ ] Use specular maps for more realism
+- [ ] Think about bloom and glow effects
 - [ ] Suuport multiple light sources
 - [ ] 2D global illumination

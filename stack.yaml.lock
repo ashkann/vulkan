@@ -19,6 +19,13 @@ packages:
   original:
     hackage: vulkan-utils-0.5.10.6
 - completed:
+    hackage: VulkanMemoryAllocator-0.11.0.1@sha256:8c3cbf3679dacbcf364a0775377e50599690ff2c25063e1d64a6be7135b72740,3465
+    pantry-tree:
+      sha256: f2ac833380a037d44c508b4a3e70c295bbc494534976c49076fa7123776e3b3b
+      size: 528
+  original:
+    hackage: VulkanMemoryAllocator-0.11.0.1
+- completed:
     hackage: dear-imgui-2.2.0@sha256:dfbd48824ce36de196d7a9c76c58d1ed014b9721794836bd46148f9b80c2a2f4,9170
     pantry-tree:
       sha256: 195686ce66af586962952435904ed1953f4b4b3d735c6461309396fbb1f20c8a

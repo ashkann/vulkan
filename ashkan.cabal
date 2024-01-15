@@ -17,7 +17,8 @@ executable ashkan
       app
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -Wambiguous-fields -optl-Wl,-rpath,/usr/local/lib -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-      base >=4.7 && <5
+      VulkanMemoryAllocator
+    , base >=4.7 && <5
     , bytestring
     , dear-imgui
     , extra

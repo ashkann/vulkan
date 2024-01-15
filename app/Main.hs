@@ -28,6 +28,7 @@ import Data.Vector qualified as V
 import Data.Vector.Storable qualified as SV
 import Foreign (Bits (zeroBits), Storable, Word32, castPtr, copyArray, withForeignPtr)
 import Foreign.C (peekCAString, peekCString)
+import Foreign.Ptr (castFunPtr)
 import Foreign.Storable (sizeOf)
 import SDL qualified
 import SDL.Video.Vulkan qualified as SDL
@@ -42,6 +43,7 @@ import Vulkan qualified as VkCommandBufferBeginInfo (CommandBufferBeginInfo (..)
 import Vulkan qualified as VkCommandPoolCreateInfo (CommandPoolCreateInfo (..))
 import Vulkan qualified as VkComponentMapping (ComponentMapping (..))
 import Vulkan qualified as VkDebugUtilsMessengerCreateInfoEXT (DebugUtilsMessengerCreateInfoEXT (..))
+import Vulkan qualified as VkDevice (Device (..))
 import Vulkan qualified as VkDeviceCreateInfo (DeviceCreateInfo (..))
 import Vulkan qualified as VkDeviceQueueCreateInfo (DeviceQueueCreateInfo (..))
 import Vulkan qualified as VkExtent2D (Extent2D (..))
@@ -50,6 +52,7 @@ import Vulkan qualified as VkFramebufferCreateInfo (FramebufferCreateInfo (..))
 import Vulkan qualified as VkGraphicsPipelineCreateInfo (GraphicsPipelineCreateInfo (..))
 import Vulkan qualified as VkImageSubresourceRange (ImageSubresourceRange (..))
 import Vulkan qualified as VkImageViewCreateInfo (ImageViewCreateInfo (..))
+import Vulkan qualified as VkInstance (Instance (..))
 import Vulkan qualified as VkInstanceCreateInfo (InstanceCreateInfo (..))
 import Vulkan qualified as VkMemoryAllocateInfo (MemoryAllocateInfo (..))
 import Vulkan qualified as VkMemoryRequirements (MemoryRequirements (..))
@@ -74,8 +77,11 @@ import Vulkan qualified as VkVertexInputBindingDescription (VertexInputBindingDe
 import Vulkan qualified as VkViewport (Viewport (..))
 import Vulkan.CStruct.Extends (pattern (:&), pattern (::&))
 import Vulkan.CStruct.Extends qualified as Vk
+import Vulkan.Dynamic qualified as Vk
 import Vulkan.Utils.Debug qualified as Vk
 import Vulkan.Zero qualified as Vk
+import VulkanMemoryAllocator qualified as VMA
+import VulkanMemoryAllocator qualified as VMAAllocatorCreateInfo (AllocatorCreateInfo (..))
 import Prelude hiding (init)
 
 main :: IO ()
@@ -92,6 +98,8 @@ main = runManaged $ do
   say "Vulkan" $ "Picked up " ++ show (Vk.deviceName props) ++ ", present queue " ++ show present ++ ", graphics queue " ++ show gfx
   say "Vulkan" "Creating device"
   device <- withDevice gpu present gfx portable
+  allocator <- withMemoryAllocator vulkan gpu device
+  say "VMA" "Created allocator"
   say "Vulkan" "Device created"
   gfxQueue <- Vk.getDeviceQueue device gfx 0
   say "Vulkan" "Got graphics queue"
@@ -185,6 +193,25 @@ say prefix msg = liftIO . putStrLn $ prefix ++ ": " ++ msg
 
 sayErr :: (MonadIO io) => String -> String -> io a
 sayErr prefix msg = liftIO . throwError . userError $ prefix ++ ": " ++ msg
+
+withMemoryAllocator :: Vk.Instance -> Vk.PhysicalDevice -> Vk.Device -> Managed VMA.Allocator
+withMemoryAllocator vulkan gpu device =
+  let insanceCmds = VkInstance.instanceCmds vulkan
+      deviceCmds = VkDevice.deviceCmds device
+      info =
+        Vk.zero
+          { VMAAllocatorCreateInfo.vulkanApiVersion = Vk.API_VERSION_1_0,
+            VMAAllocatorCreateInfo.instance' = Vk.instanceHandle vulkan,
+            VMAAllocatorCreateInfo.physicalDevice = Vk.physicalDeviceHandle gpu,
+            VMAAllocatorCreateInfo.device = Vk.deviceHandle device,
+            VMAAllocatorCreateInfo.vulkanFunctions =
+              Just $
+                Vk.zero
+                  { VMA.vkGetInstanceProcAddr = castFunPtr $ Vk.pVkGetInstanceProcAddr insanceCmds,
+                    VMA.vkGetDeviceProcAddr = castFunPtr $ Vk.pVkGetDeviceProcAddr deviceCmds
+                  }
+          }
+   in managed $ VMA.withAllocator info bracket
 
 withDebug :: Vk.Instance -> Managed ()
 withDebug vulkan = do

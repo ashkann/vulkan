@@ -10,14 +10,13 @@
 
 module Main (main) where
 
+import Codec.Picture qualified as JP
 import Control.Applicative ((<|>))
 import Control.Exception (bracket, bracket_)
 import Control.Monad.Except (ExceptT (ExceptT), MonadError (throwError), runExceptT)
 import Control.Monad.Extra (whileM)
 import Control.Monad.Managed (Managed, MonadIO (liftIO), MonadManaged, managed, managed_, runManaged)
-import Control.Monad.Trans.Class (lift)
-import Control.Monad.Trans.Maybe
-import Data.Bits (testBit, (.&.), (.|.))
+import Data.Bits ((.&.), (.|.))
 import Data.ByteString qualified as BS (readFile)
 import Data.ByteString.Char8 qualified as BS (pack, unpack)
 import Data.Foldable
@@ -32,32 +31,40 @@ import Foreign.Ptr (castFunPtr)
 import Foreign.Storable (sizeOf)
 import SDL qualified
 import SDL.Video.Vulkan qualified as SDL
+import Vulkan qualified as PhysicalDeviceDynamicRenderingFeatures (PhysicalDeviceDynamicRenderingFeatures (..))
 import Vulkan qualified as Vk
 import Vulkan qualified as VkApplicationInfo (ApplicationInfo (..))
 import Vulkan qualified as VkAttachmentDescription (AttachmentDescription (..))
 import Vulkan qualified as VkAttachmentReference (AttachmentReference (..))
 import Vulkan qualified as VkBufferCopy (BufferCopy (..))
 import Vulkan qualified as VkBufferCreateInfo (BufferCreateInfo (..))
+import Vulkan qualified as VkBufferImageCopy (BufferImageCopy (..))
 import Vulkan qualified as VkCommandBufferAllocateInfo (CommandBufferAllocateInfo (..))
 import Vulkan qualified as VkCommandBufferBeginInfo (CommandBufferBeginInfo (..))
 import Vulkan qualified as VkCommandPoolCreateInfo (CommandPoolCreateInfo (..))
 import Vulkan qualified as VkComponentMapping (ComponentMapping (..))
 import Vulkan qualified as VkDebugUtilsMessengerCreateInfoEXT (DebugUtilsMessengerCreateInfoEXT (..))
+import Vulkan qualified as VkDescriptorPoolCreateInfo (DescriptorPoolCreateInfo (..))
+import Vulkan qualified as VkDescriptorPoolSize (DescriptorPoolSize (..))
+import Vulkan qualified as VkDescriptorSetLayoutBinding (DescriptorSetLayoutBinding (..))
+import Vulkan qualified as VkDescriptorSetLayoutCreateInfo (DescriptorSetLayoutCreateInfo (..))
 import Vulkan qualified as VkDevice (Device (..))
 import Vulkan qualified as VkDeviceCreateInfo (DeviceCreateInfo (..))
 import Vulkan qualified as VkDeviceQueueCreateInfo (DeviceQueueCreateInfo (..))
 import Vulkan qualified as VkExtent2D (Extent2D (..))
+import Vulkan qualified as VkExtent3D (Extent3D (..))
 import Vulkan qualified as VkFenceCreateInfo (FenceCreateInfo (..))
 import Vulkan qualified as VkFramebufferCreateInfo (FramebufferCreateInfo (..))
 import Vulkan qualified as VkGraphicsPipelineCreateInfo (GraphicsPipelineCreateInfo (..))
+import Vulkan qualified as VkImageCreateInfo (ImageCreateInfo (..))
+import Vulkan qualified as VkImageSubresourceLayers (ImageSubresourceLayers (..))
 import Vulkan qualified as VkImageSubresourceRange (ImageSubresourceRange (..))
 import Vulkan qualified as VkImageViewCreateInfo (ImageViewCreateInfo (..))
 import Vulkan qualified as VkInstance (Instance (..))
 import Vulkan qualified as VkInstanceCreateInfo (InstanceCreateInfo (..))
-import Vulkan qualified as VkMemoryAllocateInfo (MemoryAllocateInfo (..))
-import Vulkan qualified as VkMemoryRequirements (MemoryRequirements (..))
-import Vulkan qualified as VkMemoryType (MemoryType (..))
+import Vulkan qualified as VkPhysicalDeviceDynamicRenderingFeatures (PhysicalDeviceDynamicRenderingFeatures (..))
 import Vulkan qualified as VkPipelineColorBlendStateCreateInfo (PipelineColorBlendStateCreateInfo (..))
+import Vulkan qualified as VkPipelineLayoutCreateInfo (PipelineLayoutCreateInfo (..))
 import Vulkan qualified as VkPipelineShaderStageCreateInfo (PipelineShaderStageCreateInfo (..))
 import Vulkan qualified as VkPipelineVertexInputStateCreateInfo (PipelineVertexInputStateCreateInfo (..))
 import Vulkan qualified as VkPresentInfoKHR (PresentInfoKHR (..))
@@ -82,7 +89,6 @@ import Vulkan.Utils.Debug qualified as Vk
 import Vulkan.Zero qualified as Vk
 import VulkanMemoryAllocator qualified as Vma
 import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCreateInfo (..))
-import VulkanMemoryAllocator qualified as VmaAllocationInfo (AllocationInfo (..))
 import VulkanMemoryAllocator qualified as VmaAllocatorCreateInfo (AllocatorCreateInfo (..))
 import Prelude hiding (init)
 
@@ -156,11 +162,11 @@ main = runManaged $ do
               0.5
             ] ::
             SV.Vector Float
-     in withBuffer2 allocator device commandPool gfxQueue Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT vertices
+     in withBuffer allocator device commandPool gfxQueue Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT vertices
   say "Vulkan" "Created vertex buffer"
   indexBuffer <-
     let indecies = SV.fromList [0, 1, 2, 2, 3, 0] :: SV.Vector Word32
-     in withBuffer2 allocator device commandPool gfxQueue Vk.BUFFER_USAGE_INDEX_BUFFER_BIT indecies
+     in withBuffer allocator device commandPool gfxQueue Vk.BUFFER_USAGE_INDEX_BUFFER_BIT indecies
   say "Vulkan" "Created index buffer"
   commandBuffers <- createCommandBuffers device commandPool extent imageViews vertexBuffer indexBuffer
   imageAvailable <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
@@ -168,6 +174,8 @@ main = runManaged $ do
   inFlight <-
     let info = Vk.zero {VkFenceCreateInfo.flags = Vk.FENCE_CREATE_SIGNALED_BIT}
      in managed $ Vk.withFence device info Nothing bracket
+  textureImage <- texture allocator device commandPool gfxQueue "AlphaEdge.png"
+  say "Vulkan" $ "Created texture " ++ show textureImage
   say "Engine" "Show window"
   SDL.showWindow window
   SDL.raiseWindow window
@@ -292,7 +300,7 @@ createCommandBuffers device pool extent imageViews vertexBuffer indexBuffer = do
           Vk.cmdBindIndexBuffer commandBuffer indexBuffer 0 Vk.INDEX_TYPE_UINT32
           Vk.cmdDrawIndexed commandBuffer 6 1 0 0 0
 
-withBuffer2 ::
+withBuffer ::
   (Storable a) =>
   Vma.Allocator ->
   Vk.Device ->
@@ -301,17 +309,92 @@ withBuffer2 ::
   Vk.BufferUsageFlagBits ->
   SV.Vector a ->
   Managed Vk.Buffer
-withBuffer2 allocator device pool queue flags vertices = do
+withBuffer allocator device pool queue flags vertices = do
   let size = 1024
-  (staging, ptr) <- vmaWithHostBuffer allocator size
+  (staging, ptr) <- withHostBuffer allocator size
   let (src, len) = SV.unsafeToForeignPtr0 vertices
   liftIO . withForeignPtr src $ \s -> copyArray (castPtr ptr) s len
 
-  gpuBuffer <- vmaWithGpuBuffer allocator size flags
+  gpuBuffer <- withGPUBuffer allocator size flags
   copyBuffer device pool queue staging gpuBuffer size
   say "Engine" "Copied staging buffer into GPU buffer"
 
   return gpuBuffer
+
+texture allocator device pool queue path = do
+  JP.ImageRGBA8 (JP.Image width height pixels) <- liftIO $ JP.readPng path >>= either (sayErr "Texture" . show) return
+  (staging, mem) <- withHostBuffer allocator (fromIntegral $ width * height * 4)
+  liftIO $
+    let size = width * height * 4
+        (src, _) = SV.unsafeToForeignPtr0 pixels
+        dst = castPtr mem
+     in withForeignPtr src $ \src -> copyArray src dst size
+  (image, _, Vma.AllocationInfo {Vma.mappedData = imageMem}) <-
+    let dims =
+          Vk.Extent3D
+            { VkExtent3D.width = fromIntegral width,
+              VkExtent3D.height = fromIntegral height,
+              VkExtent3D.depth = 1
+            }
+        usage = Vk.IMAGE_USAGE_TRANSFER_DST_BIT .|. Vk.IMAGE_USAGE_SAMPLED_BIT .|. Vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+        imgInfo =
+          Vk.zero
+            { VkImageCreateInfo.imageType = Vk.IMAGE_TYPE_2D,
+              VkImageCreateInfo.extent = dims,
+              VkImageCreateInfo.mipLevels = 1,
+              VkImageCreateInfo.arrayLayers = 1,
+              VkImageCreateInfo.format = Vk.FORMAT_R8G8B8A8_SRGB,
+              VkImageCreateInfo.tiling = Vk.IMAGE_TILING_OPTIMAL,
+              VkImageCreateInfo.initialLayout = Vk.IMAGE_LAYOUT_UNDEFINED,
+              VkImageCreateInfo.usage = usage,
+              VkImageCreateInfo.samples = Vk.SAMPLE_COUNT_1_BIT
+            }
+        allocInfo =
+          Vk.zero
+            { VmaAllocationCreateInfo.usage = Vma.MEMORY_USAGE_AUTO,
+              VmaAllocationCreateInfo.flags = Vma.ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
+              VmaAllocationCreateInfo.priority = 1
+            }
+     in managed $ Vma.withImage allocator imgInfo allocInfo bracket
+  copyBufferToImage device pool queue staging image width height
+  return image
+
+copyBufferToImage device pool queue src dst width height = do
+  buffer <-
+    let info =
+          Vk.zero
+            { VkCommandBufferAllocateInfo.level = Vk.COMMAND_BUFFER_LEVEL_PRIMARY,
+              VkCommandBufferAllocateInfo.commandPool = pool,
+              VkCommandBufferAllocateInfo.commandBufferCount = 1
+            }
+     in V.head <$> managed (Vk.withCommandBuffers device info bracket)
+  let info = Vk.zero {VkCommandBufferBeginInfo.flags = Vk.COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT}
+      subresource =
+        Vk.zero
+          { VkImageSubresourceLayers.aspectMask = Vk.IMAGE_ASPECT_COLOR_BIT,
+            VkImageSubresourceLayers.layerCount = 1,
+            VkImageSubresourceLayers.mipLevel = 0,
+            VkImageSubresourceLayers.baseArrayLayer = 0
+          }
+      dims =
+        Vk.Extent3D
+          { VkExtent3D.width = fromIntegral width,
+            VkExtent3D.height = fromIntegral height,
+            VkExtent3D.depth = 1
+          }
+      region =
+        Vk.zero
+          { VkBufferImageCopy.bufferOffset = 0,
+            VkBufferImageCopy.bufferRowLength = 0,
+            VkBufferImageCopy.bufferImageHeight = 0,
+            VkBufferImageCopy.imageSubresource = subresource,
+            VkBufferImageCopy.imageExtent = dims
+          }
+      cmd = Vk.cmdCopyBufferToImage buffer src dst Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL [region]
+   in Vk.useCommandBuffer buffer info cmd
+  let info = Vk.zero {VkSubmitInfo.commandBuffers = [Vk.commandBufferHandle buffer]}
+   in Vk.queueSubmit queue [Vk.SomeStruct info] Vk.NULL_HANDLE
+  Vk.queueWaitIdle queue
 
 copyBuffer :: Vk.Device -> Vk.CommandPool -> Vk.Queue -> Vk.Buffer -> Vk.Buffer -> Vk.DeviceSize -> Managed ()
 copyBuffer device pool queue src dst size = do
@@ -330,8 +413,14 @@ copyBuffer device pool queue src dst size = do
    in Vk.queueSubmit queue [Vk.SomeStruct info] Vk.NULL_HANDLE
   Vk.queueWaitIdle queue
 
-vmaWithHostBuffer :: Vma.Allocator -> Vk.DeviceSize -> Managed (Vk.Buffer, Ptr ())
-vmaWithHostBuffer allocator size = do
+-- copyBuffer2 :: Vk.Device -> Vk.CommandPool -> Vk.Queue -> Vk.Buffer -> Vk.Buffer -> Vk.DeviceSize -> Managed ()
+
+-- _ <- Vk.waitForFences device [fence] True maxBound
+-- _ <- Vk.resetFences device [fence]
+-- Vk.resetCommandPool device pool (Vk.CommandPoolResetFlagBits 0)
+
+withHostBuffer :: Vma.Allocator -> Vk.DeviceSize -> Managed (Vk.Buffer, Ptr ())
+withHostBuffer allocator size = do
   (buffer, _, Vma.AllocationInfo {Vma.mappedData = mem}) <-
     let bufferInfo =
           Vk.zero
@@ -348,8 +437,8 @@ vmaWithHostBuffer allocator size = do
   say "Vulkan" $ "Created buffer on host of size" ++ show size
   return (buffer, mem)
 
-vmaWithGpuBuffer :: Vma.Allocator -> Vk.DeviceSize -> Vk.BufferUsageFlagBits -> Managed Vk.Buffer
-vmaWithGpuBuffer allocator size flags = do
+withGPUBuffer :: Vma.Allocator -> Vk.DeviceSize -> Vk.BufferUsageFlagBits -> Managed Vk.Buffer
+withGPUBuffer allocator size flags = do
   (buffer, _, _) <-
     let bufferInfo =
           Vk.zero
@@ -429,105 +518,142 @@ drawFrame dev swapchain gfx present imageAvailable renderFinished inFlight comma
        in Vk.queuePresentKHR present info
     return ()
 
+framesInFlight :: Word32
+framesInFlight = 1
+
 withPipeline :: Vk.Device -> Vk.RenderPass -> Vk.Extent2D -> Managed Vk.Pipeline
 withPipeline dev renderPass swapchainExtent = do
   (vert, frag) <- createShaders dev
-  pipelineLayout <- managed $ Vk.withPipelineLayout dev Vk.zero Nothing bracket
-  let vertexInputInfo =
-        Vk.zero
-          { VkPipelineVertexInputStateCreateInfo.vertexBindingDescriptions =
-              [ Vk.zero
-                  { VkVertexInputBindingDescription.binding = 0,
-                    VkVertexInputBindingDescription.stride = fromIntegral $ 5 * sizeOf (undefined :: Float),
-                    VkVertexInputBindingDescription.inputRate = Vk.VERTEX_INPUT_RATE_VERTEX
-                  }
-              ],
-            VkPipelineVertexInputStateCreateInfo.vertexAttributeDescriptions =
-              [ Vk.zero
-                  { VkVertexInputAttributeDescription.binding = 0,
-                    VkVertexInputAttributeDescription.location = 0,
-                    VkVertexInputAttributeDescription.format = Vk.FORMAT_R32G32_SFLOAT, -- vec2 for position
-                    VkVertexInputAttributeDescription.offset = 0 -- offset of position
-                  },
-                Vk.zero
-                  { VkVertexInputAttributeDescription.binding = 0,
-                    VkVertexInputAttributeDescription.location = 1,
-                    VkVertexInputAttributeDescription.format = Vk.FORMAT_R32G32B32_SFLOAT,
-                    VkVertexInputAttributeDescription.offset = fromIntegral $ 2 * sizeOf (undefined :: Float)
-                  }
-              ]
-          }
-      pipelineCreateInfo :: Vk.GraphicsPipelineCreateInfo '[]
-      pipelineCreateInfo =
-        Vk.zero
-          { VkGraphicsPipelineCreateInfo.stages = [vert, frag],
-            VkGraphicsPipelineCreateInfo.vertexInputState = Just $ Vk.SomeStruct vertexInputInfo,
-            VkGraphicsPipelineCreateInfo.inputAssemblyState =
-              Just
-                Vk.zero
-                  { Vk.topology = Vk.PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
-                    Vk.primitiveRestartEnable = False
-                  },
-            VkGraphicsPipelineCreateInfo.viewportState =
-              Just . Vk.SomeStruct $
-                Vk.zero
-                  { Vk.viewports =
-                      [ Vk.Viewport
-                          { VkViewport.x = 0,
-                            VkViewport.y = 0,
-                            VkViewport.width = realToFrac (VkExtent2D.width swapchainExtent),
-                            VkViewport.height = realToFrac (VkExtent2D.height swapchainExtent),
-                            VkViewport.minDepth = 0,
-                            VkViewport.maxDepth = 1
-                          }
-                      ],
-                    Vk.scissors =
-                      [Vk.Rect2D {VkRect2D.offset = Vk.Offset2D 0 0, VkRect2D.extent = swapchainExtent}]
-                  },
-            VkGraphicsPipelineCreateInfo.rasterizationState =
-              Just . Vk.SomeStruct $
-                Vk.zero
-                  { Vk.depthClampEnable = False,
-                    Vk.rasterizerDiscardEnable = False,
-                    Vk.lineWidth = 1,
-                    Vk.polygonMode = Vk.POLYGON_MODE_FILL,
-                    Vk.cullMode = Vk.CULL_MODE_NONE,
-                    Vk.frontFace = Vk.FRONT_FACE_CLOCKWISE,
-                    Vk.depthBiasEnable = False
-                  },
-            VkGraphicsPipelineCreateInfo.multisampleState =
-              Just . Vk.SomeStruct $
-                Vk.zero
-                  { VkVPipelineMultisampleStateCreateInfo.sampleShadingEnable = False,
-                    VkVPipelineMultisampleStateCreateInfo.rasterizationSamples = Vk.SAMPLE_COUNT_1_BIT,
-                    VkVPipelineMultisampleStateCreateInfo.minSampleShading = 1,
-                    VkVPipelineMultisampleStateCreateInfo.sampleMask = [maxBound]
-                  },
-            VkGraphicsPipelineCreateInfo.depthStencilState = Nothing,
-            VkGraphicsPipelineCreateInfo.colorBlendState =
-              Just . Vk.SomeStruct $
-                Vk.zero
-                  { VkPipelineColorBlendStateCreateInfo.logicOpEnable = False,
-                    VkPipelineColorBlendStateCreateInfo.attachments =
-                      [ Vk.zero
-                          { Vk.colorWriteMask =
-                              Vk.COLOR_COMPONENT_R_BIT
-                                .|. Vk.COLOR_COMPONENT_G_BIT
-                                .|. Vk.COLOR_COMPONENT_B_BIT
-                                .|. Vk.COLOR_COMPONENT_A_BIT,
-                            Vk.blendEnable = False
-                          }
-                      ]
-                  },
-            VkGraphicsPipelineCreateInfo.dynamicState = Nothing,
-            VkGraphicsPipelineCreateInfo.layout = pipelineLayout,
-            VkGraphicsPipelineCreateInfo.renderPass = renderPass,
-            VkGraphicsPipelineCreateInfo.subpass = 0,
-            VkGraphicsPipelineCreateInfo.basePipelineHandle = Vk.zero
-          }
-  (_, res) <- managed $ Vk.withGraphicsPipelines dev Vk.zero [Vk.SomeStruct pipelineCreateInfo] Nothing bracket
+  descriptorSetLayout <-
+    let uniform =
+          Vk.zero
+            { VkDescriptorSetLayoutBinding.binding = 0,
+              VkDescriptorSetLayoutBinding.descriptorCount = 1,
+              VkDescriptorSetLayoutBinding.descriptorType = Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+              VkDescriptorSetLayoutBinding.stageFlags = Vk.SHADER_STAGE_VERTEX_BIT
+            }
+        sampler =
+          Vk.zero
+            { VkDescriptorSetLayoutBinding.binding = 1,
+              VkDescriptorSetLayoutBinding.descriptorCount = 1,
+              VkDescriptorSetLayoutBinding.descriptorType = Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+              VkDescriptorSetLayoutBinding.stageFlags = Vk.SHADER_STAGE_FRAGMENT_BIT
+            }
+        info =
+          Vk.zero {VkDescriptorSetLayoutCreateInfo.bindings = [uniform, sampler]}
+     in managed $ Vk.withDescriptorSetLayout dev info Nothing bracket
+  pipelineLayout <-
+    let info = Vk.zero {VkPipelineLayoutCreateInfo.setLayouts = [descriptorSetLayout]}
+     in managed $ Vk.withPipelineLayout dev info Nothing bracket
+  descriptorPool <-
+    let size =
+          Vk.zero
+            { VkDescriptorPoolSize.type' = Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+              VkDescriptorPoolSize.descriptorCount = framesInFlight
+            }
+        info =
+          Vk.zero
+            { VkDescriptorPoolCreateInfo.maxSets = framesInFlight,
+              VkDescriptorPoolCreateInfo.poolSizes = [size]
+            }
+     in managed $ Vk.withDescriptorPool dev info Nothing bracket
+
+  (_, res) <-
+    let vertexInputInfo =
+          Vk.zero
+            { VkPipelineVertexInputStateCreateInfo.vertexBindingDescriptions =
+                [ Vk.zero
+                    { VkVertexInputBindingDescription.binding = 0,
+                      VkVertexInputBindingDescription.stride = fromIntegral $ 5 * sizeOf (undefined :: Float),
+                      VkVertexInputBindingDescription.inputRate = Vk.VERTEX_INPUT_RATE_VERTEX
+                    }
+                ],
+              VkPipelineVertexInputStateCreateInfo.vertexAttributeDescriptions =
+                [ Vk.zero
+                    { VkVertexInputAttributeDescription.binding = 0,
+                      VkVertexInputAttributeDescription.location = 0,
+                      VkVertexInputAttributeDescription.format = Vk.FORMAT_R32G32_SFLOAT, -- vec2 for position
+                      VkVertexInputAttributeDescription.offset = 0 -- offset of position
+                    },
+                  Vk.zero
+                    { VkVertexInputAttributeDescription.binding = 0,
+                      VkVertexInputAttributeDescription.location = 1,
+                      VkVertexInputAttributeDescription.format = Vk.FORMAT_R32G32B32_SFLOAT,
+                      VkVertexInputAttributeDescription.offset = fromIntegral $ 2 * sizeOf (undefined :: Float)
+                    }
+                ]
+            }
+        pipelineCreateInfo =
+          Vk.zero
+            { VkGraphicsPipelineCreateInfo.stages = [vert, frag],
+              VkGraphicsPipelineCreateInfo.vertexInputState = Just $ Vk.SomeStruct vertexInputInfo,
+              VkGraphicsPipelineCreateInfo.inputAssemblyState =
+                Just
+                  Vk.zero
+                    { Vk.topology = Vk.PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+                      Vk.primitiveRestartEnable = False
+                    },
+              VkGraphicsPipelineCreateInfo.viewportState =
+                Just . Vk.SomeStruct $
+                  Vk.zero
+                    { Vk.viewports =
+                        [ Vk.Viewport
+                            { VkViewport.x = 0,
+                              VkViewport.y = 0,
+                              VkViewport.width = realToFrac (VkExtent2D.width swapchainExtent),
+                              VkViewport.height = realToFrac (VkExtent2D.height swapchainExtent),
+                              VkViewport.minDepth = 0,
+                              VkViewport.maxDepth = 1
+                            }
+                        ],
+                      Vk.scissors =
+                        [Vk.Rect2D {VkRect2D.offset = Vk.Offset2D 0 0, VkRect2D.extent = swapchainExtent}]
+                    },
+              VkGraphicsPipelineCreateInfo.rasterizationState =
+                Just . Vk.SomeStruct $
+                  Vk.zero
+                    { Vk.depthClampEnable = False,
+                      Vk.rasterizerDiscardEnable = False,
+                      Vk.lineWidth = 1,
+                      Vk.polygonMode = Vk.POLYGON_MODE_FILL,
+                      Vk.cullMode = Vk.CULL_MODE_NONE,
+                      Vk.frontFace = Vk.FRONT_FACE_CLOCKWISE,
+                      Vk.depthBiasEnable = False
+                    },
+              VkGraphicsPipelineCreateInfo.multisampleState =
+                Just . Vk.SomeStruct $
+                  Vk.zero
+                    { VkVPipelineMultisampleStateCreateInfo.sampleShadingEnable = False,
+                      VkVPipelineMultisampleStateCreateInfo.rasterizationSamples = Vk.SAMPLE_COUNT_1_BIT,
+                      VkVPipelineMultisampleStateCreateInfo.minSampleShading = 1,
+                      VkVPipelineMultisampleStateCreateInfo.sampleMask = [maxBound]
+                    },
+              VkGraphicsPipelineCreateInfo.depthStencilState = Nothing,
+              VkGraphicsPipelineCreateInfo.colorBlendState =
+                Just . Vk.SomeStruct $
+                  Vk.zero
+                    { VkPipelineColorBlendStateCreateInfo.logicOpEnable = False,
+                      VkPipelineColorBlendStateCreateInfo.attachments =
+                        [ Vk.zero
+                            { Vk.colorWriteMask =
+                                Vk.COLOR_COMPONENT_R_BIT
+                                  .|. Vk.COLOR_COMPONENT_G_BIT
+                                  .|. Vk.COLOR_COMPONENT_B_BIT
+                                  .|. Vk.COLOR_COMPONENT_A_BIT,
+                              Vk.blendEnable = False
+                            }
+                        ]
+                    },
+              VkGraphicsPipelineCreateInfo.dynamicState = Nothing,
+              VkGraphicsPipelineCreateInfo.layout = pipelineLayout,
+              VkGraphicsPipelineCreateInfo.renderPass = renderPass,
+              VkGraphicsPipelineCreateInfo.subpass = 0,
+              VkGraphicsPipelineCreateInfo.basePipelineHandle = Vk.zero
+            }
+     in managed $ Vk.withGraphicsPipelines dev Vk.zero [Vk.SomeStruct pipelineCreateInfo] Nothing bracket
   return . V.head $ res
 
+-- TODO break into two functions
 createShaders ::
   (MonadManaged m) =>
   Vk.Device ->
@@ -683,22 +809,6 @@ createRenderPass dev = do
       Nothing
       bracket
 
-withDevice :: (MonadManaged m) => Vk.PhysicalDevice -> Word32 -> Word32 -> Bool -> m Vk.Device
-withDevice gpu gfx present portable = managed $ Vk.withDevice gpu info Nothing bracket
-  where
-    inf i =
-      Vk.SomeStruct $
-        Vk.zero
-          { VkDeviceQueueCreateInfo.queueFamilyIndex = i,
-            VkDeviceQueueCreateInfo.queuePriorities = [1.0]
-          }
-    exts = Vk.KHR_SWAPCHAIN_EXTENSION_NAME : ([Vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME | portable])
-    info =
-      Vk.zero
-        { VkDeviceCreateInfo.queueCreateInfos = V.fromList $ inf gfx : ([inf present | gfx /= present]),
-          VkDeviceCreateInfo.enabledExtensionNames = V.fromList exts
-        }
-
 pickGPU ::
   forall m.
   (MonadIO m) =>
@@ -751,33 +861,51 @@ pickGPU vulkan surface = do
 
         portabilitySubSetPresent = any ((== Vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME) . Vk.extensionName)
 
-withVulkan :: (MonadManaged m) => SDL.Window -> m Vk.Instance
+withDevice :: (MonadManaged m) => Vk.PhysicalDevice -> Word32 -> Word32 -> Bool -> m Vk.Device
+withDevice gpu gfx present portable =
+  let exts =
+        Vk.KHR_DYNAMIC_RENDERING_EXTENSION_NAME
+          : Vk.KHR_SWAPCHAIN_EXTENSION_NAME
+          : ([Vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME | portable])
+      dynamicRendering = Vk.zero {VkPhysicalDeviceDynamicRenderingFeatures.dynamicRendering = True}
+      info =
+        Vk.zero
+          { VkDeviceCreateInfo.queueCreateInfos = V.fromList $ inf gfx : ([inf present | gfx /= present]),
+            VkDeviceCreateInfo.enabledExtensionNames = V.fromList exts
+          }
+          ::& dynamicRendering
+            :& ()
+   in managed $ Vk.withDevice gpu info Nothing bracket
+  where
+    inf i =
+      Vk.SomeStruct $
+        Vk.zero
+          { VkDeviceQueueCreateInfo.queueFamilyIndex = i,
+            VkDeviceQueueCreateInfo.queuePriorities = [1.0]
+          }
+
+withVulkan :: SDL.Window -> Managed Vk.Instance
 withVulkan w = do
-  reqExts <- SDL.vkGetInstanceExtensions w
-  liftIO $ do
-    exts <- unwords <$> mapM peekCString reqExts
-    putStrLn $ "SDL: Required Vulkan extension: " ++ exts
-  instExts <- liftIO $ do
-    let extra =
-          [ Vk.EXT_DEBUG_UTILS_EXTENSION_NAME,
-            Vk.EXT_VALIDATION_FEATURES_EXTENSION_NAME,
-            "VK_KHR_portability_enumeration",
-            "VK_KHR_get_physical_device_properties2"
-          ]
-    required <- mapM (fmap BS.pack . peekCAString) reqExts
-    return $ V.fromList $ required ++ extra
-  liftIO $
-    let exts = unwords (V.toList (BS.unpack <$> instExts))
-     in putStrLn $ "Vulkan: Instance extenions: " ++ exts
+  reqExts <- mapM (fmap BS.pack . peekCAString) <$> SDL.vkGetInstanceExtensions w
+  instExts <-
+    liftIO $
+      let extra =
+            [ Vk.EXT_DEBUG_UTILS_EXTENSION_NAME,
+              Vk.EXT_VALIDATION_FEATURES_EXTENSION_NAME,
+              Vk.KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
+              Vk.KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME
+            ]
+       in (++ extra) <$> reqExts
+  say "Vulkan" $ "Instance extenions: " ++ unwords (BS.unpack <$> instExts)
   let instanceCreateInfo =
         Vk.zero
           { VkInstanceCreateInfo.applicationInfo =
               Just
                 Vk.zero
                   { VkApplicationInfo.applicationName = Just "Vulkan",
-                    VkApplicationInfo.apiVersion = Vk.API_VERSION_1_0
+                    VkApplicationInfo.apiVersion = Vk.API_VERSION_1_3
                   },
-            VkInstanceCreateInfo.enabledExtensionNames = instExts,
+            VkInstanceCreateInfo.enabledExtensionNames = V.fromList instExts,
             VkInstanceCreateInfo.enabledLayerNames = ["VK_LAYER_KHRONOS_validation"],
             VkInstanceCreateInfo.flags = Vk.INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR
           }

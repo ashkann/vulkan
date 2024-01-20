@@ -16,6 +16,7 @@ dependencies:
   - transformers
   - dear-imgui
   - geomancy
+  - JuicyPixels
 
 ghc-options:
   - -Wall

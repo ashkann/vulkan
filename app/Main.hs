@@ -22,6 +22,7 @@ import Data.ByteString.Char8 qualified as BS (pack, unpack)
 import Data.Foldable
 import Data.Functor ((<&>))
 import Data.Traversable (for)
+import Data.Type.Equality (trans)
 import Data.Vector ((!))
 import Data.Vector qualified as V
 import Data.Vector.Storable qualified as SV
@@ -120,11 +121,7 @@ main = runManaged $ do
   say "Vulkan" "Creating vertex buffer"
   say "Vulkan" "Vertex Buffer created"
   commandPool <-
-    let info =
-          Vk.zero
-            { VkCommandPoolCreateInfo.queueFamilyIndex = gfx,
-              VkCommandPoolCreateInfo.flags = Vk.COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT
-            }
+    let info = Vk.zero {VkCommandPoolCreateInfo.queueFamilyIndex = gfx}
      in managed $ Vk.withCommandPool device info Nothing bracket
   say "Vulkan" "Created command pool"
   vertexBuffer <-
@@ -156,11 +153,11 @@ main = runManaged $ do
               0.5
             ] ::
             SV.Vector Float
-     in withBuffer allocator device commandPool gfxQueue Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT vertices
+     in withBuffer allocator 1024 device commandPool gfxQueue Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT vertices
   say "Vulkan" "Created vertex buffer"
   indexBuffer <-
     let indecies = SV.fromList [0, 1, 2, 2, 3, 0] :: SV.Vector Word32
-     in withBuffer allocator device commandPool gfxQueue Vk.BUFFER_USAGE_INDEX_BUFFER_BIT indecies
+     in withBuffer allocator 1025 device commandPool gfxQueue Vk.BUFFER_USAGE_INDEX_BUFFER_BIT indecies
   say "Vulkan" "Created index buffer"
   commandBuffers <- createCommandBuffers device commandPool extent images vertexBuffer indexBuffer
   imageAvailable <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
@@ -168,8 +165,8 @@ main = runManaged $ do
   inFlight <-
     let info = Vk.zero {VkFenceCreateInfo.flags = Vk.FENCE_CREATE_SIGNALED_BIT}
      in managed $ Vk.withFence device info Nothing bracket
-  -- textureImage <- texture allocator device commandPool gfxQueue "AlphaEdge.png"
-  -- say "Vulkan" $ "Created texture " ++ show textureImage
+  textureImage <- texture allocator device commandPool "AlphaEdge.png"
+  say "Vulkan" $ "Created texture " ++ show textureImage
   say "Engine" "Show window"
   SDL.showWindow window
   SDL.raiseWindow window
@@ -236,14 +233,14 @@ debugUtilsMessengerCreateInfo =
 withBuffer ::
   (Storable a) =>
   Vma.Allocator ->
+  Vk.DeviceSize ->
   Vk.Device ->
   Vk.CommandPool ->
   Vk.Queue ->
   Vk.BufferUsageFlagBits ->
   SV.Vector a ->
   Managed Vk.Buffer
-withBuffer allocator device pool queue flags vertices = do
-  let size = 1024
+withBuffer allocator size device pool queue flags vertices = do
   (staging, ptr) <- withHostBuffer allocator size
   let (src, len) = SV.unsafeToForeignPtr0 vertices
   liftIO . withForeignPtr src $ \s -> copyArray (castPtr ptr) s len
@@ -254,13 +251,13 @@ withBuffer allocator device pool queue flags vertices = do
 
   return gpuBuffer
 
-texture :: Vma.Allocator -> VkDevice.Device -> Vk.CommandPool -> Vk.Queue -> FilePath -> Managed Vk.Image
-texture allocator device pool queue path = do
+texture :: Vma.Allocator -> VkDevice.Device -> Vk.CommandPool -> FilePath -> Managed Vk.Image
+texture allocator device pool path = do
   JP.ImageRGBA8 (JP.Image width height pixels) <- liftIO $ JP.readPng path >>= either (sayErr "Texture" . show) return
-  (staging, mem) <- withHostBuffer allocator (fromIntegral $ width * height * 4)
+  let size = width * height * 4
+  (staging, mem) <- withHostBuffer allocator (fromIntegral size)
   liftIO $
-    let size = width * height * 4
-        (src, _) = SV.unsafeToForeignPtr0 pixels
+    let (src, _) = SV.unsafeToForeignPtr0 pixels
         dst = castPtr mem
      in withForeignPtr src $ \src -> copyArray src dst size
   (image, _, Vma.AllocationInfo {Vma.mappedData = imageMem}) <-
@@ -290,11 +287,11 @@ texture allocator device pool queue path = do
               VmaAllocationCreateInfo.priority = 1
             }
      in managed $ Vma.withImage allocator imgInfo allocInfo bracket
-  copyBufferToImage device pool queue staging image width height
+  copyBufferToImage device pool staging image width height
   return image
 
-copyBufferToImage :: VkDevice.Device -> Vk.CommandPool -> Vk.Queue -> Vk.Buffer -> Vk.Image -> Int -> Int -> Managed ()
-copyBufferToImage device pool queue src dst width height = do
+submitNow :: Vk.Device -> Vk.CommandPool -> (Vk.CommandBuffer -> Managed r) -> Managed r
+submitNow device pool use = do
   buffer <-
     let info =
           Vk.zero
@@ -304,7 +301,11 @@ copyBufferToImage device pool queue src dst width height = do
             }
      in V.head <$> managed (Vk.withCommandBuffers device info bracket)
   let info = Vk.zero {VkCommandBufferBeginInfo.flags = Vk.COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT}
-      subresource =
+   in Vk.useCommandBuffer buffer info (use buffer)
+
+copyBufferToImage :: VkDevice.Device -> Vk.CommandPool -> Vk.Buffer -> Vk.Image -> Int -> Int -> Managed ()
+copyBufferToImage device pool src dst width height = do
+  let subresource =
         Vk.zero
           { VkImageSubresourceLayers.aspectMask = Vk.IMAGE_ASPECT_COLOR_BIT,
             VkImageSubresourceLayers.layerCount = 1,
@@ -325,11 +326,10 @@ copyBufferToImage device pool queue src dst width height = do
             VkBufferImageCopy.imageSubresource = subresource,
             VkBufferImageCopy.imageExtent = dims
           }
-      cmd = Vk.cmdCopyBufferToImage buffer src dst Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL [region]
-   in Vk.useCommandBuffer buffer info cmd
-  let info = Vk.zero {VkSubmitInfo.commandBuffers = [Vk.commandBufferHandle buffer]}
-   in Vk.queueSubmit queue [Vk.SomeStruct info] Vk.NULL_HANDLE
-  Vk.queueWaitIdle queue
+  submitNow device pool $ \cmd -> do
+    transitImage cmd dst (Vk.AccessFlagBits 0) (Vk.AccessFlagBits 0) Vk.IMAGE_LAYOUT_UNDEFINED Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL Vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT Vk.PIPELINE_STAGE_TRANSFER_BIT
+    liftIO $ Vk.cmdCopyBufferToImage cmd src dst Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL [region]
+    transitImage cmd dst (Vk.AccessFlagBits 0) (Vk.AccessFlagBits 0) Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL Vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL Vk.PIPELINE_STAGE_TRANSFER_BIT Vk.PIPELINE_STAGE_FRAGMENT_SHADER_BIT
 
 copyBuffer :: Vk.Device -> Vk.CommandPool -> Vk.Queue -> Vk.Buffer -> Vk.Buffer -> Vk.DeviceSize -> Managed ()
 copyBuffer device pool queue src dst size = do
@@ -347,12 +347,6 @@ copyBuffer device pool queue src dst size = do
   let info = Vk.zero {VkSubmitInfo.commandBuffers = [Vk.commandBufferHandle buffer]}
    in Vk.queueSubmit queue [Vk.SomeStruct info] Vk.NULL_HANDLE
   Vk.queueWaitIdle queue
-
--- copyBuffer2 :: Vk.Device -> Vk.CommandPool -> Vk.Queue -> Vk.Buffer -> Vk.Buffer -> Vk.DeviceSize -> Managed ()
-
--- _ <- Vk.waitForFences device [fence] True maxBound
--- _ <- Vk.resetFences device [fence]
--- Vk.resetCommandPool device pool (Vk.CommandPoolResetFlagBits 0)
 
 withHostBuffer :: Vma.Allocator -> Vk.DeviceSize -> Managed (Vk.Buffer, Ptr ())
 withHostBuffer allocator size = do
@@ -388,7 +382,7 @@ withGPUBuffer allocator size flags = do
               VmaAllocationCreateInfo.priority = 1
             }
      in managed $ Vma.withBuffer allocator bufferInfo vmaInfo bracket
-  say "Vulkan" $ "Created buffer on GPU of size" ++ show size ++ " bytes"
+  say "Vulkan" $ "Created buffer on GPU of size " ++ show size ++ " bytes"
   return buffer
 
 mainLoop :: IO () -> IO ()
@@ -462,14 +456,13 @@ render ::
   Vk.CommandBuffer ->
   Managed ()
 render pipeline vertex index extent (img, view) cmd =
-  let info = Vk.zero {VkCommandBufferBeginInfo.flags = Vk.COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT}
-   in Vk.useCommandBuffer cmd info $ do
-        transit renderLayout
-        Vk.cmdBindPipeline cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
-        Vk.cmdBindVertexBuffers cmd 0 [vertex] [0]
-        Vk.cmdBindIndexBuffer cmd index 0 Vk.INDEX_TYPE_UINT32
-        draw
-        transit presentLayout
+  Vk.useCommandBuffer cmd Vk.zero $ do
+    transit renderLayout
+    Vk.cmdBindPipeline cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
+    Vk.cmdBindVertexBuffers cmd 0 [vertex] [0]
+    Vk.cmdBindIndexBuffer cmd index 0 Vk.INDEX_TYPE_UINT32
+    draw
+    transit presentLayout
   where
     renderLayout =
       ( Vk.AccessFlagBits 0,
@@ -527,6 +520,35 @@ render pipeline vertex index extent (img, view) cmd =
           indexCount = 6 -- TODO get from index buffer
        in Vk.cmdUseRendering cmd info2 $ Vk.cmdDrawIndexed cmd indexCount 1 0 0 0
 
+transitImage ::
+  Vk.CommandBuffer ->
+  Vk.Image ->
+  Vk.AccessFlagBits ->
+  Vk.AccessFlagBits ->
+  Vk.ImageLayout ->
+  Vk.ImageLayout ->
+  Vk.PipelineStageFlags ->
+  Vk.PipelineStageFlags ->
+  Managed ()
+transitImage cmd img srcMask dstMask old new srcStage dstStage =
+  let barrier =
+        Vk.zero
+          { VkImageMemoryBarrier.srcAccessMask = srcMask,
+            VkImageMemoryBarrier.dstAccessMask = dstMask,
+            VkImageMemoryBarrier.oldLayout = old,
+            VkImageMemoryBarrier.newLayout = new,
+            VkImageMemoryBarrier.image = img,
+            VkImageMemoryBarrier.subresourceRange =
+              Vk.zero
+                { VkImageSubresourceRange.aspectMask = Vk.IMAGE_ASPECT_COLOR_BIT,
+                  VkImageSubresourceRange.baseMipLevel = 0,
+                  VkImageSubresourceRange.levelCount = 1,
+                  VkImageSubresourceRange.baseArrayLayer = 0,
+                  VkImageSubresourceRange.layerCount = 1
+                }
+          }
+   in Vk.cmdPipelineBarrier cmd srcStage dstStage (Vk.DependencyFlagBits 0) [] [] [Vk.SomeStruct barrier]
+
 createCommandBuffers ::
   Vk.Device ->
   Vk.CommandPool ->
@@ -535,7 +557,7 @@ createCommandBuffers ::
   Vk.Buffer ->
   Vk.Buffer ->
   Managed (V.Vector Vk.CommandBuffer)
-createCommandBuffers device pool extent images vertexBuffer indexBuffer = do
+createCommandBuffers device pool extent images vertex index = do
   pipeline <- withPipeline device extent
   say "Vulkan" "Created pipeline"
   commandBuffers <-
@@ -547,7 +569,7 @@ createCommandBuffers device pool extent images vertexBuffer indexBuffer = do
             }
      in managed $ Vk.withCommandBuffers device info bracket
   say "Vulkan" "Created comamand buffers"
-  for_ (V.zip images commandBuffers) $ uncurry (render pipeline vertexBuffer indexBuffer extent)
+  for_ (V.zip images commandBuffers) $ uncurry (render pipeline vertex index extent)
   say "Vulkan" "Recorded command buffers"
   return commandBuffers
 

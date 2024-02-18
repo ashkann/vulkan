@@ -168,8 +168,8 @@ main = runManaged $ do
   inFlight <-
     let info = Vk.zero {VkFenceCreateInfo.flags = Vk.FENCE_CREATE_SIGNALED_BIT}
      in managed $ Vk.withFence device info Nothing bracket
-  textureImage <- texture allocator device commandPool gfxQueue "AlphaEdge.png"
-  say "Vulkan" $ "Created texture " ++ show textureImage
+  -- textureImage <- texture allocator device commandPool gfxQueue "AlphaEdge.png"
+  -- say "Vulkan" $ "Created texture " ++ show textureImage
   say "Engine" "Show window"
   SDL.showWindow window
   SDL.raiseWindow window
@@ -254,6 +254,7 @@ withBuffer allocator device pool queue flags vertices = do
 
   return gpuBuffer
 
+texture :: Vma.Allocator -> VkDevice.Device -> Vk.CommandPool -> Vk.Queue -> FilePath -> Managed Vk.Image
 texture allocator device pool queue path = do
   JP.ImageRGBA8 (JP.Image width height pixels) <- liftIO $ JP.readPng path >>= either (sayErr "Texture" . show) return
   (staging, mem) <- withHostBuffer allocator (fromIntegral $ width * height * 4)
@@ -292,6 +293,7 @@ texture allocator device pool queue path = do
   copyBufferToImage device pool queue staging image width height
   return image
 
+copyBufferToImage :: VkDevice.Device -> Vk.CommandPool -> Vk.Queue -> Vk.Buffer -> Vk.Image -> Int -> Int -> Managed ()
 copyBufferToImage device pool queue src dst width height = do
   buffer <-
     let info =
@@ -462,17 +464,35 @@ render ::
 render pipeline vertex index extent (img, view) cmd =
   let info = Vk.zero {VkCommandBufferBeginInfo.flags = Vk.COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT}
    in Vk.useCommandBuffer cmd info $ do
-        prepareToRender
+        transit renderLayout
         Vk.cmdBindPipeline cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
         Vk.cmdBindVertexBuffers cmd 0 [vertex] [0]
         Vk.cmdBindIndexBuffer cmd index 0 Vk.INDEX_TYPE_UINT32
         draw
-        prepareToPresent
+        transit presentLayout
   where
-    transit old new src dst =
+    renderLayout =
+      ( Vk.AccessFlagBits 0,
+        Vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        Vk.IMAGE_LAYOUT_UNDEFINED,
+        Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        Vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+      )
+    presentLayout =
+      ( Vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        Vk.AccessFlagBits 0,
+        Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        Vk.IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        Vk.PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT
+      )
+
+    transit (srcMask, dstMask, old, new, src, dst) =
       let barrier =
             Vk.zero
-              { VkImageMemoryBarrier.srcAccessMask = Vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+              { VkImageMemoryBarrier.srcAccessMask = srcMask,
+                VkImageMemoryBarrier.dstAccessMask = dstMask,
                 VkImageMemoryBarrier.oldLayout = old,
                 VkImageMemoryBarrier.newLayout = new,
                 VkImageMemoryBarrier.image = img,
@@ -492,7 +512,7 @@ render pipeline vertex index extent (img, view) cmd =
           attachment =
             Vk.zero
               { VkRenderingAttachmentInfo.imageView = view,
-                VkRenderingAttachmentInfo.imageLayout = Vk.IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
+                VkRenderingAttachmentInfo.imageLayout = Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                 VkRenderingAttachmentInfo.loadOp = Vk.ATTACHMENT_LOAD_OP_CLEAR,
                 VkRenderingAttachmentInfo.storeOp = Vk.ATTACHMENT_STORE_OP_STORE,
                 VkRenderingAttachmentInfo.clearValue = clear
@@ -506,18 +526,6 @@ render pipeline vertex index extent (img, view) cmd =
               }
           indexCount = 6 -- TODO get from index buffer
        in Vk.cmdUseRendering cmd info2 $ Vk.cmdDrawIndexed cmd indexCount 1 0 0 0
-    prepareToRender =
-      transit
-        Vk.IMAGE_LAYOUT_UNDEFINED
-        Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
-        Vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT
-        Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
-    prepareToPresent =
-      transit
-        Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
-        Vk.IMAGE_LAYOUT_PRESENT_SRC_KHR
-        Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
-        Vk.PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT
 
 createCommandBuffers ::
   Vk.Device ->

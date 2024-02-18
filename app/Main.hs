@@ -462,36 +462,19 @@ render ::
 render pipeline vertex index extent (img, view) cmd =
   let info = Vk.zero {VkCommandBufferBeginInfo.flags = Vk.COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT}
    in Vk.useCommandBuffer cmd info $ do
-        toAttachment
+        prepareToRender
         Vk.cmdBindPipeline cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
         Vk.cmdBindVertexBuffers cmd 0 [vertex] [0]
         Vk.cmdBindIndexBuffer cmd index 0 Vk.INDEX_TYPE_UINT32
-        let clear = Vk.Color (Vk.Float32 0.0 0.0 0.0 0)
-            attachment =
-              Vk.zero
-                { VkRenderingAttachmentInfo.imageView = view,
-                  VkRenderingAttachmentInfo.imageLayout = Vk.IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
-                  VkRenderingAttachmentInfo.loadOp = Vk.ATTACHMENT_LOAD_OP_CLEAR,
-                  VkRenderingAttachmentInfo.storeOp = Vk.ATTACHMENT_STORE_OP_STORE,
-                  VkRenderingAttachmentInfo.clearValue = clear
-                }
-            scissor = Vk.Rect2D {VkRect2D.offset = Vk.Offset2D 0 0, VkRect2D.extent = extent}
-            info2 =
-              Vk.zero
-                { VkRenderingInfo.renderArea = scissor,
-                  VkRenderingInfo.layerCount = 1,
-                  VkRenderingInfo.colorAttachments = [attachment]
-                }
-            indexCount = 6
-         in Vk.cmdUseRendering cmd info2 $ Vk.cmdDrawIndexed cmd indexCount 1 0 0 0
-        toPresent
+        draw
+        prepareToPresent
   where
-    toAttachment =
+    transit old new src dst =
       let barrier =
             Vk.zero
               { VkImageMemoryBarrier.srcAccessMask = Vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-                VkImageMemoryBarrier.oldLayout = Vk.IMAGE_LAYOUT_UNDEFINED,
-                VkImageMemoryBarrier.newLayout = Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                VkImageMemoryBarrier.oldLayout = old,
+                VkImageMemoryBarrier.newLayout = new,
                 VkImageMemoryBarrier.image = img,
                 VkImageMemoryBarrier.subresourceRange =
                   Vk.zero
@@ -502,38 +485,39 @@ render pipeline vertex index extent (img, view) cmd =
                       VkImageSubresourceRange.layerCount = 1
                     }
               }
-       in Vk.cmdPipelineBarrier
-            cmd
-            Vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT
-            Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
-            (Vk.DependencyFlagBits 0)
-            []
-            []
-            [Vk.SomeStruct barrier]
-    toPresent =
-      let barrier =
+       in Vk.cmdPipelineBarrier cmd src dst (Vk.DependencyFlagBits 0) [] [] [Vk.SomeStruct barrier]
+
+    draw =
+      let clear = Vk.Color (Vk.Float32 0.0 0.0 0.0 0)
+          attachment =
             Vk.zero
-              { VkImageMemoryBarrier.srcAccessMask = Vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-                VkImageMemoryBarrier.oldLayout = Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                VkImageMemoryBarrier.newLayout = Vk.IMAGE_LAYOUT_PRESENT_SRC_KHR,
-                VkImageMemoryBarrier.image = img,
-                VkImageMemoryBarrier.subresourceRange =
-                  Vk.zero
-                    { VkImageSubresourceRange.aspectMask = Vk.IMAGE_ASPECT_COLOR_BIT,
-                      VkImageSubresourceRange.baseMipLevel = 0,
-                      VkImageSubresourceRange.levelCount = 1,
-                      VkImageSubresourceRange.baseArrayLayer = 0,
-                      VkImageSubresourceRange.layerCount = 1
-                    }
+              { VkRenderingAttachmentInfo.imageView = view,
+                VkRenderingAttachmentInfo.imageLayout = Vk.IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
+                VkRenderingAttachmentInfo.loadOp = Vk.ATTACHMENT_LOAD_OP_CLEAR,
+                VkRenderingAttachmentInfo.storeOp = Vk.ATTACHMENT_STORE_OP_STORE,
+                VkRenderingAttachmentInfo.clearValue = clear
               }
-       in Vk.cmdPipelineBarrier
-            cmd
-            Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
-            Vk.PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT
-            (Vk.DependencyFlagBits 0)
-            []
-            []
-            [Vk.SomeStruct barrier]
+          scissor = Vk.Rect2D {VkRect2D.offset = Vk.Offset2D 0 0, VkRect2D.extent = extent}
+          info2 =
+            Vk.zero
+              { VkRenderingInfo.renderArea = scissor,
+                VkRenderingInfo.layerCount = 1,
+                VkRenderingInfo.colorAttachments = [attachment]
+              }
+          indexCount = 6 -- TODO get from index buffer
+       in Vk.cmdUseRendering cmd info2 $ Vk.cmdDrawIndexed cmd indexCount 1 0 0 0
+    prepareToRender =
+      transit
+        Vk.IMAGE_LAYOUT_UNDEFINED
+        Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+        Vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT
+        Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+    prepareToPresent =
+      transit
+        Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+        Vk.IMAGE_LAYOUT_PRESENT_SRC_KHR
+        Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+        Vk.PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT
 
 createCommandBuffers ::
   Vk.Device ->

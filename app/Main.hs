@@ -32,6 +32,7 @@ import Foreign.Ptr (castFunPtr)
 import Foreign.Storable (sizeOf)
 import SDL qualified
 import SDL.Video.Vulkan qualified as SDL
+import Vulkan (WriteDescriptorSet (WriteDescriptorSet))
 import Vulkan qualified as Vk
 import Vulkan qualified as VkApplicationInfo (ApplicationInfo (..))
 import Vulkan qualified as VkBufferCopy (BufferCopy (..))
@@ -42,6 +43,12 @@ import Vulkan qualified as VkCommandBufferBeginInfo (CommandBufferBeginInfo (..)
 import Vulkan qualified as VkCommandPoolCreateInfo (CommandPoolCreateInfo (..))
 import Vulkan qualified as VkComponentMapping (ComponentMapping (..))
 import Vulkan qualified as VkDebugUtilsMessengerCreateInfoEXT (DebugUtilsMessengerCreateInfoEXT (..))
+import Vulkan qualified as VkDescriptorBufferInfo (DescriptorBufferInfo (..))
+import Vulkan qualified as VkDescriptorImageInfo (DescriptorImageInfo (..))
+import Vulkan qualified as VkDescriptorPool (DescriptorPool (..))
+import Vulkan qualified as VkDescriptorPoolCreateInfo (DescriptorPoolCreateInfo (..))
+import Vulkan qualified as VkDescriptorPoolSize (DescriptorPoolSize (..))
+import Vulkan qualified as VkDescriptorSetAllocateInfo (DescriptorSetAllocateInfo (..))
 import Vulkan qualified as VkDescriptorSetLayoutBinding (DescriptorSetLayoutBinding (..))
 import Vulkan qualified as VkDescriptorSetLayoutCreateInfo (DescriptorSetLayoutCreateInfo (..))
 import Vulkan qualified as VkDevice (Device (..))
@@ -68,6 +75,7 @@ import Vulkan qualified as VkPresentInfoKHR (PresentInfoKHR (..))
 import Vulkan qualified as VkRect2D (Rect2D (..))
 import Vulkan qualified as VkRenderingAttachmentInfo (RenderingAttachmentInfo (..))
 import Vulkan qualified as VkRenderingInfo (RenderingInfo (..))
+import Vulkan qualified as VkSamplerCreateInfo (SamplerCreateInfo (..))
 import Vulkan qualified as VkShaderModuleCreateInfo (ShaderModuleCreateInfo (..))
 import Vulkan qualified as VkSubmitInfo (SubmitInfo (..))
 import Vulkan qualified as VkSurface (SurfaceFormatKHR (..))
@@ -77,6 +85,7 @@ import Vulkan qualified as VkVPipelineMultisampleStateCreateInfo (PipelineMultis
 import Vulkan qualified as VkVertexInputAttributeDescription (VertexInputAttributeDescription (..))
 import Vulkan qualified as VkVertexInputBindingDescription (VertexInputBindingDescription (..))
 import Vulkan qualified as VkViewport (Viewport (..))
+import Vulkan qualified as VkWriteDescriptorSet (WriteDescriptorSet (..))
 import Vulkan.CStruct.Extends (pattern (:&), pattern (::&))
 import Vulkan.CStruct.Extends qualified as Vk
 import Vulkan.Dynamic qualified as Vk
@@ -125,48 +134,45 @@ main = runManaged $ do
      in managed $ Vk.withCommandPool device info Nothing bracket
   say "Vulkan" "Created command pool"
   vertexBuffer <-
-    let vertices =
-          SV.fromList
-            [ -- v0
-              0.5, -- x
-              0.5, -- y
-              1.0, -- r
-              0, -- g
-              0, -- b
-              -- v1
-              -0.5,
-              0.5,
-              0,
-              1.0,
-              0,
-              -- v2
-              -0.5,
-              -0.5,
-              0,
-              0,
-              1.0,
-              -- v3
-              0.5,
-              -0.5,
-              0.5,
-              0.5,
-              0.5
-            ] ::
-            SV.Vector Float
+    let v =
+          [ [[-0.5, -0.5], [1.0, 0.0, 0.0], [1.0, 0.0]],
+            [[0.5, -0.5], [0.0, 1.0, 0.0], [0.0, 0.0]],
+            [[0.5, 0.5], [0.0, 0.0, 1.0], [0.0, 1.0]],
+            [[-0.5, 0.5], [1.0, 1.0, 1.0], [1.0, 1.0]]
+          ] ::
+            [[[Float]]]
+
+        v1 =
+          [ [[-0.5, -0.5], [1.0, 0.0, 0.0], [0, 0]],
+            [[0.5, -0.5], [0.0, 1.0, 0.0], [0, 0]],
+            [[0.5, 0.5], [0.0, 0.0, 1.0], [1, 1]],
+            [[-0.5, 0.5], [1.0, 1.0, 1.0], [1, 1]]
+          ] ::
+            [[[Float]]]
+
+        v2 =
+          [ [[-0.5, -0.5], [1.0, 0.0, 0.0]],
+            [[0.5, -0.5], [0.0, 1.0, 0.0]],
+            [[0.5, 0.5], [0.0, 0.0, 1.0]],
+            [[-0.5, 0.5], [1.0, 1.0, 1.0]]
+          ] ::
+            [[[Float]]]
+        vertices = SV.fromList $ concatMap concat v
      in withBuffer allocator 1024 device commandPool gfxQueue Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT vertices
   say "Vulkan" "Created vertex buffer"
   indexBuffer <-
     let indecies = SV.fromList [0, 1, 2, 2, 3, 0] :: SV.Vector Word32
      in withBuffer allocator 1025 device commandPool gfxQueue Vk.BUFFER_USAGE_INDEX_BUFFER_BIT indecies
   say "Vulkan" "Created index buffer"
-  commandBuffers <- createCommandBuffers device commandPool extent images vertexBuffer indexBuffer
+  (textureImage, sampler) <- texture allocator device commandPool gfxQueue "AlphaEdge.png"
+  say "Vulkan" $ "Created texture " ++ show textureImage
+  commandBuffers <- createCommandBuffers device commandPool extent images vertexBuffer indexBuffer textureImage sampler
   imageAvailable <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
   renderFinished <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
   inFlight <-
     let info = Vk.zero {VkFenceCreateInfo.flags = Vk.FENCE_CREATE_SIGNALED_BIT}
      in managed $ Vk.withFence device info Nothing bracket
-  textureImage <- texture allocator device commandPool "AlphaEdge.png"
-  say "Vulkan" $ "Created texture " ++ show textureImage
+
   say "Engine" "Show window"
   SDL.showWindow window
   SDL.raiseWindow window
@@ -196,7 +202,7 @@ withMemoryAllocator vulkan gpu device =
       deviceCmds = VkDevice.deviceCmds device
       info =
         Vk.zero
-          { VmaAllocatorCreateInfo.vulkanApiVersion = Vk.API_VERSION_1_0,
+          { VmaAllocatorCreateInfo.vulkanApiVersion = Vk.API_VERSION_1_3,
             VmaAllocatorCreateInfo.instance' = Vk.instanceHandle vulkan,
             VmaAllocatorCreateInfo.physicalDevice = Vk.physicalDeviceHandle gpu,
             VmaAllocatorCreateInfo.device = Vk.deviceHandle device,
@@ -251,8 +257,8 @@ withBuffer allocator size device pool queue flags vertices = do
 
   return gpuBuffer
 
-texture :: Vma.Allocator -> VkDevice.Device -> Vk.CommandPool -> FilePath -> Managed Vk.Image
-texture allocator device pool path = do
+texture :: Vma.Allocator -> VkDevice.Device -> Vk.CommandPool -> Vk.Queue -> FilePath -> Managed (Vk.ImageView, Vk.Sampler)
+texture allocator device pool queue path = do
   JP.ImageRGBA8 (JP.Image width height pixels) <- liftIO $ JP.readPng path >>= either (sayErr "Texture" . show) return
   let size = width * height * 4
   (staging, mem) <- withHostBuffer allocator (fromIntegral size)
@@ -287,11 +293,25 @@ texture allocator device pool path = do
               VmaAllocationCreateInfo.priority = 1
             }
      in managed $ Vma.withImage allocator imgInfo allocInfo bracket
-  copyBufferToImage device pool staging image width height
-  return image
+  say "texture" $ "Created image " ++ show image
+  copyBufferToImage device pool queue staging image width height
+  view <- withImageView device image Vk.FORMAT_R8G8B8A8_SRGB
+  sampler <-
+    let info =
+          Vk.zero
+            { VkSamplerCreateInfo.magFilter = Vk.FILTER_LINEAR,
+              VkSamplerCreateInfo.minFilter = Vk.FILTER_LINEAR,
+              VkSamplerCreateInfo.addressModeU = Vk.SAMPLER_ADDRESS_MODE_REPEAT,
+              VkSamplerCreateInfo.addressModeV = Vk.SAMPLER_ADDRESS_MODE_REPEAT,
+              VkSamplerCreateInfo.addressModeW = Vk.SAMPLER_ADDRESS_MODE_REPEAT,
+              VkSamplerCreateInfo.unnormalizedCoordinates = False,
+              VkSamplerCreateInfo.borderColor = Vk.BORDER_COLOR_INT_OPAQUE_WHITE
+            }
+     in managed $ Vk.withSampler device info Nothing bracket
+  return (view, sampler)
 
-submitNow :: Vk.Device -> Vk.CommandPool -> (Vk.CommandBuffer -> Managed r) -> Managed r
-submitNow device pool use = do
+submitNow :: Vk.Device -> Vk.CommandPool -> Vk.Queue -> (Vk.CommandBuffer -> Managed r) -> Managed ()
+submitNow device pool queue use = do
   buffer <-
     let info =
           Vk.zero
@@ -300,11 +320,23 @@ submitNow device pool use = do
               VkCommandBufferAllocateInfo.commandBufferCount = 1
             }
      in V.head <$> managed (Vk.withCommandBuffers device info bracket)
-  let info = Vk.zero {VkCommandBufferBeginInfo.flags = Vk.COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT}
-   in Vk.useCommandBuffer buffer info (use buffer)
+  _ <-
+    let info = Vk.zero {VkCommandBufferBeginInfo.flags = Vk.COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT}
+     in Vk.useCommandBuffer buffer info $ use buffer
+  let info = Vk.SomeStruct $ Vk.zero {VkSubmitInfo.commandBuffers = [Vk.commandBufferHandle buffer]}
+   in Vk.queueSubmit queue [info] Vk.NULL_HANDLE
+  Vk.queueWaitIdle queue
 
-copyBufferToImage :: VkDevice.Device -> Vk.CommandPool -> Vk.Buffer -> Vk.Image -> Int -> Int -> Managed ()
-copyBufferToImage device pool src dst width height = do
+copyBufferToImage ::
+  VkDevice.Device ->
+  Vk.CommandPool ->
+  Vk.Queue ->
+  Vk.Buffer ->
+  Vk.Image ->
+  Int ->
+  Int ->
+  Managed ()
+copyBufferToImage device pool queue src dst width height = do
   let subresource =
         Vk.zero
           { VkImageSubresourceLayers.aspectMask = Vk.IMAGE_ASPECT_COLOR_BIT,
@@ -326,10 +358,25 @@ copyBufferToImage device pool src dst width height = do
             VkBufferImageCopy.imageSubresource = subresource,
             VkBufferImageCopy.imageExtent = dims
           }
-  submitNow device pool $ \cmd -> do
-    transitImage cmd dst (Vk.AccessFlagBits 0) (Vk.AccessFlagBits 0) Vk.IMAGE_LAYOUT_UNDEFINED Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL Vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT Vk.PIPELINE_STAGE_TRANSFER_BIT
-    liftIO $ Vk.cmdCopyBufferToImage cmd src dst Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL [region]
-    transitImage cmd dst (Vk.AccessFlagBits 0) (Vk.AccessFlagBits 0) Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL Vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL Vk.PIPELINE_STAGE_TRANSFER_BIT Vk.PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+  submitNow device pool queue $ tranistFromUndefinedToDstOptimal dst
+  submitNow device pool queue $ \cmd -> Vk.cmdCopyBufferToImage cmd src dst Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL [region]
+  submitNow device pool queue $ tranistFromDstOptimalToShaderReadOnlyOptimal dst
+
+tranistFromUndefinedToDstOptimal :: Vk.Image -> Vk.CommandBuffer -> Managed ()
+tranistFromUndefinedToDstOptimal dst cmd =
+  transitImage cmd dst (Vk.AccessFlagBits 0) Vk.ACCESS_TRANSFER_WRITE_BIT Vk.IMAGE_LAYOUT_UNDEFINED Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL Vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT Vk.PIPELINE_STAGE_TRANSFER_BIT
+
+tranistFromDstOptimalToShaderReadOnlyOptimal :: Vk.Image -> Vk.CommandBuffer -> Managed ()
+tranistFromDstOptimalToShaderReadOnlyOptimal dst cmd =
+  transitImage
+    cmd
+    dst
+    Vk.ACCESS_TRANSFER_WRITE_BIT
+    Vk.ACCESS_SHADER_READ_BIT
+    Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+    Vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+    Vk.PIPELINE_STAGE_TRANSFER_BIT
+    Vk.PIPELINE_STAGE_FRAGMENT_SHADER_BIT
 
 copyBuffer :: Vk.Device -> Vk.CommandPool -> Vk.Queue -> Vk.Buffer -> Vk.Buffer -> Vk.DeviceSize -> Managed ()
 copyBuffer device pool queue src dst size = do
@@ -449,18 +496,21 @@ drawFrame dev swapchain gfx present imageAvailable renderFinished inFlight comma
 
 render ::
   Vk.Pipeline ->
+  Vk.PipelineLayout ->
+  Vk.DescriptorSet ->
   Vk.Buffer ->
   Vk.Buffer ->
   Vk.Extent2D ->
   (Vk.Image, Vk.ImageView) ->
   Vk.CommandBuffer ->
   Managed ()
-render pipeline vertex index extent (img, view) cmd =
+render pipeline layout set vertex index extent (img, view) cmd =
   Vk.useCommandBuffer cmd Vk.zero $ do
     transit renderLayout
     Vk.cmdBindPipeline cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
     Vk.cmdBindVertexBuffers cmd 0 [vertex] [0]
     Vk.cmdBindIndexBuffer cmd index 0 Vk.INDEX_TYPE_UINT32
+    Vk.cmdBindDescriptorSets cmd Vk.PIPELINE_BIND_POINT_GRAPHICS layout 0 [set] []
     draw
     transit presentLayout
   where
@@ -531,21 +581,24 @@ transitImage ::
   Vk.PipelineStageFlags ->
   Managed ()
 transitImage cmd img srcMask dstMask old new srcStage dstStage =
-  let barrier =
+  let range =
+        Vk.zero
+          { VkImageSubresourceRange.aspectMask = Vk.IMAGE_ASPECT_COLOR_BIT,
+            VkImageSubresourceRange.baseMipLevel = 0,
+            VkImageSubresourceRange.levelCount = 1,
+            VkImageSubresourceRange.baseArrayLayer = 0,
+            VkImageSubresourceRange.layerCount = 1
+          }
+      barrier =
         Vk.zero
           { VkImageMemoryBarrier.srcAccessMask = srcMask,
             VkImageMemoryBarrier.dstAccessMask = dstMask,
             VkImageMemoryBarrier.oldLayout = old,
             VkImageMemoryBarrier.newLayout = new,
             VkImageMemoryBarrier.image = img,
-            VkImageMemoryBarrier.subresourceRange =
-              Vk.zero
-                { VkImageSubresourceRange.aspectMask = Vk.IMAGE_ASPECT_COLOR_BIT,
-                  VkImageSubresourceRange.baseMipLevel = 0,
-                  VkImageSubresourceRange.levelCount = 1,
-                  VkImageSubresourceRange.baseArrayLayer = 0,
-                  VkImageSubresourceRange.layerCount = 1
-                }
+            VkImageMemoryBarrier.srcQueueFamilyIndex = Vk.QUEUE_FAMILY_IGNORED,
+            VkImageMemoryBarrier.dstQueueFamilyIndex = Vk.QUEUE_FAMILY_IGNORED,
+            VkImageMemoryBarrier.subresourceRange = range
           }
    in Vk.cmdPipelineBarrier cmd srcStage dstStage (Vk.DependencyFlagBits 0) [] [] [Vk.SomeStruct barrier]
 
@@ -556,9 +609,11 @@ createCommandBuffers ::
   V.Vector (Vk.Image, Vk.ImageView) ->
   Vk.Buffer ->
   Vk.Buffer ->
+  Vk.ImageView ->
+  Vk.Sampler ->
   Managed (V.Vector Vk.CommandBuffer)
-createCommandBuffers device pool extent images vertex index = do
-  pipeline <- withPipeline device extent
+createCommandBuffers device pool extent images vertex index texture sampler = do
+  (pipeline, layout, set) <- withPipeline device extent texture sampler
   say "Vulkan" "Created pipeline"
   commandBuffers <-
     let info =
@@ -569,14 +624,19 @@ createCommandBuffers device pool extent images vertex index = do
             }
      in managed $ Vk.withCommandBuffers device info bracket
   say "Vulkan" "Created comamand buffers"
-  for_ (V.zip images commandBuffers) $ uncurry (render pipeline vertex index extent)
+  for_ (V.zip images commandBuffers) $ uncurry (render pipeline layout set vertex index extent)
   say "Vulkan" "Recorded command buffers"
   return commandBuffers
 
-withPipeline :: Vk.Device -> Vk.Extent2D -> Managed Vk.Pipeline
-withPipeline dev extent = do
+withPipeline ::
+  Vk.Device ->
+  Vk.Extent2D ->
+  Vk.ImageView ->
+  Vk.Sampler ->
+  Managed (Vk.Pipeline, Vk.PipelineLayout, Vk.DescriptorSet)
+withPipeline dev extent texture sampler = do
   (vert, frag) <- createShaders dev
-  descriptorSetLayout <-
+  setLayout <-
     let uniform =
           Vk.zero
             { VkDescriptorSetLayoutBinding.binding = 0,
@@ -594,35 +654,100 @@ withPipeline dev extent = do
         info =
           Vk.zero {VkDescriptorSetLayoutCreateInfo.bindings = [uniform, sampler]}
      in managed $ Vk.withDescriptorSetLayout dev info Nothing bracket
+  pool <-
+    let uniform =
+          Vk.zero
+            { VkDescriptorPoolSize.descriptorCount = 1,
+              VkDescriptorPoolSize.type' = Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER
+            }
+        sampler =
+          Vk.zero
+            { VkDescriptorPoolSize.descriptorCount = 1,
+              VkDescriptorPoolSize.type' = Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
+            }
+        info =
+          Vk.zero
+            { VkDescriptorPoolCreateInfo.poolSizes = [uniform, sampler],
+              VkDescriptorPoolCreateInfo.maxSets = 1,
+              VkDescriptorPoolCreateInfo.flags = Vk.DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT
+            }
+     in managed $ Vk.withDescriptorPool dev info Nothing bracket
+  set <-
+    let info =
+          Vk.zero
+            { VkDescriptorSetAllocateInfo.descriptorPool = pool,
+              VkDescriptorSetAllocateInfo.setLayouts = [setLayout]
+            }
+     in V.head <$> managed (Vk.withDescriptorSets dev info bracket)
+  let bufferInfo =
+        Vk.zero
+          { -- VkDescriptorBufferInfo.buffer = _,
+            VkDescriptorBufferInfo.offset = 0,
+            VkDescriptorBufferInfo.range = Vk.WHOLE_SIZE
+          }
+      bufferWriteInfo =
+        Vk.zero
+          { VkWriteDescriptorSet.dstSet = set,
+            VkWriteDescriptorSet.dstBinding = 0,
+            VkWriteDescriptorSet.descriptorType = Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            VkWriteDescriptorSet.bufferInfo = [bufferInfo]
+          }
+      imageInfo =
+        Vk.zero
+          { VkDescriptorImageInfo.imageLayout = Vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VkDescriptorImageInfo.imageView = texture,
+            VkDescriptorImageInfo.sampler = sampler
+          }
+      imageWriteInfo =
+        Vk.SomeStruct
+          Vk.zero
+            { VkWriteDescriptorSet.dstSet = set,
+              VkWriteDescriptorSet.dstBinding = 1,
+              VkWriteDescriptorSet.descriptorType = Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+              VkWriteDescriptorSet.descriptorCount = 1,
+              VkWriteDescriptorSet.imageInfo = [imageInfo]
+            }
+   in Vk.updateDescriptorSets dev [imageWriteInfo] []
+
   pipelineLayout <-
-    let info = Vk.zero {VkPipelineLayoutCreateInfo.setLayouts = [descriptorSetLayout]}
+    let info = Vk.zero {VkPipelineLayoutCreateInfo.setLayouts = [setLayout]}
      in managed $ Vk.withPipelineLayout dev info Nothing bracket
   (_, res) <-
-    let vertexInputInfo =
+    let position =
+          Vk.zero -- layout(location = 0) in vec2 inPosition
+            { VkVertexInputAttributeDescription.binding = 0,
+              VkVertexInputAttributeDescription.location = 0,
+              VkVertexInputAttributeDescription.format = Vk.FORMAT_R32G32_SFLOAT,
+              VkVertexInputAttributeDescription.offset = 0
+            }
+        color =
+          let offset = sizeOf (undefined :: Float) * 2
+           in Vk.zero -- layout(location = 1) in vec3 inColor
+                { VkVertexInputAttributeDescription.binding = 0,
+                  VkVertexInputAttributeDescription.location = 1,
+                  VkVertexInputAttributeDescription.format = Vk.FORMAT_R32G32B32_SFLOAT,
+                  VkVertexInputAttributeDescription.offset = fromIntegral offset
+                }
+        textureCoordinates =
+          let offset = sizeOf (undefined :: Float) * (2 + 3)
+           in Vk.zero -- layout(location = 2) in vec2 inTexCoord
+                { VkVertexInputAttributeDescription.binding = 0,
+                  VkVertexInputAttributeDescription.location = 2,
+                  VkVertexInputAttributeDescription.format = Vk.FORMAT_R32G32_SFLOAT, -- vec2 for textture coordinates
+                  VkVertexInputAttributeDescription.offset = fromIntegral offset
+                }
+        vertexInputInfo =
           Just $
             Vk.SomeStruct
               Vk.zero
                 { VkPipelineVertexInputStateCreateInfo.vertexBindingDescriptions =
                     [ Vk.zero
                         { VkVertexInputBindingDescription.binding = 0,
-                          VkVertexInputBindingDescription.stride = fromIntegral $ 5 * sizeOf (undefined :: Float),
+                          VkVertexInputBindingDescription.stride = fromIntegral $ 7 * sizeOf (undefined :: Float),
                           VkVertexInputBindingDescription.inputRate = Vk.VERTEX_INPUT_RATE_VERTEX
                         }
                     ],
-                  VkPipelineVertexInputStateCreateInfo.vertexAttributeDescriptions =
-                    [ Vk.zero
-                        { VkVertexInputAttributeDescription.binding = 0,
-                          VkVertexInputAttributeDescription.location = 0,
-                          VkVertexInputAttributeDescription.format = Vk.FORMAT_R32G32_SFLOAT, -- vec2 for position
-                          VkVertexInputAttributeDescription.offset = 0 -- offset of position
-                        },
-                      Vk.zero
-                        { VkVertexInputAttributeDescription.binding = 0,
-                          VkVertexInputAttributeDescription.location = 1,
-                          VkVertexInputAttributeDescription.format = Vk.FORMAT_R32G32B32_SFLOAT,
-                          VkVertexInputAttributeDescription.offset = fromIntegral $ 2 * sizeOf (undefined :: Float)
-                        }
-                    ]
+                  VkPipelineVertexInputStateCreateInfo.vertexAttributeDescriptions = [position, color, textureCoordinates]
                 }
         dynamicRendering =
           Vk.zero
@@ -701,7 +826,7 @@ withPipeline dev extent = do
             }
             ::& dynamicRendering :& ()
      in managed $ Vk.withGraphicsPipelines dev Vk.zero [Vk.SomeStruct pipelineCreateInfo] Nothing bracket
-  return . V.head $ res
+  return . (,pipelineLayout,set) . V.head $ res
 
 framesInFlight :: Word32
 framesInFlight = 1
@@ -741,7 +866,6 @@ colorSpace :: Vk.ColorSpaceKHR
 colorSpace = Vk.COLOR_SPACE_SRGB_NONLINEAR_KHR
 
 withSwapchain ::
-  (MonadManaged m) =>
   Vk.PhysicalDevice ->
   Vk.Device ->
   Vk.SurfaceKHR ->
@@ -749,7 +873,7 @@ withSwapchain ::
   Word32 ->
   Int ->
   Int ->
-  m (Vk.SwapchainKHR, V.Vector (Vk.Image, Vk.ImageView), Vk.Extent2D)
+  Managed (Vk.SwapchainKHR, V.Vector (Vk.Image, Vk.ImageView), Vk.Extent2D)
 withSwapchain
   gpu
   dev
@@ -792,31 +916,35 @@ withSwapchain
               }
       swapchain <- managed $ Vk.withSwapchainKHR dev info Nothing bracket
       (_, images) <- Vk.getSwapchainImagesKHR dev swapchain
-      let imageViewCreateInfo i =
-            Vk.zero
-              { VkImageViewCreateInfo.image = i,
-                VkImageViewCreateInfo.viewType = Vk.IMAGE_VIEW_TYPE_2D,
-                VkImageViewCreateInfo.format = imageFormat,
-                VkImageViewCreateInfo.components =
-                  Vk.zero
-                    { VkComponentMapping.r = Vk.COMPONENT_SWIZZLE_IDENTITY,
-                      VkComponentMapping.g = Vk.COMPONENT_SWIZZLE_IDENTITY,
-                      VkComponentMapping.b = Vk.COMPONENT_SWIZZLE_IDENTITY,
-                      VkComponentMapping.a = Vk.COMPONENT_SWIZZLE_IDENTITY
-                    },
-                VkImageViewCreateInfo.subresourceRange =
-                  Vk.zero
-                    { VkImageSubresourceRange.aspectMask = Vk.IMAGE_ASPECT_COLOR_BIT,
-                      VkImageSubresourceRange.baseMipLevel = 0,
-                      VkImageSubresourceRange.levelCount = 1,
-                      VkImageSubresourceRange.baseArrayLayer = 0,
-                      VkImageSubresourceRange.layerCount = 1
-                    }
-              }
       viewImages <-
-        let f img = managed $ Vk.withImageView dev (imageViewCreateInfo img) Nothing bracket
+        let f img = withImageView dev img imageFormat
          in for images $ \img -> (img,) <$> f img
       return (swapchain, viewImages, extent)
+
+withImageView :: Vk.Device -> Vk.Image -> Vk.Format -> Managed Vk.ImageView
+withImageView dev img format =
+  let imageViewCreateInfo =
+        Vk.zero
+          { VkImageViewCreateInfo.image = img,
+            VkImageViewCreateInfo.viewType = Vk.IMAGE_VIEW_TYPE_2D,
+            VkImageViewCreateInfo.format = format,
+            VkImageViewCreateInfo.components =
+              Vk.zero
+                { VkComponentMapping.r = Vk.COMPONENT_SWIZZLE_IDENTITY,
+                  VkComponentMapping.g = Vk.COMPONENT_SWIZZLE_IDENTITY,
+                  VkComponentMapping.b = Vk.COMPONENT_SWIZZLE_IDENTITY,
+                  VkComponentMapping.a = Vk.COMPONENT_SWIZZLE_IDENTITY
+                },
+            VkImageViewCreateInfo.subresourceRange =
+              Vk.zero
+                { VkImageSubresourceRange.aspectMask = Vk.IMAGE_ASPECT_COLOR_BIT,
+                  VkImageSubresourceRange.baseMipLevel = 0,
+                  VkImageSubresourceRange.levelCount = 1,
+                  VkImageSubresourceRange.baseArrayLayer = 0,
+                  VkImageSubresourceRange.layerCount = 1
+                }
+          }
+   in managed $ Vk.withImageView dev imageViewCreateInfo Nothing bracket
 
 withDevice :: (MonadManaged m) => Vk.PhysicalDevice -> Word32 -> Word32 -> Bool -> m Vk.Device
 withDevice gpu gfx present portable =

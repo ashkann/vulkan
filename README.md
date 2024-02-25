@@ -14,8 +14,12 @@ stack run
 - [ ] Allocate both index and vertex buffers in one buffer
 - [ ] Maybe images from the same buffer as well
 - [ ] More than one in-flight frame
-- [ ] Some memory is not properly freed before vulkan instance is destroyed
+- [x] Some memory is not properly freed before vulkan instance is destroyed
 - [ ] Don't map/unmap memory for vertex/index buffers every frame. Instead map/unmap once and just copy the data every frame
+- [ ] Multiple textures in the same frame
+- [ ] Multiple stripes using the same texture in one frame (combined smapler is good?)
+- [ ] DrawIndirect instead of draw per sprite?
+- [ ] Bindless textures
 - [ ] Basic DearImGUI integration
 - [ ] Add texture support
 - [ ] Basic static (no animation) stripe

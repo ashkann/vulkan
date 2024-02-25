@@ -22,17 +22,15 @@ import Data.ByteString.Char8 qualified as BS (pack, unpack)
 import Data.Foldable
 import Data.Functor ((<&>))
 import Data.Traversable (for)
-import Data.Type.Equality (trans)
 import Data.Vector ((!))
 import Data.Vector qualified as V
 import Data.Vector.Storable qualified as SV
-import Foreign (Bits (zeroBits), Ptr, Storable, Word32, Word8, castPtr, copyArray, withForeignPtr)
+import Foreign (Bits (zeroBits), Ptr, Storable, Word32, castPtr, copyArray, withForeignPtr)
 import Foreign.C (peekCAString)
 import Foreign.Ptr (castFunPtr)
 import Foreign.Storable (sizeOf)
 import SDL qualified
 import SDL.Video.Vulkan qualified as SDL
-import Vulkan (WriteDescriptorSet (WriteDescriptorSet))
 import Vulkan qualified as Vk
 import Vulkan qualified as VkApplicationInfo (ApplicationInfo (..))
 import Vulkan qualified as VkBufferCopy (BufferCopy (..))
@@ -41,11 +39,9 @@ import Vulkan qualified as VkBufferImageCopy (BufferImageCopy (..))
 import Vulkan qualified as VkCommandBufferAllocateInfo (CommandBufferAllocateInfo (..))
 import Vulkan qualified as VkCommandBufferBeginInfo (CommandBufferBeginInfo (..))
 import Vulkan qualified as VkCommandPoolCreateInfo (CommandPoolCreateInfo (..))
-import Vulkan qualified as VkComponentMapping (ComponentMapping (..))
 import Vulkan qualified as VkDebugUtilsMessengerCreateInfoEXT (DebugUtilsMessengerCreateInfoEXT (..))
 import Vulkan qualified as VkDescriptorBufferInfo (DescriptorBufferInfo (..))
 import Vulkan qualified as VkDescriptorImageInfo (DescriptorImageInfo (..))
-import Vulkan qualified as VkDescriptorPool (DescriptorPool (..))
 import Vulkan qualified as VkDescriptorPoolCreateInfo (DescriptorPoolCreateInfo (..))
 import Vulkan qualified as VkDescriptorPoolSize (DescriptorPoolSize (..))
 import Vulkan qualified as VkDescriptorSetAllocateInfo (DescriptorSetAllocateInfo (..))
@@ -135,26 +131,10 @@ main = runManaged $ do
   say "Vulkan" "Created command pool"
   vertexBuffer <-
     let v =
-          [ [[-0.5, -0.5], [1.0, 0.0, 0.0], [1.0, 0.0]],
-            [[0.5, -0.5], [0.0, 1.0, 0.0], [0.0, 0.0]],
-            [[0.5, 0.5], [0.0, 0.0, 1.0], [0.0, 1.0]],
-            [[-0.5, 0.5], [1.0, 1.0, 1.0], [1.0, 1.0]]
-          ] ::
-            [[[Float]]]
-
-        v1 =
-          [ [[-0.5, -0.5], [1.0, 0.0, 0.0], [0, 0]],
-            [[0.5, -0.5], [0.0, 1.0, 0.0], [0, 0]],
-            [[0.5, 0.5], [0.0, 0.0, 1.0], [1, 1]],
-            [[-0.5, 0.5], [1.0, 1.0, 1.0], [1, 1]]
-          ] ::
-            [[[Float]]]
-
-        v2 =
-          [ [[-0.5, -0.5], [1.0, 0.0, 0.0]],
-            [[0.5, -0.5], [0.0, 1.0, 0.0]],
-            [[0.5, 0.5], [0.0, 0.0, 1.0]],
-            [[-0.5, 0.5], [1.0, 1.0, 1.0]]
+          [ [[-0.5, -0.5], [1.0, 0.0, 0.0], [0.0, 0.0]],
+            [[0.5, -0.5], [0.0, 1.0, 0.0], [1.0, 0.0]],
+            [[0.5, 0.5], [0.0, 0.0, 1.0], [1.0, 1.0]],
+            [[-0.5, 0.5], [1.0, 1.0, 1.0], [0.0, 1.0]]
           ] ::
             [[[Float]]]
         vertices = SV.fromList $ concatMap concat v
@@ -164,7 +144,19 @@ main = runManaged $ do
     let indecies = SV.fromList [0, 1, 2, 2, 3, 0] :: SV.Vector Word32
      in withBuffer allocator 1025 device commandPool gfxQueue Vk.BUFFER_USAGE_INDEX_BUFFER_BIT indecies
   say "Vulkan" "Created index buffer"
-  (textureImage, sampler) <- texture allocator device commandPool gfxQueue "image1.png"
+  sampler <-
+    let info =
+          Vk.zero
+            { VkSamplerCreateInfo.magFilter = Vk.FILTER_LINEAR,
+              VkSamplerCreateInfo.minFilter = Vk.FILTER_LINEAR,
+              VkSamplerCreateInfo.addressModeU = Vk.SAMPLER_ADDRESS_MODE_REPEAT,
+              VkSamplerCreateInfo.addressModeV = Vk.SAMPLER_ADDRESS_MODE_REPEAT,
+              VkSamplerCreateInfo.addressModeW = Vk.SAMPLER_ADDRESS_MODE_REPEAT,
+              VkSamplerCreateInfo.unnormalizedCoordinates = False,
+              VkSamplerCreateInfo.borderColor = Vk.BORDER_COLOR_INT_OPAQUE_WHITE
+            }
+     in managed $ Vk.withSampler device info Nothing bracket
+  textureImage <- texture allocator device commandPool gfxQueue "image.png"
   say "Vulkan" $ "Created texture " ++ show textureImage
   commandBuffers <- createCommandBuffers device commandPool extent images vertexBuffer indexBuffer textureImage sampler
   imageAvailable <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
@@ -293,31 +285,20 @@ withImage allocator width height = do
      in managed $ Vma.withImage allocator imgInfo allocInfo bracket
   return image
 
-texture :: Vma.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> FilePath -> Managed (Vk.ImageView, Vk.Sampler)
+texture :: Vma.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> FilePath -> Managed Vk.ImageView
 texture allocator device pool queue path = do
   JP.ImageRGBA8 (JP.Image width height pixels) <- liftIO $ JP.readPng path >>= either (sayErr "Texture" . show) return
   let size = width * height * 4
   (staging, mem) <- withHostBuffer allocator (fromIntegral size)
-  liftIO $
-    let (src, _) = SV.unsafeToForeignPtr0 pixels
-        dst = castPtr mem
-     in withForeignPtr src $ \src -> copyArray dst src size
+  liftIO $ copy pixels mem size
   image <- withImage allocator width height
   copyBufferToImage device pool queue staging image width height
-  view <- withImageView device image Vk.FORMAT_R8G8B8A8_SRGB
-  sampler <-
-    let info =
-          Vk.zero
-            { VkSamplerCreateInfo.magFilter = Vk.FILTER_LINEAR,
-              VkSamplerCreateInfo.minFilter = Vk.FILTER_LINEAR,
-              VkSamplerCreateInfo.addressModeU = Vk.SAMPLER_ADDRESS_MODE_REPEAT,
-              VkSamplerCreateInfo.addressModeV = Vk.SAMPLER_ADDRESS_MODE_REPEAT,
-              VkSamplerCreateInfo.addressModeW = Vk.SAMPLER_ADDRESS_MODE_REPEAT,
-              VkSamplerCreateInfo.unnormalizedCoordinates = False,
-              VkSamplerCreateInfo.borderColor = Vk.BORDER_COLOR_INT_OPAQUE_WHITE
-            }
-     in managed $ Vk.withSampler device info Nothing bracket
-  return (view, sampler)
+  withImageView device image Vk.FORMAT_R8G8B8A8_SRGB
+  where
+    copy pixels mem size =
+      let (src, _) = SV.unsafeToForeignPtr0 pixels
+          dst = castPtr mem
+       in withForeignPtr src $ \src -> copyArray dst src size
 
 submitNow :: Vk.Device -> Vk.CommandPool -> Vk.Queue -> (Vk.CommandBuffer -> Managed r) -> Managed ()
 submitNow device pool queue use = do

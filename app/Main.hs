@@ -26,7 +26,7 @@ import Data.Type.Equality (trans)
 import Data.Vector ((!))
 import Data.Vector qualified as V
 import Data.Vector.Storable qualified as SV
-import Foreign (Bits (zeroBits), Ptr, Storable, Word32, castPtr, copyArray, withForeignPtr)
+import Foreign (Bits (zeroBits), Ptr, Storable, Word32, Word8, castPtr, copyArray, withForeignPtr)
 import Foreign.C (peekCAString)
 import Foreign.Ptr (castFunPtr)
 import Foreign.Storable (sizeOf)
@@ -164,7 +164,7 @@ main = runManaged $ do
     let indecies = SV.fromList [0, 1, 2, 2, 3, 0] :: SV.Vector Word32
      in withBuffer allocator 1025 device commandPool gfxQueue Vk.BUFFER_USAGE_INDEX_BUFFER_BIT indecies
   say "Vulkan" "Created index buffer"
-  (textureImage, sampler) <- texture allocator device commandPool gfxQueue "AlphaEdge.png"
+  (textureImage, sampler) <- texture allocator device commandPool gfxQueue "image1.png"
   say "Vulkan" $ "Created texture " ++ show textureImage
   commandBuffers <- createCommandBuffers device commandPool extent images vertexBuffer indexBuffer textureImage sampler
   imageAvailable <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
@@ -196,13 +196,16 @@ say prefix msg = liftIO . putStrLn $ prefix ++ ": " ++ msg
 sayErr :: (MonadIO io) => String -> String -> io a
 sayErr prefix msg = liftIO . throwError . userError $ prefix ++ ": " ++ msg
 
+vulkanVersion :: Word32
+vulkanVersion = Vk.API_VERSION_1_3
+
 withMemoryAllocator :: Vk.Instance -> Vk.PhysicalDevice -> Vk.Device -> Managed Vma.Allocator
 withMemoryAllocator vulkan gpu device =
   let insanceCmds = VkInstance.instanceCmds vulkan
       deviceCmds = VkDevice.deviceCmds device
       info =
         Vk.zero
-          { VmaAllocatorCreateInfo.vulkanApiVersion = Vk.API_VERSION_1_3,
+          { VmaAllocatorCreateInfo.vulkanApiVersion = vulkanVersion,
             VmaAllocatorCreateInfo.instance' = Vk.instanceHandle vulkan,
             VmaAllocatorCreateInfo.physicalDevice = Vk.physicalDeviceHandle gpu,
             VmaAllocatorCreateInfo.device = Vk.deviceHandle device,
@@ -228,7 +231,9 @@ debugUtilsMessengerCreateInfo :: Vk.DebugUtilsMessengerCreateInfoEXT
 debugUtilsMessengerCreateInfo =
   Vk.zero
     { Vk.messageSeverity =
-        Vk.DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+        Vk.DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
+          .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT
+          .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
       Vk.messageType =
         Vk.DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
           .|. Vk.DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
@@ -257,16 +262,9 @@ withBuffer allocator size device pool queue flags vertices = do
 
   return gpuBuffer
 
-texture :: Vma.Allocator -> VkDevice.Device -> Vk.CommandPool -> Vk.Queue -> FilePath -> Managed (Vk.ImageView, Vk.Sampler)
-texture allocator device pool queue path = do
-  JP.ImageRGBA8 (JP.Image width height pixels) <- liftIO $ JP.readPng path >>= either (sayErr "Texture" . show) return
-  let size = width * height * 4
-  (staging, mem) <- withHostBuffer allocator (fromIntegral size)
-  liftIO $
-    let (src, _) = SV.unsafeToForeignPtr0 pixels
-        dst = castPtr mem
-     in withForeignPtr src $ \src -> copyArray src dst size
-  (image, _, Vma.AllocationInfo {Vma.mappedData = imageMem}) <-
+withImage :: Vma.Allocator -> Int -> Int -> Managed Vk.Image
+withImage allocator width height = do
+  (image, _, _) <-
     let dims =
           Vk.Extent3D
             { VkExtent3D.width = fromIntegral width,
@@ -293,7 +291,18 @@ texture allocator device pool queue path = do
               VmaAllocationCreateInfo.priority = 1
             }
      in managed $ Vma.withImage allocator imgInfo allocInfo bracket
-  say "texture" $ "Created image " ++ show image
+  return image
+
+texture :: Vma.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> FilePath -> Managed (Vk.ImageView, Vk.Sampler)
+texture allocator device pool queue path = do
+  JP.ImageRGBA8 (JP.Image width height pixels) <- liftIO $ JP.readPng path >>= either (sayErr "Texture" . show) return
+  let size = width * height * 4
+  (staging, mem) <- withHostBuffer allocator (fromIntegral size)
+  liftIO $
+    let (src, _) = SV.unsafeToForeignPtr0 pixels
+        dst = castPtr mem
+     in withForeignPtr src $ \src -> copyArray dst src size
+  image <- withImage allocator width height
   copyBufferToImage device pool queue staging image width height
   view <- withImageView device image Vk.FORMAT_R8G8B8A8_SRGB
   sampler <-
@@ -358,9 +367,14 @@ copyBufferToImage device pool queue src dst width height = do
             VkBufferImageCopy.imageSubresource = subresource,
             VkBufferImageCopy.imageExtent = dims
           }
-  submitNow device pool queue $ tranistFromUndefinedToDstOptimal dst
-  submitNow device pool queue $ \cmd -> Vk.cmdCopyBufferToImage cmd src dst Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL [region]
-  submitNow device pool queue $ tranistFromDstOptimalToShaderReadOnlyOptimal dst
+  submitNow device pool queue $ \cmd -> do
+    tranistFromUndefinedToDstOptimal dst cmd
+    Vk.cmdCopyBufferToImage cmd src dst Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL [region]
+    tranistFromDstOptimalToShaderReadOnlyOptimal dst cmd
+
+-- submitNow device pool queue $ tranistFromUndefinedToDstOptimal dst
+-- submitNow device pool queue $ \cmd -> Vk.cmdCopyBufferToImage cmd src dst Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL [region]
+-- submitNow device pool queue $ tranistFromDstOptimalToShaderReadOnlyOptimal dst
 
 tranistFromUndefinedToDstOptimal :: Vk.Image -> Vk.CommandBuffer -> Managed ()
 tranistFromUndefinedToDstOptimal dst cmd =
@@ -646,13 +660,13 @@ withPipeline dev extent texture sampler = do
             }
         sampler =
           Vk.zero
-            { VkDescriptorSetLayoutBinding.binding = 1,
+            { VkDescriptorSetLayoutBinding.binding = 0,
               VkDescriptorSetLayoutBinding.descriptorCount = 1,
               VkDescriptorSetLayoutBinding.descriptorType = Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
               VkDescriptorSetLayoutBinding.stageFlags = Vk.SHADER_STAGE_FRAGMENT_BIT
             }
         info =
-          Vk.zero {VkDescriptorSetLayoutCreateInfo.bindings = [uniform, sampler]}
+          Vk.zero {VkDescriptorSetLayoutCreateInfo.bindings = [sampler]}
      in managed $ Vk.withDescriptorSetLayout dev info Nothing bracket
   pool <-
     let uniform =
@@ -702,7 +716,7 @@ withPipeline dev extent texture sampler = do
         Vk.SomeStruct
           Vk.zero
             { VkWriteDescriptorSet.dstSet = set,
-              VkWriteDescriptorSet.dstBinding = 1,
+              VkWriteDescriptorSet.dstBinding = 0,
               VkWriteDescriptorSet.descriptorType = Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
               VkWriteDescriptorSet.descriptorCount = 1,
               VkWriteDescriptorSet.imageInfo = [imageInfo]
@@ -841,6 +855,7 @@ createShaders dev =
     fragCode <- liftIO $ BS.readFile "frag.spv"
     vertCode <- liftIO $ BS.readFile "vert.spv"
     fragModule <- managed $ Vk.withShaderModule dev Vk.zero {VkShaderModuleCreateInfo.code = fragCode} Nothing bracket
+    -- fragModule <- managed $ Vk.withShadersEXT dev Vk.zero {VkShaderModuleCreateInfo.code = fragCode} Nothing bracket
     vertModule <- managed $ Vk.withShaderModule dev Vk.zero {VkShaderModuleCreateInfo.code = vertCode} Nothing bracket
     let vertextInfo =
           Vk.zero
@@ -928,13 +943,13 @@ withImageView dev img format =
           { VkImageViewCreateInfo.image = img,
             VkImageViewCreateInfo.viewType = Vk.IMAGE_VIEW_TYPE_2D,
             VkImageViewCreateInfo.format = format,
-            VkImageViewCreateInfo.components =
-              Vk.zero
-                { VkComponentMapping.r = Vk.COMPONENT_SWIZZLE_IDENTITY,
-                  VkComponentMapping.g = Vk.COMPONENT_SWIZZLE_IDENTITY,
-                  VkComponentMapping.b = Vk.COMPONENT_SWIZZLE_IDENTITY,
-                  VkComponentMapping.a = Vk.COMPONENT_SWIZZLE_IDENTITY
-                },
+            -- VkImageViewCreateInfo.components =
+            --   Vk.zero
+            --     { VkComponentMapping.r = Vk.COMPONENT_SWIZZLE_IDENTITY,
+            --       VkComponentMapping.g = Vk.COMPONENT_SWIZZLE_IDENTITY,
+            --       VkComponentMapping.b = Vk.COMPONENT_SWIZZLE_IDENTITY,
+            --       VkComponentMapping.a = Vk.COMPONENT_SWIZZLE_IDENTITY
+            --     },
             VkImageViewCreateInfo.subresourceRange =
               Vk.zero
                 { VkImageSubresourceRange.aspectMask = Vk.IMAGE_ASPECT_COLOR_BIT,
@@ -951,6 +966,7 @@ withDevice gpu gfx present portable =
   let exts =
         Vk.KHR_DYNAMIC_RENDERING_EXTENSION_NAME
           : Vk.KHR_SWAPCHAIN_EXTENSION_NAME
+          : Vk.KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME
           : ([Vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME | portable])
       dynamicRendering = Vk.zero {VkPhysicalDeviceDynamicRenderingFeatures.dynamicRendering = True}
       info =
@@ -1039,14 +1055,18 @@ withVulkan w = do
               Just
                 Vk.zero
                   { VkApplicationInfo.applicationName = Just "Vulkan",
-                    VkApplicationInfo.apiVersion = Vk.API_VERSION_1_3
+                    VkApplicationInfo.apiVersion = vulkanVersion
                   },
             VkInstanceCreateInfo.enabledExtensionNames = V.fromList instExts,
             VkInstanceCreateInfo.enabledLayerNames = ["VK_LAYER_KHRONOS_validation"],
             VkInstanceCreateInfo.flags = Vk.INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR
           }
           ::& debugUtilsMessengerCreateInfo
-            :& Vk.ValidationFeaturesEXT [Vk.VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT] []
+            :& Vk.ValidationFeaturesEXT
+              [ Vk.VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT,
+                Vk.VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT
+              ]
+              []
             :& ()
   managed $ Vk.withInstance instanceCreateInfo Nothing bracket
 

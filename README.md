@@ -20,6 +20,7 @@ stack run
 - [ ] Multiple stripes using the same texture in one frame (combined smapler is good?)
 - [ ] DrawIndirect instead of draw per sprite?
 - [ ] Bindless textures
+- [ ] Use Debug Print as Vk 1.3, not the extension
 - [ ] Basic DearImGUI integration
 - [ ] Add texture support
 - [ ] Basic static (no animation) stripe

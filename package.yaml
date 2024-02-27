@@ -17,6 +17,7 @@ dependencies:
   - dear-imgui
   - geomancy
   - JuicyPixels
+  - storable-record
 
 ghc-options:
   - -Wall

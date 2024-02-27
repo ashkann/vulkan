@@ -27,6 +27,7 @@ executable ashkan
     , managed
     , mtl
     , sdl2
+    , storable-record
     , transformers
     , vector
     , vulkan

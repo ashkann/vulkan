@@ -11,7 +11,7 @@
 module Main (main) where
 
 import Codec.Picture qualified as JP
-import Control.Applicative ((<|>))
+import Control.Applicative (liftA3, (<|>))
 import Control.Exception (bracket, bracket_)
 import Control.Monad.Except (ExceptT (ExceptT), MonadError (throwError), runExceptT)
 import Control.Monad.Extra (whileM)
@@ -19,7 +19,7 @@ import Control.Monad.Managed (Managed, MonadIO (liftIO), MonadManaged, managed, 
 import Data.Bits ((.&.), (.|.))
 import Data.ByteString qualified as BS (readFile)
 import Data.ByteString.Char8 qualified as BS (pack, unpack)
-import Data.Foldable
+import Data.Foldable (foldlM, for_)
 import Data.Functor ((<&>))
 import Data.Traversable (for)
 import Data.Vector ((!))
@@ -28,7 +28,9 @@ import Data.Vector.Storable qualified as SV
 import Foreign (Bits (zeroBits), Ptr, Storable, Word32, castPtr, copyArray, withForeignPtr)
 import Foreign.C (peekCAString)
 import Foreign.Ptr (castFunPtr)
-import Foreign.Storable (sizeOf)
+import Foreign.Storable (Storable (..), sizeOf)
+import Foreign.Storable.Record qualified as Store
+import Geomancy qualified as G
 import SDL qualified
 import SDL.Video.Vulkan qualified as SDL
 import Vulkan qualified as Vk
@@ -92,6 +94,24 @@ import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCre
 import VulkanMemoryAllocator qualified as VmaAllocatorCreateInfo (AllocatorCreateInfo (..))
 import Prelude hiding (init)
 
+data Vertex = Vertex {xy :: G.Vec2, rgb :: G.Vec3, uv :: G.Vec2}
+  deriving (Show, Eq)
+
+store :: Store.Dictionary Vertex
+store =
+  Store.run $
+    liftA3
+      Vertex
+      (Store.element xy)
+      (Store.element rgb)
+      (Store.element uv)
+
+instance Storable Vertex where
+  sizeOf = Store.sizeOf store
+  alignment = Store.alignment store
+  peek = Store.peek store
+  poke = Store.poke store
+
 main :: IO ()
 main = runManaged $ do
   let windowWidth = 500
@@ -130,15 +150,14 @@ main = runManaged $ do
      in managed $ Vk.withCommandPool device info Nothing bracket
   say "Vulkan" "Created command pool"
   vertexBuffer <-
-    let v =
-          [ [[-0.5, -0.5], [1.0, 0.0, 0.0], [0.0, 0.0]],
-            [[0.5, -0.5], [0.0, 1.0, 0.0], [1.0, 0.0]],
-            [[0.5, 0.5], [0.0, 0.0, 1.0], [1.0, 1.0]],
-            [[-0.5, 0.5], [1.0, 1.0, 1.0], [0.0, 1.0]]
-          ] ::
-            [[[Float]]]
-        vertices = SV.fromList $ concatMap concat v
-     in withBuffer allocator 1024 device commandPool gfxQueue Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT vertices
+    let vertecies =
+          SV.fromList
+            [ Vertex {xy = G.vec2 (-0.5) (-0.5), rgb = G.vec3 1.0 0.0 0.0, uv = G.vec2 0.0 0.0},
+              Vertex {xy = G.vec2 0.5 (-0.5), rgb = G.vec3 0.0 1.0 0.0, uv = G.vec2 1.0 0.0},
+              Vertex {xy = G.vec2 0.5 0.5, rgb = G.vec3 0.0 0.0 1.0, uv = G.vec2 1.0 1.0},
+              Vertex {xy = G.vec2 (-0.5) 0.5, rgb = G.vec3 1.0 1.0 1.0, uv = G.vec2 0.0 1.0}
+            ]
+     in withBuffer allocator 1024 device commandPool gfxQueue Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT vertecies
   say "Vulkan" "Created vertex buffer"
   indexBuffer <-
     let indecies = SV.fromList [0, 1, 2, 2, 3, 0] :: SV.Vector Word32
@@ -353,13 +372,17 @@ copyBufferToImage device pool queue src dst width height = do
     Vk.cmdCopyBufferToImage cmd src dst Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL [region]
     tranistFromDstOptimalToShaderReadOnlyOptimal dst cmd
 
--- submitNow device pool queue $ tranistFromUndefinedToDstOptimal dst
--- submitNow device pool queue $ \cmd -> Vk.cmdCopyBufferToImage cmd src dst Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL [region]
--- submitNow device pool queue $ tranistFromDstOptimalToShaderReadOnlyOptimal dst
-
 tranistFromUndefinedToDstOptimal :: Vk.Image -> Vk.CommandBuffer -> Managed ()
 tranistFromUndefinedToDstOptimal dst cmd =
-  transitImage cmd dst (Vk.AccessFlagBits 0) Vk.ACCESS_TRANSFER_WRITE_BIT Vk.IMAGE_LAYOUT_UNDEFINED Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL Vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT Vk.PIPELINE_STAGE_TRANSFER_BIT
+  transitImage
+    cmd
+    dst
+    (Vk.AccessFlagBits 0)
+    Vk.ACCESS_TRANSFER_WRITE_BIT
+    Vk.IMAGE_LAYOUT_UNDEFINED
+    Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+    Vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT
+    Vk.PIPELINE_STAGE_TRANSFER_BIT
 
 tranistFromDstOptimalToShaderReadOnlyOptimal :: Vk.Image -> Vk.CommandBuffer -> Managed ()
 tranistFromDstOptimalToShaderReadOnlyOptimal dst cmd =
@@ -715,8 +738,10 @@ withPipeline dev extent texture sampler = do
               VkVertexInputAttributeDescription.format = Vk.FORMAT_R32G32_SFLOAT,
               VkVertexInputAttributeDescription.offset = 0
             }
+        xySize = sizeOf (undefined :: G.Vec2)
+        rgbSize = sizeOf (undefined :: G.Vec3)
         color =
-          let offset = sizeOf (undefined :: Float) * 2
+          let offset = xySize
            in Vk.zero -- layout(location = 1) in vec3 inColor
                 { VkVertexInputAttributeDescription.binding = 0,
                   VkVertexInputAttributeDescription.location = 1,
@@ -724,7 +749,7 @@ withPipeline dev extent texture sampler = do
                   VkVertexInputAttributeDescription.offset = fromIntegral offset
                 }
         textureCoordinates =
-          let offset = sizeOf (undefined :: Float) * (2 + 3)
+          let offset = xySize + rgbSize
            in Vk.zero -- layout(location = 2) in vec2 inTexCoord
                 { VkVertexInputAttributeDescription.binding = 0,
                   VkVertexInputAttributeDescription.location = 2,
@@ -738,7 +763,7 @@ withPipeline dev extent texture sampler = do
                 { VkPipelineVertexInputStateCreateInfo.vertexBindingDescriptions =
                     [ Vk.zero
                         { VkVertexInputBindingDescription.binding = 0,
-                          VkVertexInputBindingDescription.stride = fromIntegral $ 7 * sizeOf (undefined :: Float),
+                          VkVertexInputBindingDescription.stride = fromIntegral $ sizeOf (undefined :: Vertex),
                           VkVertexInputBindingDescription.inputRate = Vk.VERTEX_INPUT_RATE_VERTEX
                         }
                     ],

@@ -15,11 +15,15 @@ stack run
 - [ ] Maybe images from the same buffer as well
 - [ ] More than one in-flight frame
 - [x] Some memory is not properly freed before vulkan instance is destroyed
-- [ ] Don't map/unmap memory for vertex/index buffers every frame. Instead map/unmap once and just copy the data every frame
+- [x] Just use VMA ~~Don't map/unmap memory for vertex/index buffers every frame. Instead map/unmap once and just copy the data every frame~~
 - [ ] Multiple textures in the same frame
-- [ ] Multiple stripes using the same texture in one frame (combined smapler is good?)
-- [ ] DrawIndirect instead of draw per sprite?
+- [ ] Use two textures in the same frame
+- [ ] Use a texture atlas probably? Not sure yet
+- [ ] Multiple sprites using the same texture in one frame
+- [ ] Sprite back-to-front sorting
+- [ ] Sprite bacthing
 - [ ] Bindless textures
+- [ ] GPU driven rendering (DrawIndirect, etc)
 - [ ] Use Debug Print as Vk 1.3, not the extension
 - [ ] Basic DearImGUI integration
 - [ ] Add texture support

@@ -63,7 +63,9 @@ import Vulkan qualified as VkImageSubresourceRange (ImageSubresourceRange (..))
 import Vulkan qualified as VkImageViewCreateInfo (ImageViewCreateInfo (..))
 import Vulkan qualified as VkInstance (Instance (..))
 import Vulkan qualified as VkInstanceCreateInfo (InstanceCreateInfo (..))
+import Vulkan qualified as VkPhysicalDeviceDescriptorIndexingFeatures (PhysicalDeviceDescriptorIndexingFeatures (..))
 import Vulkan qualified as VkPhysicalDeviceDynamicRenderingFeatures (PhysicalDeviceDynamicRenderingFeatures (..))
+import Vulkan qualified as VkPhysicalDeviceFeatures2 (PhysicalDeviceFeatures2 (..))
 import Vulkan qualified as VkPipelineColorBlendStateCreateInfo (PipelineColorBlendStateCreateInfo (..))
 import Vulkan qualified as VkPipelineLayoutCreateInfo (PipelineLayoutCreateInfo (..))
 import Vulkan qualified as VkPipelineRenderingCreateInfo (PipelineRenderingCreateInfo (..))
@@ -175,7 +177,7 @@ main = runManaged $ do
               VkSamplerCreateInfo.borderColor = Vk.BORDER_COLOR_INT_OPAQUE_WHITE
             }
      in managed $ Vk.withSampler device info Nothing bracket
-  textureImage <- texture allocator device commandPool gfxQueue "image.png"
+  textureImage <- texture allocator device commandPool gfxQueue "textures/image.png"
   say "Vulkan" $ "Created texture " ++ show textureImage
   commandBuffers <- createCommandBuffers device commandPool extent images vertexBuffer indexBuffer textureImage sampler
   imageAvailable <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
@@ -654,23 +656,27 @@ withPipeline ::
   Managed (Vk.Pipeline, Vk.PipelineLayout, Vk.DescriptorSet)
 withPipeline dev extent texture sampler = do
   (vert, frag) <- createShaders dev
+  let descriptorCount = 1
+      types =
+        [ --Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+          --Vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+          Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
+        ]
+      binding i typ =
+        Vk.zero
+          { VkDescriptorSetLayoutBinding.binding = i,
+            VkDescriptorSetLayoutBinding.descriptorCount = descriptorCount,
+            VkDescriptorSetLayoutBinding.descriptorType = typ,
+            VkDescriptorSetLayoutBinding.stageFlags = Vk.SHADER_STAGE_FRAGMENT_BIT
+          }
+      poolSize typ =
+        Vk.zero
+          { VkDescriptorPoolSize.descriptorCount = descriptorCount,
+            VkDescriptorPoolSize.type' = typ
+          }
   setLayout <-
-    let uniform =
-          Vk.zero
-            { VkDescriptorSetLayoutBinding.binding = 0,
-              VkDescriptorSetLayoutBinding.descriptorCount = 1,
-              VkDescriptorSetLayoutBinding.descriptorType = Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-              VkDescriptorSetLayoutBinding.stageFlags = Vk.SHADER_STAGE_VERTEX_BIT
-            }
-        sampler =
-          Vk.zero
-            { VkDescriptorSetLayoutBinding.binding = 0,
-              VkDescriptorSetLayoutBinding.descriptorCount = 1,
-              VkDescriptorSetLayoutBinding.descriptorType = Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-              VkDescriptorSetLayoutBinding.stageFlags = Vk.SHADER_STAGE_FRAGMENT_BIT
-            }
-        info =
-          Vk.zero {VkDescriptorSetLayoutCreateInfo.bindings = [sampler]}
+    let info =
+          Vk.zero {VkDescriptorSetLayoutCreateInfo.bindings = V.fromList $ zipWith binding [0 ..] types}
      in managed $ Vk.withDescriptorSetLayout dev info Nothing bracket
   pool <-
     let uniform =
@@ -1007,6 +1013,8 @@ pickGPU vulkan surface = do
     continue = ExceptT . return . Right
 
     good gpu = do
+      features <- Vk.getPhysicalDeviceFeatures2 gpu :: m (Vk.PhysicalDeviceFeatures2 '[Vk.PhysicalDeviceDescriptorIndexingFeatures])
+      let descriptorIndexingFeatures = fst $ VkPhysicalDeviceFeatures2.next features
       (_, exts) <- Vk.enumerateDeviceExtensionProperties gpu Nothing
       r <- swapchainSupported exts
       if r && dynamicRenderingSupported exts

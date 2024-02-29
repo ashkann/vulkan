@@ -658,8 +658,8 @@ withPipeline dev extent texture sampler = do
   (vert, frag) <- createShaders dev
   let descriptorCount = 1
       types =
-        [ --Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-          --Vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        [ Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+          Vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
           Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
         ]
       binding i typ =
@@ -691,7 +691,7 @@ withPipeline dev extent texture sampler = do
             }
         info =
           Vk.zero
-            { VkDescriptorPoolCreateInfo.poolSizes = [uniform, sampler],
+            { VkDescriptorPoolCreateInfo.poolSizes = V.fromList $ poolSize <$> types,
               VkDescriptorPoolCreateInfo.maxSets = 1,
               VkDescriptorPoolCreateInfo.flags = Vk.DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT
             }
@@ -726,7 +726,7 @@ withPipeline dev extent texture sampler = do
         Vk.SomeStruct
           Vk.zero
             { VkWriteDescriptorSet.dstSet = set,
-              VkWriteDescriptorSet.dstBinding = 0,
+              VkWriteDescriptorSet.dstBinding = 2,
               VkWriteDescriptorSet.descriptorType = Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
               VkWriteDescriptorSet.descriptorCount = 1,
               VkWriteDescriptorSet.imageInfo = [imageInfo]

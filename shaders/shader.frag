@@ -10,5 +10,6 @@ layout(location = 0) out vec4 outColor;
 
 void main() {
     vec4 texColor = texture(texSampler, fragTexCoord);
+    outColor = vec4(mix(fragColor, texColor.rgb, texColor.a), 1.0);
     // debugPrintfEXT("(r=%f g=%f b=%f a=%f)", outColor.r, outColor.g, outColor.b, outColor.a);
 }

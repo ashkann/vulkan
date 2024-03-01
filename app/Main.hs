@@ -19,7 +19,7 @@ import Control.Monad.Managed (Managed, MonadIO (liftIO), MonadManaged, managed, 
 import Data.Bits ((.&.), (.|.))
 import Data.ByteString qualified as BS (readFile)
 import Data.ByteString.Char8 qualified as BS (pack, unpack)
-import Data.Foldable (foldlM, for_)
+import Data.Foldable (Foldable (foldl'), foldlM, for_)
 import Data.Functor ((<&>))
 import Data.Traversable (for)
 import Data.Vector ((!))
@@ -114,6 +114,8 @@ instance Storable Vertex where
   peek = Store.peek store
   poke = Store.poke store
 
+data Sprite = Sprite {top :: Float, left :: Float, width :: Float, height :: Float} deriving (Show, Eq)
+
 main :: IO ()
 main = runManaged $ do
   let windowWidth = 500
@@ -151,19 +153,14 @@ main = runManaged $ do
     let info = Vk.zero {VkCommandPoolCreateInfo.queueFamilyIndex = gfx}
      in managed $ Vk.withCommandPool device info Nothing bracket
   say "Vulkan" "Created command pool"
-  vertexBuffer <-
-    let vertecies =
-          SV.fromList
-            [ Vertex {xy = G.vec2 (-0.5) (-0.5), rgb = G.vec3 1.0 0.0 0.0, uv = G.vec2 0.0 0.0},
-              Vertex {xy = G.vec2 0.5 (-0.5), rgb = G.vec3 0.0 1.0 0.0, uv = G.vec2 1.0 0.0},
-              Vertex {xy = G.vec2 0.5 0.5, rgb = G.vec3 0.0 0.0 1.0, uv = G.vec2 1.0 1.0},
-              Vertex {xy = G.vec2 (-0.5) 0.5, rgb = G.vec3 1.0 1.0 1.0, uv = G.vec2 0.0 1.0}
-            ]
-     in withBuffer allocator 1024 device commandPool gfxQueue Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT vertecies
+  let sprites =
+        [ Sprite {top = -0.8, left = -0.8, width = 1.0, height = 1.0},
+          Sprite {top = -0.2, left = -0.2, width = 1.0, height = 1.0}
+        ]
+      (vertices, indices) = doBuffers sprites
+  vertexBuffer <- withBuffer allocator 1024 device commandPool gfxQueue Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT vertices
   say "Vulkan" "Created vertex buffer"
-  indexBuffer <-
-    let indecies = SV.fromList [0, 1, 2, 2, 3, 0] :: SV.Vector Word32
-     in withBuffer allocator 1025 device commandPool gfxQueue Vk.BUFFER_USAGE_INDEX_BUFFER_BIT indecies
+  indexBuffer <- withBuffer allocator 1025 device commandPool gfxQueue Vk.BUFFER_USAGE_INDEX_BUFFER_BIT indices
   say "Vulkan" "Created index buffer"
   sampler <-
     let info =
@@ -177,7 +174,7 @@ main = runManaged $ do
               VkSamplerCreateInfo.borderColor = Vk.BORDER_COLOR_INT_OPAQUE_WHITE
             }
      in managed $ Vk.withSampler device info Nothing bracket
-  textureImage <- texture allocator device commandPool gfxQueue "textures/image.png"
+  textureImage <- texture allocator device commandPool gfxQueue "textures/image3.png"
   say "Vulkan" $ "Created texture " ++ show textureImage
   commandBuffers <- createCommandBuffers device commandPool extent images vertexBuffer indexBuffer textureImage sampler
   imageAvailable <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
@@ -253,6 +250,25 @@ debugUtilsMessengerCreateInfo =
           .|. Vk.DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
       VkDebugUtilsMessengerCreateInfoEXT.pfnUserCallback = Vk.debugCallbackPtr
     }
+
+doBuffers :: [Sprite] -> (SV.Vector Vertex, SV.Vector Word32)
+doBuffers sprites =
+  let toQuad Sprite {top = x, left = y, width = w, height = h} =
+        SV.fromList
+          [ Vertex {xy = G.vec2 y x, rgb = G.vec3 1.0 0.0 0.0, uv = G.vec2 0.0 0.0},
+            Vertex {xy = G.vec2 (y + w) x, rgb = G.vec3 0.0 1.0 0.0, uv = G.vec2 1.0 0.0},
+            Vertex {xy = G.vec2 (y + w) (x + h), rgb = G.vec3 0.0 0.0 1.0, uv = G.vec2 1.0 1.0},
+            Vertex {xy = G.vec2 y (x + h), rgb = G.vec3 1.0 1.0 1.0, uv = G.vec2 0.0 1.0}
+          ]
+      vertecies = mconcat $ toQuad <$> sprites
+      howMany = fromIntegral (length sprites)
+      go acc 0 = acc
+      go acc n =
+        let i = howMany - n
+            new = (+ (i * 4)) <$> [0 :: Word32, 1, 2, 2, 3, 0]
+         in go (acc ++ new) (n - 1)
+      indecies = SV.fromList $ go [] howMany
+   in (vertecies, indecies)
 
 withBuffer ::
   (Storable a) =>
@@ -587,7 +603,7 @@ render pipeline layout set vertex index extent (img, view) cmd =
                 VkRenderingInfo.layerCount = 1,
                 VkRenderingInfo.colorAttachments = [attachment]
               }
-          indexCount = 6 -- TODO get from index buffer
+          indexCount = 12 -- TODO get from index buffer
        in Vk.cmdUseRendering cmd info2 $ Vk.cmdDrawIndexed cmd indexCount 1 0 0 0
 
 transitImage ::
@@ -648,14 +664,7 @@ createCommandBuffers device pool extent images vertex index texture sampler = do
   say "Vulkan" "Recorded command buffers"
   return commandBuffers
 
-withPipeline ::
-  Vk.Device ->
-  Vk.Extent2D ->
-  Vk.ImageView ->
-  Vk.Sampler ->
-  Managed (Vk.Pipeline, Vk.PipelineLayout, Vk.DescriptorSet)
-withPipeline dev extent texture sampler = do
-  (vert, frag) <- createShaders dev
+doDescriptors dev texture sampler = do
   let descriptorCount = 1
       types =
         [ Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
@@ -674,22 +683,12 @@ withPipeline dev extent texture sampler = do
           { VkDescriptorPoolSize.descriptorCount = descriptorCount,
             VkDescriptorPoolSize.type' = typ
           }
-  setLayout <-
+  layout <-
     let info =
           Vk.zero {VkDescriptorSetLayoutCreateInfo.bindings = V.fromList $ zipWith binding [0 ..] types}
      in managed $ Vk.withDescriptorSetLayout dev info Nothing bracket
   pool <-
-    let uniform =
-          Vk.zero
-            { VkDescriptorPoolSize.descriptorCount = 1,
-              VkDescriptorPoolSize.type' = Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER
-            }
-        sampler =
-          Vk.zero
-            { VkDescriptorPoolSize.descriptorCount = 1,
-              VkDescriptorPoolSize.type' = Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
-            }
-        info =
+    let info =
           Vk.zero
             { VkDescriptorPoolCreateInfo.poolSizes = V.fromList $ poolSize <$> types,
               VkDescriptorPoolCreateInfo.maxSets = 1,
@@ -700,7 +699,7 @@ withPipeline dev extent texture sampler = do
     let info =
           Vk.zero
             { VkDescriptorSetAllocateInfo.descriptorPool = pool,
-              VkDescriptorSetAllocateInfo.setLayouts = [setLayout]
+              VkDescriptorSetAllocateInfo.setLayouts = [layout]
             }
      in V.head <$> managed (Vk.withDescriptorSets dev info bracket)
   let bufferInfo =
@@ -732,10 +731,20 @@ withPipeline dev extent texture sampler = do
               VkWriteDescriptorSet.imageInfo = [imageInfo]
             }
    in Vk.updateDescriptorSets dev [imageWriteInfo] []
+  return (layout, set)
 
+withPipeline ::
+  Vk.Device ->
+  Vk.Extent2D ->
+  Vk.ImageView ->
+  Vk.Sampler ->
+  Managed (Vk.Pipeline, Vk.PipelineLayout, Vk.DescriptorSet)
+withPipeline dev extent texture sampler = do
+  (setLayout, set) <- doDescriptors dev texture sampler
   pipelineLayout <-
     let info = Vk.zero {VkPipelineLayoutCreateInfo.setLayouts = [setLayout]}
      in managed $ Vk.withPipelineLayout dev info Nothing bracket
+  (vert, frag) <- createShaders dev
   (_, res) <-
     let position =
           Vk.zero -- layout(location = 0) in vec2 inPosition

@@ -178,7 +178,7 @@ main = runManaged $ do
   say "Vulkan" $ "Created texture " ++ show tex1
   tex2 <- texture allocator device commandPool gfxQueue "textures/image.png"
   say "Vulkan" $ "Created texture " ++ show tex2
-  commandBuffers <- createCommandBuffers device commandPool extent images vertexBuffer indexBuffer tex1 sampler
+  commandBuffers <- createCommandBuffers device commandPool extent images vertexBuffer indexBuffer [tex1, tex2] sampler
   imageAvailable <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
   renderFinished <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
   inFlight <-
@@ -647,11 +647,11 @@ createCommandBuffers ::
   V.Vector (Vk.Image, Vk.ImageView) ->
   Vk.Buffer ->
   Vk.Buffer ->
-  Vk.ImageView ->
+  [Vk.ImageView] ->
   Vk.Sampler ->
   Managed (V.Vector Vk.CommandBuffer)
-createCommandBuffers device pool extent images vertex index texture sampler = do
-  (pipeline, layout, set) <- withPipeline device extent texture sampler
+createCommandBuffers device pool extent images vertex index textures sampler = do
+  (pipeline, layout, set) <- withPipeline device extent textures sampler
   say "Vulkan" "Created pipeline"
   commandBuffers <-
     let info =
@@ -739,11 +739,11 @@ doDescriptors dev textures sampler = do
 withPipeline ::
   Vk.Device ->
   Vk.Extent2D ->
-  Vk.ImageView ->
+  [Vk.ImageView] ->
   Vk.Sampler ->
   Managed (Vk.Pipeline, Vk.PipelineLayout, Vk.DescriptorSet)
-withPipeline dev extent texture sampler = do
-  (setLayout, set) <- doDescriptors dev [texture, texture] sampler
+withPipeline dev extent textures sampler = do
+  (setLayout, set) <- doDescriptors dev textures sampler
   pipelineLayout <-
     let info = Vk.zero {VkPipelineLayoutCreateInfo.setLayouts = [setLayout]}
      in managed $ Vk.withPipelineLayout dev info Nothing bracket

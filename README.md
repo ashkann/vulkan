@@ -13,16 +13,16 @@ stack run
 ## TODO (doubling as a readmap)
 - [ ] Allocate both index and vertex buffers in one buffer
 - [ ] Maybe images from the same buffer as well
-- [ ] More than one in-flight frame
+- [x] More than one in-flight frame
 - [x] Some memory is not properly freed before vulkan instance is destroyed
 - [x] Just use VMA ~~Don't map/unmap memory for vertex/index buffers every frame. Instead map/unmap once and just copy the data every frame~~
-- [ ] Multiple textures in the same frame
-- [ ] Use two textures in the same frame
+- [x] Multiple sprites using the different textures in one frame
 - [ ] Use a texture atlas probably? Not sure yet
-- [ ] Multiple sprites using the same texture in one frame
-- [ ] Sprite back-to-front sorting
+- [ ] Investigate sampler2DArray
+- [ ] Sprite back-to-front sorting, do I need this for alpha blending?
 - [ ] Sprite bacthing
 - [ ] Bindless textures
+- [ ] VK_KHR_buffer_device_address
 - [ ] GPU driven rendering (DrawIndirect, etc)
 - [ ] Use Debug Print as Vk 1.3, not the extension
 - [ ] Basic DearImGUI integration

@@ -1,17 +1,20 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE NoFieldSelectors #-}
 
 module Main (main) where
 
 import Codec.Picture qualified as JP
-import Control.Applicative (liftA3, (<|>))
+import Control.Applicative ((<|>))
 import Control.Exception (bracket, bracket_)
 import Control.Monad.Except (ExceptT (ExceptT), MonadError (throwError), runExceptT)
 import Control.Monad.Extra (whileM)
@@ -96,17 +99,17 @@ import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCre
 import VulkanMemoryAllocator qualified as VmaAllocatorCreateInfo (AllocatorCreateInfo (..))
 import Prelude hiding (init)
 
-data Vertex = Vertex {xy :: G.Vec2, rgb :: G.Vec3, uv :: G.Vec2}
+data Vertex = Vertex {xy :: G.Vec2, rgb :: G.Vec3, uv :: G.Vec2, texture :: Word32}
   deriving (Show, Eq)
 
 store :: Store.Dictionary Vertex
 store =
   Store.run $
-    liftA3
-      Vertex
-      (Store.element xy)
-      (Store.element rgb)
-      (Store.element uv)
+    Vertex
+      <$> Store.element (\Vertex {xy} -> xy)
+      <*> Store.element (\Vertex {rgb} -> rgb)
+      <*> Store.element (\Vertex {uv} -> uv)
+      <*> Store.element (\Vertex {texture} -> texture)
 
 instance Storable Vertex where
   sizeOf = Store.sizeOf store
@@ -114,7 +117,14 @@ instance Storable Vertex where
   peek = Store.peek store
   poke = Store.poke store
 
-data Sprite = Sprite {top :: Float, left :: Float, width :: Float, height :: Float} deriving (Show, Eq)
+data Sprite = Sprite
+  { top :: Float,
+    left :: Float,
+    width :: Float,
+    height :: Float,
+    texture :: Word32
+  }
+  deriving (Show, Eq)
 
 main :: IO ()
 main = runManaged $ do
@@ -154,8 +164,8 @@ main = runManaged $ do
      in managed $ Vk.withCommandPool device info Nothing bracket
   say "Vulkan" "Created command pool"
   let sprites =
-        [ Sprite {top = -0.8, left = -0.8, width = 1.0, height = 1.0},
-          Sprite {top = -0.2, left = -0.2, width = 1.0, height = 1.0}
+        [ Sprite {top = -0.8, left = -0.8, width = 1.0, height = 1.0, texture = 0},
+          Sprite {top = -0.2, left = -0.2, width = 1.0, height = 1.0, texture = 1}
         ]
       (vertices, indices) = doBuffers sprites
   vertexBuffer <- withBuffer allocator 1024 device commandPool gfxQueue Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT vertices
@@ -255,12 +265,12 @@ debugUtilsMessengerCreateInfo =
 
 doBuffers :: [Sprite] -> (SV.Vector Vertex, SV.Vector Word32)
 doBuffers sprites =
-  let toQuad Sprite {top = x, left = y, width = w, height = h} =
+  let toQuad Sprite {top = x, left = y, width = w, height = h, texture = tex} =
         SV.fromList
-          [ Vertex {xy = G.vec2 y x, rgb = G.vec3 1.0 0.0 0.0, uv = G.vec2 0.0 0.0},
-            Vertex {xy = G.vec2 (y + w) x, rgb = G.vec3 0.0 1.0 0.0, uv = G.vec2 1.0 0.0},
-            Vertex {xy = G.vec2 (y + w) (x + h), rgb = G.vec3 0.0 0.0 1.0, uv = G.vec2 1.0 1.0},
-            Vertex {xy = G.vec2 y (x + h), rgb = G.vec3 1.0 1.0 1.0, uv = G.vec2 0.0 1.0}
+          [ Vertex {xy = G.vec2 y x, rgb = G.vec3 1.0 0.0 0.0, uv = G.vec2 0.0 0.0, texture = tex},
+            Vertex {xy = G.vec2 (y + w) x, rgb = G.vec3 0.0 1.0 0.0, uv = G.vec2 1.0 0.0, texture = tex},
+            Vertex {xy = G.vec2 (y + w) (x + h), rgb = G.vec3 0.0 0.0 1.0, uv = G.vec2 1.0 1.0, texture = tex},
+            Vertex {xy = G.vec2 y (x + h), rgb = G.vec3 1.0 1.0 1.0, uv = G.vec2 0.0 1.0, texture = tex}
           ]
       vertecies = mconcat $ toQuad <$> sprites
       howMany = fromIntegral (length sprites)
@@ -749,18 +759,19 @@ withPipeline dev extent textures sampler = do
      in managed $ Vk.withPipelineLayout dev info Nothing bracket
   (vert, frag) <- createShaders dev
   (_, res) <-
-    let position =
-          Vk.zero -- layout(location = 0) in vec2 inPosition
+    let xySize = sizeOf (undefined :: G.Vec2)
+        rgbSize = sizeOf (undefined :: G.Vec3)
+        tetCordSize = sizeOf (undefined :: G.Vec2)
+        position =
+          Vk.zero
             { VkVertexInputAttributeDescription.binding = 0,
               VkVertexInputAttributeDescription.location = 0,
               VkVertexInputAttributeDescription.format = Vk.FORMAT_R32G32_SFLOAT,
               VkVertexInputAttributeDescription.offset = 0
             }
-        xySize = sizeOf (undefined :: G.Vec2)
-        rgbSize = sizeOf (undefined :: G.Vec3)
         color =
           let offset = xySize
-           in Vk.zero -- layout(location = 1) in vec3 inColor
+           in Vk.zero
                 { VkVertexInputAttributeDescription.binding = 0,
                   VkVertexInputAttributeDescription.location = 1,
                   VkVertexInputAttributeDescription.format = Vk.FORMAT_R32G32B32_SFLOAT,
@@ -768,12 +779,21 @@ withPipeline dev extent textures sampler = do
                 }
         textureCoordinates =
           let offset = xySize + rgbSize
-           in Vk.zero -- layout(location = 2) in vec2 inTexCoord
+           in Vk.zero
                 { VkVertexInputAttributeDescription.binding = 0,
                   VkVertexInputAttributeDescription.location = 2,
-                  VkVertexInputAttributeDescription.format = Vk.FORMAT_R32G32_SFLOAT, -- vec2 for textture coordinates
+                  VkVertexInputAttributeDescription.format = Vk.FORMAT_R32G32_SFLOAT,
                   VkVertexInputAttributeDescription.offset = fromIntegral offset
                 }
+        texttureIndex =
+          let offset = xySize + rgbSize + tetCordSize
+           in Vk.zero
+                { VkVertexInputAttributeDescription.binding = 0,
+                  VkVertexInputAttributeDescription.location = 3,
+                  VkVertexInputAttributeDescription.format = Vk.FORMAT_R32_UINT,
+                  VkVertexInputAttributeDescription.offset = fromIntegral offset
+                }
+        attributes = [position, color, textureCoordinates, texttureIndex]
         vertexInputInfo =
           Just $
             Vk.SomeStruct
@@ -785,7 +805,7 @@ withPipeline dev extent textures sampler = do
                           VkVertexInputBindingDescription.inputRate = Vk.VERTEX_INPUT_RATE_VERTEX
                         }
                     ],
-                  VkPipelineVertexInputStateCreateInfo.vertexAttributeDescriptions = [position, color, textureCoordinates]
+                  VkPipelineVertexInputStateCreateInfo.vertexAttributeDescriptions = attributes
                 }
         dynamicRendering =
           Vk.zero

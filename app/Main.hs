@@ -174,9 +174,11 @@ main = runManaged $ do
               VkSamplerCreateInfo.borderColor = Vk.BORDER_COLOR_INT_OPAQUE_WHITE
             }
      in managed $ Vk.withSampler device info Nothing bracket
-  textureImage <- texture allocator device commandPool gfxQueue "textures/image3.png"
-  say "Vulkan" $ "Created texture " ++ show textureImage
-  commandBuffers <- createCommandBuffers device commandPool extent images vertexBuffer indexBuffer textureImage sampler
+  tex1 <- texture allocator device commandPool gfxQueue "textures/image3.png"
+  say "Vulkan" $ "Created texture " ++ show tex1
+  tex2 <- texture allocator device commandPool gfxQueue "textures/image.png"
+  say "Vulkan" $ "Created texture " ++ show tex2
+  commandBuffers <- createCommandBuffers device commandPool extent images vertexBuffer indexBuffer tex1 sampler
   imageAvailable <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
   renderFinished <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
   inFlight <-
@@ -664,8 +666,9 @@ createCommandBuffers device pool extent images vertex index texture sampler = do
   say "Vulkan" "Recorded command buffers"
   return commandBuffers
 
-doDescriptors dev texture sampler = do
-  let descriptorCount = 1
+doDescriptors :: Vk.Device -> [Vk.ImageView] -> Vk.Sampler -> Managed (Vk.DescriptorSetLayout, Vk.DescriptorSet)
+doDescriptors dev textures sampler = do
+  let descriptorCount = fromIntegral $ length textures
       types =
         [ Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
           Vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
@@ -715,10 +718,10 @@ doDescriptors dev texture sampler = do
             VkWriteDescriptorSet.descriptorType = Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
             VkWriteDescriptorSet.bufferInfo = [bufferInfo]
           }
-      imageInfo =
+      imageInfo tex =
         Vk.zero
           { VkDescriptorImageInfo.imageLayout = Vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            VkDescriptorImageInfo.imageView = texture,
+            VkDescriptorImageInfo.imageView = tex,
             VkDescriptorImageInfo.sampler = sampler
           }
       imageWriteInfo =
@@ -727,8 +730,8 @@ doDescriptors dev texture sampler = do
             { VkWriteDescriptorSet.dstSet = set,
               VkWriteDescriptorSet.dstBinding = 2,
               VkWriteDescriptorSet.descriptorType = Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-              VkWriteDescriptorSet.descriptorCount = 1,
-              VkWriteDescriptorSet.imageInfo = [imageInfo]
+              VkWriteDescriptorSet.descriptorCount = descriptorCount,
+              VkWriteDescriptorSet.imageInfo = V.fromList $ imageInfo <$> textures
             }
    in Vk.updateDescriptorSets dev [imageWriteInfo] []
   return (layout, set)
@@ -740,7 +743,7 @@ withPipeline ::
   Vk.Sampler ->
   Managed (Vk.Pipeline, Vk.PipelineLayout, Vk.DescriptorSet)
 withPipeline dev extent texture sampler = do
-  (setLayout, set) <- doDescriptors dev texture sampler
+  (setLayout, set) <- doDescriptors dev [texture, texture] sampler
   pipelineLayout <-
     let info = Vk.zero {VkPipelineLayoutCreateInfo.setLayouts = [setLayout]}
      in managed $ Vk.withPipelineLayout dev info Nothing bracket

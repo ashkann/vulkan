@@ -4,15 +4,15 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 
-name:           ashkan
+name:           Vulkan2DEngine
 version:        0.1.0.0
 maintainer:     ashkan.kh.nazary@gmail.com
 build-type:     Simple
 
-executable ashkan
+executable vulkan2dengine
   main-is: Main.hs
   other-modules:
-      Paths_ashkan
+      Paths_Vulkan2DEngine
   hs-source-dirs:
       app
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -Wambiguous-fields -optl-Wl,-rpath,/usr/local/lib -threaded -rtsopts -with-rtsopts=-N

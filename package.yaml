@@ -1,4 +1,4 @@
-name: ashkan
+name: Vulkan2DEngine
 version: 0.1.0.0
 maintainer: "ashkan.kh.nazary@gmail.com"
 
@@ -40,7 +40,7 @@ ghc-options:
 #   source-dirs: src
 
 executables:
-  ashkan:
+  vulkan2dengine:
     main: Main.hs
     source-dirs: app
     ghc-options:

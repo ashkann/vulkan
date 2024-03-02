@@ -164,9 +164,12 @@ main = runManaged $ do
      in managed $ Vk.withCommandPool device info Nothing bracket
   say "Vulkan" "Created command pool"
   let sprites =
-        [ Sprite {top = -0.8, left = -0.8, width = 1.0, height = 1.0, texture = 0},
-          Sprite {top = -0.2, left = -0.2, width = 1.0, height = 1.0, texture = 1}
-        ]
+        -- reverse
+          [ Sprite {top = -1.0, left = -1.0, width = 2.0, height = 2.0, texture = 0},
+            Sprite {top = -0.8, left = -0.8, width = 1.0, height = 1.0, texture = 1},
+            Sprite {top = -0.5, left = -0.5, width = 1.0, height = 1.0, texture = 3},
+            Sprite {top = -0.2, left = -0.2, width = 1.0, height = 1.0, texture = 2}
+          ]
       (vertices, indices) = doBuffers sprites
   vertexBuffer <- withBuffer allocator 1024 device commandPool gfxQueue Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT vertices
   say "Vulkan" "Created vertex buffer"
@@ -184,11 +187,15 @@ main = runManaged $ do
               VkSamplerCreateInfo.borderColor = Vk.BORDER_COLOR_INT_OPAQUE_WHITE
             }
      in managed $ Vk.withSampler device info Nothing bracket
+  checkerboard <- texture allocator device commandPool gfxQueue "textures/checkerboard.png"
+  say "Vulkan" $ "Created texture " ++ show checkerboard
   tex1 <- texture allocator device commandPool gfxQueue "textures/image3.png"
   say "Vulkan" $ "Created texture " ++ show tex1
   tex2 <- texture allocator device commandPool gfxQueue "textures/image.png"
   say "Vulkan" $ "Created texture " ++ show tex2
-  commandBuffers <- createCommandBuffers device commandPool extent images vertexBuffer indexBuffer [tex1, tex2] sampler
+  tex3 <- texture allocator device commandPool gfxQueue "textures/image4.png"
+  say "Vulkan" $ "Created texture " ++ show tex3
+  commandBuffers <- createCommandBuffers device commandPool extent images vertexBuffer indexBuffer [checkerboard, tex1, tex2, tex3] sampler $ fromIntegral (SV.length indices)
   imageAvailable <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
   renderFinished <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
   inFlight <-
@@ -549,10 +556,11 @@ render ::
   Vk.Buffer ->
   Vk.Buffer ->
   Vk.Extent2D ->
+  Word32 ->
   (Vk.Image, Vk.ImageView) ->
   Vk.CommandBuffer ->
   Managed ()
-render pipeline layout set vertex index extent (img, view) cmd =
+render pipeline layout set vertex index extent indexCount (img, view) cmd =
   Vk.useCommandBuffer cmd Vk.zero $ do
     transit renderLayout
     Vk.cmdBindPipeline cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
@@ -599,7 +607,7 @@ render pipeline layout set vertex index extent (img, view) cmd =
        in Vk.cmdPipelineBarrier cmd src dst (Vk.DependencyFlagBits 0) [] [] [Vk.SomeStruct barrier]
 
     draw =
-      let clear = Vk.Color (Vk.Float32 0.0 0.0 0.0 0)
+      let clear = Vk.Color (Vk.Float32 1.0 0.0 1.0 0)
           attachment =
             Vk.zero
               { VkRenderingAttachmentInfo.imageView = view,
@@ -615,7 +623,6 @@ render pipeline layout set vertex index extent (img, view) cmd =
                 VkRenderingInfo.layerCount = 1,
                 VkRenderingInfo.colorAttachments = [attachment]
               }
-          indexCount = 12 -- TODO get from index buffer
        in Vk.cmdUseRendering cmd info2 $ Vk.cmdDrawIndexed cmd indexCount 1 0 0 0
 
 transitImage ::
@@ -659,8 +666,9 @@ createCommandBuffers ::
   Vk.Buffer ->
   [Vk.ImageView] ->
   Vk.Sampler ->
+  Word32 ->
   Managed (V.Vector Vk.CommandBuffer)
-createCommandBuffers device pool extent images vertex index textures sampler = do
+createCommandBuffers device pool extent images vertex index textures sampler indexCount = do
   (pipeline, layout, set) <- withPipeline device extent textures sampler
   say "Vulkan" "Created pipeline"
   commandBuffers <-
@@ -672,7 +680,7 @@ createCommandBuffers device pool extent images vertex index textures sampler = d
             }
      in managed $ Vk.withCommandBuffers device info bracket
   say "Vulkan" "Created comamand buffers"
-  for_ (V.zip images commandBuffers) $ uncurry (render pipeline layout set vertex index extent)
+  for_ (V.zip images commandBuffers) $ uncurry (render pipeline layout set vertex index extent indexCount)
   say "Vulkan" "Recorded command buffers"
   return commandBuffers
 
@@ -863,7 +871,13 @@ withPipeline dev extent textures sampler = do
                             .|. Vk.COLOR_COMPONENT_G_BIT
                             .|. Vk.COLOR_COMPONENT_B_BIT
                             .|. Vk.COLOR_COMPONENT_A_BIT,
-                        Vk.blendEnable = False
+                        Vk.srcColorBlendFactor = Vk.BLEND_FACTOR_SRC_ALPHA,
+                        Vk.dstColorBlendFactor = Vk.BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                        Vk.colorBlendOp = Vk.BLEND_OP_ADD,
+                        Vk.srcAlphaBlendFactor = Vk.BLEND_FACTOR_ONE,
+                        Vk.dstAlphaBlendFactor = Vk.BLEND_FACTOR_ZERO,
+                        Vk.alphaBlendOp = Vk.BLEND_OP_ADD,
+                        Vk.blendEnable = True
                       }
                   ]
               }

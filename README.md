@@ -20,7 +20,8 @@ stack run
 - [x] Multiple sprites using the different textures in one frame
 - [ ] Use a texture atlas probably? Not sure yet
 - [ ] Investigate sampler2DArray
-- [ ] Sprite back-to-front sorting, do I need this for alpha blending?
+- [x] Sprite back-to-front sorting
+- [x] Alpha blending?
 - [ ] Sprite bacthing
 - [ ] Bindless textures
 - [ ] VK_KHR_buffer_device_address

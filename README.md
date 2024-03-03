@@ -5,7 +5,7 @@ Trying to learn vulkan and Haskell hand in hand by doing a 2D engine. Hopefully 
 ## Building and running
 ### Compile the shaders
 ```
-./compile 
+./compile
 ```
 ### Run
 ```
@@ -17,22 +17,25 @@ stack run
 - [x] More than one in-flight frame
 - [x] Some memory is not properly freed before vulkan instance is destroyed
 - [x] Just use VMA ~~Don't map/unmap memory for vertex/index buffers every frame. Instead map/unmap once and just copy the data every frame~~
+- [x] Add texture support
 - [x] Multiple sprites using the different textures in one frame
 - [ ] Use a texture atlas probably? Not sure yet
 - [ ] Investigate sampler2DArray
 - [x] Sprite back-to-front sorting
 - [x] Alpha blending?
+- [ ] Generate Vertex and Index buffers per frame
+- [ ] Basic static (no animation) stripe
 - [ ] Sprite bacthing
 - [ ] Bindless textures
 - [ ] VK_KHR_buffer_device_address
 - [ ] GPU driven rendering (DrawIndirect, etc)
 - [ ] Use Debug Print as Vk 1.3, not the extension
 - [ ] Basic DearImGUI integration
-- [ ] Add texture support
-- [ ] Basic static (no animation) stripe
 - [ ] Somewhat model a single moving light source
 - [ ] Use normal maps on the static stripe to intract with the light sources
 - [ ] Use specular maps for more realism
 - [ ] Think about bloom and glow effects
 - [ ] Suuport multiple light sources
 - [ ] 2D global illumination
+- [x] Make the use of required feaures explicit
+- [ ] Make Dynamic Rendering features explicit

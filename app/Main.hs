@@ -15,15 +15,15 @@ module Main (main) where
 
 import Codec.Picture qualified as JP
 import Control.Applicative ((<|>))
+import Control.Concurrent (threadDelay)
 import Control.Exception (bracket, bracket_)
 import Control.Monad.Except (ExceptT (ExceptT), MonadError (throwError), runExceptT)
-import Control.Monad.Extra (whileM)
 import Control.Monad.Managed (Managed, MonadIO (liftIO), MonadManaged, managed, managed_, runManaged)
 import Data.Bits ((.&.), (.|.))
 import Data.ByteString qualified as BS (readFile)
 import Data.ByteString.Char8 qualified as BS (pack, unpack)
-import Data.Foldable (Foldable (foldl'), foldlM, for_)
-import Data.Functor ((<&>))
+import Data.Foldable (foldlM, for_)
+import Data.Functor (($>), (<&>))
 import Data.Traversable (for)
 import Data.Vector ((!))
 import Data.Vector qualified as V
@@ -51,6 +51,7 @@ import Vulkan qualified as VkDescriptorPoolCreateInfo (DescriptorPoolCreateInfo 
 import Vulkan qualified as VkDescriptorPoolSize (DescriptorPoolSize (..))
 import Vulkan qualified as VkDescriptorSetAllocateInfo (DescriptorSetAllocateInfo (..))
 import Vulkan qualified as VkDescriptorSetLayoutBinding (DescriptorSetLayoutBinding (..))
+import Vulkan qualified as VkDescriptorSetLayoutBindingFlagsCreateInfo (DescriptorSetLayoutBindingFlagsCreateInfo (..))
 import Vulkan qualified as VkDescriptorSetLayoutCreateInfo (DescriptorSetLayoutCreateInfo (..))
 import Vulkan qualified as VkDevice (Device (..))
 import Vulkan qualified as VkDeviceCreateInfo (DeviceCreateInfo (..))
@@ -163,17 +164,19 @@ main = runManaged $ do
     let info = Vk.zero {VkCommandPoolCreateInfo.queueFamilyIndex = gfx}
      in managed $ Vk.withCommandPool device info Nothing bracket
   say "Vulkan" "Created command pool"
+  let size = 1024
+  vertexBuffer <- withGPUBuffer allocator size Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
+  indexBuffer <- withGPUBuffer allocator size Vk.BUFFER_USAGE_INDEX_BUFFER_BIT
   let sprites =
-        -- reverse
-          [ Sprite {top = -1.0, left = -1.0, width = 2.0, height = 2.0, texture = 0},
-            Sprite {top = -0.8, left = -0.8, width = 1.0, height = 1.0, texture = 1},
-            Sprite {top = -0.5, left = -0.5, width = 1.0, height = 1.0, texture = 3},
-            Sprite {top = -0.2, left = -0.2, width = 1.0, height = 1.0, texture = 2}
-          ]
+        [ Sprite {top = -1.0, left = -1.0, width = 2.0, height = 2.0, texture = 0},
+          Sprite {top = -0.8, left = -0.8, width = 1.0, height = 1.0, texture = 1},
+          Sprite {top = -0.5, left = -0.5, width = 1.0, height = 1.0, texture = 3},
+          Sprite {top = -0.2, left = -0.2, width = 1.0, height = 1.0, texture = 2}
+        ]
       (vertices, indices) = doBuffers sprites
-  vertexBuffer <- withBuffer allocator 1024 device commandPool gfxQueue Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT vertices
+  copyBuffer allocator device commandPool gfxQueue vertexBuffer vertices
   say "Vulkan" "Created vertex buffer"
-  indexBuffer <- withBuffer allocator 1025 device commandPool gfxQueue Vk.BUFFER_USAGE_INDEX_BUFFER_BIT indices
+  copyBuffer allocator device commandPool gfxQueue indexBuffer indices
   say "Vulkan" "Created index buffer"
   sampler <-
     let info =
@@ -206,7 +209,8 @@ main = runManaged $ do
   SDL.showWindow window
   SDL.raiseWindow window
   say "Engine" "Entering the main loop"
-  let draw = do
+  let draw dt t = do
+        -- say "Engine" $ show dt ++ " " ++ show t
         drawFrame
           device
           swapchain
@@ -226,7 +230,7 @@ sayErr :: (MonadIO io) => String -> String -> io a
 sayErr prefix msg = liftIO . throwError . userError $ prefix ++ ": " ++ msg
 
 vulkanVersion :: Word32
-vulkanVersion = Vk.API_VERSION_1_3
+vulkanVersion = Vk.API_VERSION_1_2
 
 withMemoryAllocator :: Vk.Instance -> Vk.PhysicalDevice -> Vk.Device -> Managed Vma.Allocator
 withMemoryAllocator vulkan gpu device =
@@ -289,26 +293,24 @@ doBuffers sprites =
       indecies = SV.fromList $ go [] howMany
    in (vertecies, indecies)
 
-withBuffer ::
+copyBuffer ::
+  forall a.
   (Storable a) =>
   Vma.Allocator ->
-  Vk.DeviceSize ->
   Vk.Device ->
   Vk.CommandPool ->
   Vk.Queue ->
-  Vk.BufferUsageFlagBits ->
+  Vk.Buffer ->
   SV.Vector a ->
-  Managed Vk.Buffer
-withBuffer allocator size device pool queue flags vertices = do
+  Managed ()
+copyBuffer allocator device pool queue gpuBuffer v = do
+  let (src, len) = SV.unsafeToForeignPtr0 v
+      size = fromIntegral $ sizeOf (undefined :: a) * len
+  say "Engine" $ show len
   (staging, ptr) <- withHostBuffer allocator size
-  let (src, len) = SV.unsafeToForeignPtr0 vertices
   liftIO . withForeignPtr src $ \s -> copyArray (castPtr ptr) s len
-
-  gpuBuffer <- withGPUBuffer allocator size flags
-  copyBuffer device pool queue staging gpuBuffer size
+  copyBuffer' device pool queue staging gpuBuffer size
   say "Engine" "Copied staging buffer into GPU buffer"
-
-  return gpuBuffer
 
 withImage :: Vma.Allocator -> Int -> Int -> Managed Vk.Image
 withImage allocator width height = do
@@ -433,8 +435,8 @@ tranistFromDstOptimalToShaderReadOnlyOptimal dst cmd =
     Vk.PIPELINE_STAGE_TRANSFER_BIT
     Vk.PIPELINE_STAGE_FRAGMENT_SHADER_BIT
 
-copyBuffer :: Vk.Device -> Vk.CommandPool -> Vk.Queue -> Vk.Buffer -> Vk.Buffer -> Vk.DeviceSize -> Managed ()
-copyBuffer device pool queue src dst size = do
+copyBuffer' :: Vk.Device -> Vk.CommandPool -> Vk.Queue -> Vk.Buffer -> Vk.Buffer -> Vk.DeviceSize -> Managed ()
+copyBuffer' device pool queue src dst size = do
   buffer <-
     let info =
           Vk.zero
@@ -487,16 +489,18 @@ withGPUBuffer allocator size flags = do
   say "Vulkan" $ "Created buffer on GPU of size " ++ show size ++ " bytes"
   return buffer
 
-mainLoop :: IO () -> IO ()
-mainLoop draw = whileM $ do
-  quit <- any isQuitEvent <$> waitForEvents
-  if quit
-    then pure False
-    else do
-      draw
-      pure True
+mainLoop :: (Word32 -> Word32 -> IO ()) -> IO ()
+mainLoop draw = go 0
   where
-    waitForEvents = (:) <$> SDL.waitEvent <*> SDL.pollEvents
+    go t0 = do
+      quit <- any isQuitEvent <$> SDL.pollEvents
+      if quit
+        then pure ()
+        else do
+          t <- SDL.ticks
+          draw (t - t0) t
+          threadDelay $ 1000 * 10
+          go t
 
 isQuitEvent :: SDL.Event -> Bool
 isQuitEvent = \case
@@ -705,15 +709,25 @@ doDescriptors dev textures sampler = do
             VkDescriptorPoolSize.type' = typ
           }
   layout <-
-    let info =
-          Vk.zero {VkDescriptorSetLayoutCreateInfo.bindings = V.fromList $ zipWith binding [0 ..] types}
-     in managed $ Vk.withDescriptorSetLayout dev info Nothing bracket
+    let flags = Vk.DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT .|. Vk.DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT
+        flagsInfo =
+          Vk.zero
+            { VkDescriptorSetLayoutBindingFlagsCreateInfo.bindingFlags = [flags, flags, flags] -- TODO use types
+            }
+        layoutInfo =
+          Vk.zero
+            { VkDescriptorSetLayoutCreateInfo.bindings = V.fromList $ zipWith binding [0 ..] types,
+              VkDescriptorSetLayoutCreateInfo.flags = Vk.DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT
+            }
+            ::& flagsInfo :& ()
+     in managed $ Vk.withDescriptorSetLayout dev layoutInfo Nothing bracket
   pool <-
     let info =
           Vk.zero
             { VkDescriptorPoolCreateInfo.poolSizes = V.fromList $ poolSize <$> types,
               VkDescriptorPoolCreateInfo.maxSets = 1,
-              VkDescriptorPoolCreateInfo.flags = Vk.DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT
+              VkDescriptorPoolCreateInfo.flags =
+                Vk.DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT .|. Vk.DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT
             }
      in managed $ Vk.withDescriptorPool dev info Nothing bracket
   set <-
@@ -1019,7 +1033,7 @@ withImageView dev img format =
           }
    in managed $ Vk.withImageView dev imageViewCreateInfo Nothing bracket
 
-withDevice :: (MonadManaged m) => Vk.PhysicalDevice -> Word32 -> Word32 -> Bool -> m Vk.Device
+withDevice :: Vk.PhysicalDevice -> Word32 -> Word32 -> Bool -> Managed Vk.Device
 withDevice gpu gfx present portable =
   let exts =
         Vk.KHR_DYNAMIC_RENDERING_EXTENSION_NAME
@@ -1027,12 +1041,23 @@ withDevice gpu gfx present portable =
           : Vk.KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME
           : ([Vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME | portable])
       dynamicRendering = Vk.zero {VkPhysicalDeviceDynamicRenderingFeatures.dynamicRendering = True}
+      bindlessDescriptors =
+        Vk.zero
+          { VkPhysicalDeviceDescriptorIndexingFeatures.descriptorBindingPartiallyBound = True,
+            VkPhysicalDeviceDescriptorIndexingFeatures.shaderSampledImageArrayNonUniformIndexing = True,
+            VkPhysicalDeviceDescriptorIndexingFeatures.descriptorBindingSampledImageUpdateAfterBind = True,
+            VkPhysicalDeviceDescriptorIndexingFeatures.shaderUniformBufferArrayNonUniformIndexing = True,
+            VkPhysicalDeviceDescriptorIndexingFeatures.descriptorBindingUniformBufferUpdateAfterBind = True,
+            VkPhysicalDeviceDescriptorIndexingFeatures.shaderStorageBufferArrayNonUniformIndexing = True,
+            VkPhysicalDeviceDescriptorIndexingFeatures.descriptorBindingStorageBufferUpdateAfterBind = True
+          }
       info =
         Vk.zero
           { VkDeviceCreateInfo.queueCreateInfos = V.fromList $ inf gfx : ([inf present | gfx /= present]),
             VkDeviceCreateInfo.enabledExtensionNames = V.fromList exts
           }
           ::& dynamicRendering
+            :& bindlessDescriptors
             :& ()
    in managed $ Vk.withDevice gpu info Nothing bracket
   where
@@ -1044,11 +1069,9 @@ withDevice gpu gfx present portable =
           }
 
 pickGPU ::
-  forall m.
-  (MonadIO m) =>
   Vk.Instance ->
   Vk.SurfaceKHR ->
-  m (Maybe (Vk.PhysicalDevice, Word32, Word32, Bool))
+  Managed (Maybe (Vk.PhysicalDevice, Word32, Word32, Bool))
 pickGPU vulkan surface = do
   (_, gpus) <- Vk.enumeratePhysicalDevices vulkan
   let good' d = ExceptT $ good d <&> (\case Nothing -> Right (); Just ((g, p), pss) -> Left (d, g, p, pss))
@@ -1058,9 +1081,26 @@ pickGPU vulkan surface = do
     found = ExceptT . return . Left
     continue = ExceptT . return . Right
 
+    support yes feature = liftIO (say "Enging" msg $> out)
+      where
+        msg = "GPU supports " ++ feature ++ ": " ++ show yes
+        out = if yes then Just () else Nothing
+
     good gpu = do
-      features <- Vk.getPhysicalDeviceFeatures2 gpu :: m (Vk.PhysicalDeviceFeatures2 '[Vk.PhysicalDeviceDescriptorIndexingFeatures])
-      let descriptorIndexingFeatures = fst $ VkPhysicalDeviceFeatures2.next features
+      features <- Vk.getPhysicalDeviceFeatures2 gpu :: Managed (Vk.PhysicalDeviceFeatures2 '[Vk.PhysicalDeviceDescriptorIndexingFeatures])
+      let f1 = VkPhysicalDeviceFeatures2.features features
+      _ <- support (Vk.shaderSampledImageArrayDynamicIndexing f1) "shaderSampledImageArrayDynamicIndexing"
+      _ <-
+        let f = fst $ VkPhysicalDeviceFeatures2.next features
+         in do
+              _ <- support (VkPhysicalDeviceDescriptorIndexingFeatures.descriptorBindingPartiallyBound f) "descriptorBindingPartiallyBound"
+              _ <- support (VkPhysicalDeviceDescriptorIndexingFeatures.shaderSampledImageArrayNonUniformIndexing f) "shaderSampledImageArrayNonUniformIndexing"
+              _ <- support (VkPhysicalDeviceDescriptorIndexingFeatures.descriptorBindingSampledImageUpdateAfterBind f) "descriptorBindingSampledImageUpdateAfterBind"
+              _ <- support (VkPhysicalDeviceDescriptorIndexingFeatures.shaderUniformBufferArrayNonUniformIndexing f) "shaderUniformBufferArrayNonUniformIndexing"
+              _ <- support (VkPhysicalDeviceDescriptorIndexingFeatures.descriptorBindingUniformBufferUpdateAfterBind f) "descriptorBindingUniformBufferUpdateAfterBind"
+              _ <- support (VkPhysicalDeviceDescriptorIndexingFeatures.shaderStorageBufferArrayNonUniformIndexing f) "shaderStorageBufferArrayNonUniformIndexing"
+              _ <- support (VkPhysicalDeviceDescriptorIndexingFeatures.descriptorBindingStorageBufferUpdateAfterBind f) "descriptorBindingStorageBufferUpdateAfterBind"
+              support True "GPU Bindless Descriptors"
       (_, exts) <- Vk.enumerateDeviceExtensionProperties gpu Nothing
       r <- swapchainSupported exts
       if r && dynamicRenderingSupported exts
@@ -1123,7 +1163,8 @@ withVulkan w = do
           }
           ::& debugUtilsMessengerCreateInfo
             :& Vk.ValidationFeaturesEXT
-              [ Vk.VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT,
+              [ -- Vk.VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
+                Vk.VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT,
                 Vk.VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT
               ]
               []

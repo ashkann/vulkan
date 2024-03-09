@@ -161,7 +161,11 @@ main = runManaged $ do
   say "Vulkan" "Creating vertex buffer"
   say "Vulkan" "Vertex Buffer created"
   commandPool <-
-    let info = Vk.zero {VkCommandPoolCreateInfo.queueFamilyIndex = gfx}
+    let info =
+          Vk.zero
+            { VkCommandPoolCreateInfo.queueFamilyIndex = gfx,
+              VkCommandPoolCreateInfo.flags = Vk.COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT
+            }
      in managed $ Vk.withCommandPool device info Nothing bracket
   say "Vulkan" "Created command pool"
   let size = 1024
@@ -193,7 +197,10 @@ main = runManaged $ do
   say "Vulkan" $ "Created texture " ++ show tex2
   tex3 <- texture allocator device commandPool gfxQueue "textures/image4.png"
   say "Vulkan" $ "Created texture " ++ show tex3
-  commandBuffers <- createCommandBuffers device commandPool extent images vertexBuffer indexBuffer [checkerboard, tex1, tex2, tex3] sampler $ fromIntegral 24 -- (SV.length indices)
+  let textures = [checkerboard, tex1, tex2, tex3]
+  commandBuffers <- createCommandBuffers device commandPool (fromIntegral $ V.length images)
+  (pipeline, layout, set) <- withPipeline device extent textures sampler
+  say "Vulkan" "Recorded command buffers"
   imageAvailable <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
   renderFinished <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
   inFlight <-
@@ -212,7 +219,11 @@ main = runManaged $ do
         -- say "Engine" $ show dt ++ " " ++ show t
         waitForPrevDrawCallToFinish
         index <- acquireNextFrame device swapchain imageAvailable
-        let cmd = commandBuffers ! fromIntegral index in renderFrame cmd gfxQueue imageAvailable renderFinished inFlight
+        let frame = images ! fromIntegral index
+        let cmd = commandBuffers ! fromIntegral index
+        let count = fromIntegral $ SV.length indices
+        render pipeline layout set vertexBuffer indexBuffer extent count frame cmd
+        renderFrame cmd gfxQueue imageAvailable renderFinished inFlight
         presentFrame swapchain presentQueue index renderFinished
         Vk.deviceWaitIdle device
    in mainLoop draw
@@ -657,28 +668,19 @@ transitImageLayout cmd img srcMask dstMask old new srcStage dstStage =
 createCommandBuffers ::
   Vk.Device ->
   Vk.CommandPool ->
-  VkExtent2D.Extent2D ->
-  V.Vector (Vk.Image, Vk.ImageView) ->
-  Vk.Buffer ->
-  Vk.Buffer ->
-  [Vk.ImageView] ->
-  Vk.Sampler ->
   Word32 ->
   Managed (V.Vector Vk.CommandBuffer)
-createCommandBuffers device pool extent images vertex index textures sampler indexCount = do
-  (pipeline, layout, set) <- withPipeline device extent textures sampler
+createCommandBuffers device pool count = do
   say "Vulkan" "Created pipeline"
   commandBuffers <-
     let info =
           Vk.zero
             { Vk.commandPool = pool,
               Vk.level = Vk.COMMAND_BUFFER_LEVEL_PRIMARY,
-              Vk.commandBufferCount = fromIntegral (V.length images)
+              Vk.commandBufferCount = count
             }
      in managed $ Vk.withCommandBuffers device info bracket
   say "Vulkan" "Created comamand buffers"
-  for_ (V.zip images commandBuffers) $ uncurry (render pipeline layout set vertex index extent indexCount)
-  say "Vulkan" "Recorded command buffers"
   return commandBuffers
 
 doDescriptors :: Vk.Device -> [Vk.ImageView] -> Vk.Sampler -> Managed (Vk.DescriptorSetLayout, Vk.DescriptorSet)

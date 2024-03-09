@@ -166,18 +166,13 @@ main = runManaged $ do
   say "Vulkan" "Created command pool"
   let size = 1024
   vertexBuffer <- withGPUBuffer allocator size Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
-  indexBuffer <- withGPUBuffer allocator size Vk.BUFFER_USAGE_INDEX_BUFFER_BIT
-  let sprites =
-        [ Sprite {top = -1.0, left = -1.0, width = 2.0, height = 2.0, texture = 0},
-          Sprite {top = -0.8, left = -0.8, width = 1.0, height = 1.0, texture = 1},
-          Sprite {top = -0.5, left = -0.5, width = 1.0, height = 1.0, texture = 3},
-          Sprite {top = -0.2, left = -0.2, width = 1.0, height = 1.0, texture = 2}
-        ]
-      (vertices, indices) = doBuffers sprites
-  copyBuffer allocator device commandPool gfxQueue vertexBuffer vertices
   say "Vulkan" "Created vertex buffer"
-  copyBuffer allocator device commandPool gfxQueue indexBuffer indices
+  (vstaging, vptr) <- withHostBuffer allocator size
+  say "Vulkan" "Created staging vertex buffer"
+  indexBuffer <- withGPUBuffer allocator size Vk.BUFFER_USAGE_INDEX_BUFFER_BIT
   say "Vulkan" "Created index buffer"
+  (istaging, iptr) <- withHostBuffer allocator size
+  say "Vulkan" "Created staging index buffer"
   sampler <-
     let info =
           Vk.zero
@@ -198,7 +193,7 @@ main = runManaged $ do
   say "Vulkan" $ "Created texture " ++ show tex2
   tex3 <- texture allocator device commandPool gfxQueue "textures/image4.png"
   say "Vulkan" $ "Created texture " ++ show tex3
-  commandBuffers <- createCommandBuffers device commandPool extent images vertexBuffer indexBuffer [checkerboard, tex1, tex2, tex3] sampler $ fromIntegral (SV.length indices)
+  commandBuffers <- createCommandBuffers device commandPool extent images vertexBuffer indexBuffer [checkerboard, tex1, tex2, tex3] sampler $ fromIntegral 24 -- (SV.length indices)
   imageAvailable <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
   renderFinished <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
   inFlight <-
@@ -209,19 +204,57 @@ main = runManaged $ do
   SDL.showWindow window
   SDL.raiseWindow window
   say "Engine" "Entering the main loop"
-  let draw dt t = do
+  let waitForPrevDrawCallToFinish = Vk.waitForFences device [inFlight] True maxBound *> Vk.resetFences device [inFlight]
+      draw dt t = do
+        let (vertices, indices) = doBuffers $ sprites dt t
+        copyBuffer2 device commandPool gfxQueue vertexBuffer vstaging vptr vertices
+        copyBuffer2 device commandPool gfxQueue indexBuffer istaging iptr indices
         -- say "Engine" $ show dt ++ " " ++ show t
-        drawFrame
-          device
-          swapchain
-          gfxQueue
-          presentQueue
-          imageAvailable
-          renderFinished
-          inFlight
-          commandBuffers
+        waitForPrevDrawCallToFinish
+        index <- acquireNextFrame device swapchain imageAvailable
+        let cmd = commandBuffers ! fromIntegral index in renderFrame cmd gfxQueue imageAvailable renderFinished inFlight
+        presentFrame swapchain presentQueue index renderFinished
         Vk.deviceWaitIdle device
-   in liftIO $ mainLoop draw
+   in mainLoop draw
+
+acquireNextFrame :: (MonadIO io) => Vk.Device -> Vk.SwapchainKHR -> Vk.Semaphore -> io Word32
+acquireNextFrame dev swapchain imageAvailable =
+  snd
+    <$> Vk.acquireNextImageKHR
+      dev
+      swapchain
+      maxBound
+      imageAvailable
+      Vk.zero
+
+renderFrame :: (MonadIO io) => Vk.CommandBuffer -> Vk.Queue -> Vk.Semaphore -> Vk.Semaphore -> Vk.Fence -> io ()
+renderFrame cmd gfx imageAvailable renderFinished inFlight =
+  let info =
+        Vk.zero
+          { VkSubmitInfo.waitSemaphores = [imageAvailable],
+            VkSubmitInfo.waitDstStageMask = [Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT],
+            VkSubmitInfo.commandBuffers = [Vk.commandBufferHandle cmd],
+            VkSubmitInfo.signalSemaphores = [renderFinished]
+          }
+   in Vk.queueSubmit gfx [Vk.SomeStruct info] inFlight
+
+presentFrame :: (MonadIO io) => Vk.SwapchainKHR -> Vk.Queue -> Word32 -> Vk.Semaphore -> io ()
+presentFrame swapchain present idx renderFinished =
+  let info =
+        Vk.zero
+          { VkPresentInfoKHR.waitSemaphores = [renderFinished],
+            VkPresentInfoKHR.swapchains = [swapchain],
+            VkPresentInfoKHR.imageIndices = [idx]
+          }
+   in Vk.queuePresentKHR present info $> ()
+
+sprites :: Word32 -> Word32 -> [Sprite]
+sprites dt t =
+  [ Sprite {top = -1.0, left = -1.0, width = 2.0, height = 2.0, texture = 0},
+    Sprite {top = -0.8, left = -0.8, width = 1.0, height = 1.0, texture = 1},
+    Sprite {top = -0.5, left = -0.5, width = 1.0, height = 1.0, texture = 3},
+    Sprite {top = -0.2, left = -0.2, width = 1.0, height = 1.0, texture = 2}
+  ]
 
 say :: (MonadIO io) => String -> String -> io ()
 say prefix msg = liftIO . putStrLn $ prefix ++ ": " ++ msg
@@ -311,6 +344,23 @@ copyBuffer allocator device pool queue gpuBuffer v = do
   liftIO . withForeignPtr src $ \s -> copyArray (castPtr ptr) s len
   copyBuffer' device pool queue staging gpuBuffer size
   say "Engine" "Copied staging buffer into GPU buffer"
+
+copyBuffer2 ::
+  forall a.
+  (Storable a) =>
+  Vk.Device ->
+  Vk.CommandPool ->
+  Vk.Queue ->
+  Vk.Buffer ->
+  Vk.Buffer ->
+  Ptr () ->
+  SV.Vector a ->
+  Managed ()
+copyBuffer2 device pool queue gpuBuffer stagingBuffer stagingPtr v = do
+  let (src, len) = SV.unsafeToForeignPtr0 v
+      size = fromIntegral $ sizeOf (undefined :: a) * len
+  liftIO . withForeignPtr src $ \s -> copyArray (castPtr stagingPtr) s len
+  copyBuffer' device pool queue stagingBuffer gpuBuffer size
 
 withImage :: Vma.Allocator -> Int -> Int -> Managed Vk.Image
 withImage allocator width height = do
@@ -413,7 +463,7 @@ copyBufferToImage device pool queue src dst width height = do
 
 tranistFromUndefinedToDstOptimal :: Vk.Image -> Vk.CommandBuffer -> Managed ()
 tranistFromUndefinedToDstOptimal dst cmd =
-  transitImage
+  transitImageLayout
     cmd
     dst
     (Vk.AccessFlagBits 0)
@@ -425,7 +475,7 @@ tranistFromUndefinedToDstOptimal dst cmd =
 
 tranistFromDstOptimalToShaderReadOnlyOptimal :: Vk.Image -> Vk.CommandBuffer -> Managed ()
 tranistFromDstOptimalToShaderReadOnlyOptimal dst cmd =
-  transitImage
+  transitImageLayout
     cmd
     dst
     Vk.ACCESS_TRANSFER_WRITE_BIT
@@ -489,7 +539,7 @@ withGPUBuffer allocator size flags = do
   say "Vulkan" $ "Created buffer on GPU of size " ++ show size ++ " bytes"
   return buffer
 
-mainLoop :: (Word32 -> Word32 -> IO ()) -> IO ()
+mainLoop :: (Word32 -> Word32 -> Managed ()) -> Managed ()
 mainLoop draw = go 0
   where
     go t0 = do
@@ -499,7 +549,7 @@ mainLoop draw = go 0
         else do
           t <- SDL.ticks
           draw (t - t0) t
-          threadDelay $ 1000 * 10
+          liftIO . threadDelay $ 1000 * 10
           go t
 
 isQuitEvent :: SDL.Event -> Bool
@@ -509,49 +559,6 @@ isQuitEvent = \case
     | code == SDL.KeycodeQ || code == SDL.KeycodeEscape ->
         True
   _ -> False
-
-drawFrame ::
-  Vk.Device ->
-  Vk.SwapchainKHR ->
-  Vk.Queue ->
-  Vk.Queue ->
-  Vk.Semaphore ->
-  Vk.Semaphore ->
-  Vk.Fence ->
-  V.Vector Vk.CommandBuffer ->
-  IO ()
-drawFrame dev swapchain gfx present imageAvailable renderFinished inFlight commandBuffers =
-  do
-    _ <- Vk.waitForFences dev [inFlight] True maxBound
-    Vk.resetFences dev [inFlight]
-    (_, imageIndex) <-
-      Vk.acquireNextImageKHR
-        dev
-        swapchain
-        maxBound
-        imageAvailable
-        Vk.zero
-    let wait = [imageAvailable]
-        signal = [renderFinished]
-        handle = Vk.commandBufferHandle $ commandBuffers ! fromIntegral imageIndex
-        info =
-          Vk.zero
-            { VkSubmitInfo.waitSemaphores = wait,
-              VkSubmitInfo.waitDstStageMask = [Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT],
-              VkSubmitInfo.commandBuffers = [handle],
-              VkSubmitInfo.signalSemaphores = signal
-            }
-     in Vk.queueSubmit gfx [Vk.SomeStruct info] inFlight
-    _ <-
-      let wait = [renderFinished]
-          info =
-            Vk.zero
-              { VkPresentInfoKHR.waitSemaphores = wait,
-                VkPresentInfoKHR.swapchains = [swapchain],
-                VkPresentInfoKHR.imageIndices = [imageIndex]
-              }
-       in Vk.queuePresentKHR present info
-    return ()
 
 render ::
   Vk.Pipeline ->
@@ -566,49 +573,35 @@ render ::
   Managed ()
 render pipeline layout set vertex index extent indexCount (img, view) cmd =
   Vk.useCommandBuffer cmd Vk.zero $ do
-    transit renderLayout
+    renderLayout
     Vk.cmdBindPipeline cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
     Vk.cmdBindVertexBuffers cmd 0 [vertex] [0]
     Vk.cmdBindIndexBuffer cmd index 0 Vk.INDEX_TYPE_UINT32
     Vk.cmdBindDescriptorSets cmd Vk.PIPELINE_BIND_POINT_GRAPHICS layout 0 [set] []
     draw
-    transit presentLayout
+    presentLayout
   where
     renderLayout =
-      ( Vk.AccessFlagBits 0,
-        Vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-        Vk.IMAGE_LAYOUT_UNDEFINED,
-        Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        Vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+      transitImageLayout
+        cmd
+        img
+        (Vk.AccessFlagBits 0)
+        Vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+        Vk.IMAGE_LAYOUT_UNDEFINED
+        Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+        Vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT
         Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
-      )
-    presentLayout =
-      ( Vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-        Vk.AccessFlagBits 0,
-        Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        Vk.IMAGE_LAYOUT_PRESENT_SRC_KHR,
-        Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        Vk.PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT
-      )
 
-    transit (srcMask, dstMask, old, new, src, dst) =
-      let barrier =
-            Vk.zero
-              { VkImageMemoryBarrier.srcAccessMask = srcMask,
-                VkImageMemoryBarrier.dstAccessMask = dstMask,
-                VkImageMemoryBarrier.oldLayout = old,
-                VkImageMemoryBarrier.newLayout = new,
-                VkImageMemoryBarrier.image = img,
-                VkImageMemoryBarrier.subresourceRange =
-                  Vk.zero
-                    { VkImageSubresourceRange.aspectMask = Vk.IMAGE_ASPECT_COLOR_BIT,
-                      VkImageSubresourceRange.baseMipLevel = 0,
-                      VkImageSubresourceRange.levelCount = 1,
-                      VkImageSubresourceRange.baseArrayLayer = 0,
-                      VkImageSubresourceRange.layerCount = 1
-                    }
-              }
-       in Vk.cmdPipelineBarrier cmd src dst (Vk.DependencyFlagBits 0) [] [] [Vk.SomeStruct barrier]
+    presentLayout =
+      transitImageLayout
+        cmd
+        img
+        Vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+        (Vk.AccessFlagBits 0)
+        Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+        Vk.IMAGE_LAYOUT_PRESENT_SRC_KHR
+        Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+        Vk.PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT
 
     draw =
       let clear = Vk.Color (Vk.Float32 1.0 0.0 1.0 0)
@@ -621,15 +614,15 @@ render pipeline layout set vertex index extent indexCount (img, view) cmd =
                 VkRenderingAttachmentInfo.clearValue = clear
               }
           scissor = Vk.Rect2D {VkRect2D.offset = Vk.Offset2D 0 0, VkRect2D.extent = extent}
-          info2 =
+          info =
             Vk.zero
               { VkRenderingInfo.renderArea = scissor,
                 VkRenderingInfo.layerCount = 1,
                 VkRenderingInfo.colorAttachments = [attachment]
               }
-       in Vk.cmdUseRendering cmd info2 $ Vk.cmdDrawIndexed cmd indexCount 1 0 0 0
+       in Vk.cmdUseRendering cmd info $ Vk.cmdDrawIndexed cmd indexCount 1 0 0 0
 
-transitImage ::
+transitImageLayout ::
   Vk.CommandBuffer ->
   Vk.Image ->
   Vk.AccessFlagBits ->
@@ -639,7 +632,7 @@ transitImage ::
   Vk.PipelineStageFlags ->
   Vk.PipelineStageFlags ->
   Managed ()
-transitImage cmd img srcMask dstMask old new srcStage dstStage =
+transitImageLayout cmd img srcMask dstMask old new srcStage dstStage =
   let range =
         Vk.zero
           { VkImageSubresourceRange.aspectMask = Vk.IMAGE_ASPECT_COLOR_BIT,
@@ -1015,13 +1008,6 @@ withImageView dev img format =
           { VkImageViewCreateInfo.image = img,
             VkImageViewCreateInfo.viewType = Vk.IMAGE_VIEW_TYPE_2D,
             VkImageViewCreateInfo.format = format,
-            -- VkImageViewCreateInfo.components =
-            --   Vk.zero
-            --     { VkComponentMapping.r = Vk.COMPONENT_SWIZZLE_IDENTITY,
-            --       VkComponentMapping.g = Vk.COMPONENT_SWIZZLE_IDENTITY,
-            --       VkComponentMapping.b = Vk.COMPONENT_SWIZZLE_IDENTITY,
-            --       VkComponentMapping.a = Vk.COMPONENT_SWIZZLE_IDENTITY
-            --     },
             VkImageViewCreateInfo.subresourceRange =
               Vk.zero
                 { VkImageSubresourceRange.aspectMask = Vk.IMAGE_ASPECT_COLOR_BIT,

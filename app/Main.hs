@@ -199,7 +199,7 @@ main = runManaged $ do
   say "Vulkan" $ "Created texture " ++ show tex3
   let textures = [checkerboard, tex1, tex2, tex3]
   commandBuffers <- createCommandBuffers device commandPool (fromIntegral $ V.length images)
-  (pipeline, layout, set) <- withPipeline device extent textures sampler
+  (pipeline, layout, set) <- createPipeline device extent textures sampler
   say "Vulkan" "Recorded command buffers"
   imageAvailable <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
   renderFinished <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
@@ -214,8 +214,8 @@ main = runManaged $ do
   let waitForPrevDrawCallToFinish = Vk.waitForFences device [inFlight] True maxBound *> Vk.resetFences device [inFlight]
       draw dt t = do
         let (vertices, indices) = doBuffers $ sprites dt t
-        copyBuffer2 device commandPool gfxQueue vertexBuffer vstaging vptr vertices
-        copyBuffer2 device commandPool gfxQueue indexBuffer istaging iptr indices
+        copyBuffer2 device commandPool gfxQueue vertexBuffer (vstaging, vptr) vertices
+        copyBuffer2 device commandPool gfxQueue indexBuffer (istaging, iptr) indices
         -- say "Engine" $ show dt ++ " " ++ show t
         waitForPrevDrawCallToFinish
         index <- acquireNextFrame device swapchain imageAvailable
@@ -363,11 +363,10 @@ copyBuffer2 ::
   Vk.CommandPool ->
   Vk.Queue ->
   Vk.Buffer ->
-  Vk.Buffer ->
-  Ptr () ->
+  (Vk.Buffer, Ptr ()) ->
   SV.Vector a ->
   Managed ()
-copyBuffer2 device pool queue gpuBuffer stagingBuffer stagingPtr v = do
+copyBuffer2 device pool queue gpuBuffer (stagingBuffer, stagingPtr) v = do
   let (src, len) = SV.unsafeToForeignPtr0 v
       size = fromIntegral $ sizeOf (undefined :: a) * len
   liftIO . withForeignPtr src $ \s -> copyArray (castPtr stagingPtr) s len
@@ -763,13 +762,13 @@ doDescriptors dev textures sampler = do
    in Vk.updateDescriptorSets dev [imageWriteInfo] []
   return (layout, set)
 
-withPipeline ::
+createPipeline ::
   Vk.Device ->
   Vk.Extent2D ->
   [Vk.ImageView] ->
   Vk.Sampler ->
   Managed (Vk.Pipeline, Vk.PipelineLayout, Vk.DescriptorSet)
-withPipeline dev extent textures sampler = do
+createPipeline dev extent textures sampler = do
   (setLayout, set) <- doDescriptors dev textures sampler
   pipelineLayout <-
     let info = Vk.zero {VkPipelineLayoutCreateInfo.setLayouts = [setLayout]}

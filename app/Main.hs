@@ -127,6 +127,10 @@ data Sprite = Sprite
   }
   deriving (Show, Eq)
 
+data Thingie = Thingie {pos :: G.Vec2, vel :: G.Vec2}
+
+data World = World {a :: Thingie, b :: Thingie, c :: Thingie}
+
 main :: IO ()
 main = runManaged $ do
   let windowWidth = 500
@@ -211,22 +215,37 @@ main = runManaged $ do
   SDL.showWindow window
   SDL.raiseWindow window
   say "Engine" "Entering the main loop"
+  let world0 =
+        World
+          { a = Thingie {pos = G.vec2 (-0.8) (-0.8), vel = G.vec2 (0.0001) (0.001)},
+            b = Thingie {pos = G.vec2 (-0.5) (-0.5), vel = G.vec2 0.0 0.0},
+            c = Thingie {pos = G.vec2 (-0.2) (-0.2), vel = G.vec2 0.001 0.002}
+          }
   let waitForPrevDrawCallToFinish = Vk.waitForFences device [inFlight] True maxBound *> Vk.resetFences device [inFlight]
-      draw dt t = do
-        let (vertices, indices) = doBuffers $ sprites dt t
-        copyBuffer2 device commandPool gfxQueue vertexBuffer (vstaging, vptr) vertices
-        copyBuffer2 device commandPool gfxQueue indexBuffer (istaging, iptr) indices
+      draw dt t w0 = do
+        let w1 = world dt t w0
+            (vertices, indices) = doBuffers $ sprites w1
+        copyBuffer device commandPool gfxQueue vertexBuffer (vstaging, vptr) vertices
+        copyBuffer device commandPool gfxQueue indexBuffer (istaging, iptr) indices
         -- say "Engine" $ show dt ++ " " ++ show t
         waitForPrevDrawCallToFinish
         index <- acquireNextFrame device swapchain imageAvailable
         let frame = images ! fromIntegral index
-        let cmd = commandBuffers ! fromIntegral index
-        let count = fromIntegral $ SV.length indices
+            cmd = commandBuffers ! fromIntegral index
+            count = fromIntegral $ SV.length indices
         render pipeline layout set vertexBuffer indexBuffer extent count frame cmd
         renderFrame cmd gfxQueue imageAvailable renderFinished inFlight
         presentFrame swapchain presentQueue index renderFinished
-        Vk.deviceWaitIdle device
-   in mainLoop draw
+        Vk.deviceWaitIdle device $> w1
+   in mainLoop world0 draw
+
+world :: Word32 -> Word32 -> World -> World
+world dt t (World {a = a, b = b, c = c}) = World {a = update a, b = update b, c = update c}
+  where
+    update Thingie {pos = p0, vel = v0} =
+      let p1 = p0 + (v0 G.^* fromIntegral dt)
+          v1 = G.emap2 (\vi pi -> if pi > 1.0 || pi < -1.0 then -vi else vi) v0 p1
+       in Thingie {pos = p1, vel = v1}
 
 acquireNextFrame :: (MonadIO io) => Vk.Device -> Vk.SwapchainKHR -> Vk.Semaphore -> io Word32
 acquireNextFrame dev swapchain imageAvailable =
@@ -259,13 +278,15 @@ presentFrame swapchain present idx renderFinished =
           }
    in Vk.queuePresentKHR present info $> ()
 
-sprites :: Word32 -> Word32 -> [Sprite]
-sprites dt t =
-  [ Sprite {top = -1.0, left = -1.0, width = 2.0, height = 2.0, texture = 0},
-    Sprite {top = -0.8, left = -0.8, width = 1.0, height = 1.0, texture = 1},
-    Sprite {top = -0.5, left = -0.5, width = 1.0, height = 1.0, texture = 3},
-    Sprite {top = -0.2, left = -0.2, width = 1.0, height = 1.0, texture = 2}
-  ]
+sprites :: World -> [Sprite]
+sprites (World Thingie {pos = G.WithVec2 ax ay} Thingie {pos = G.WithVec2 bx by} Thingie {pos = G.WithVec2 cx cy}) =
+  let ss =
+        [ Sprite {top = -1.0, left = -1.0, width = 2.0, height = 2.0, texture = 0},
+          Sprite {top = ax, left = ay, width = 1.0, height = 1.0, texture = 1},
+          Sprite {top = bx, left = by, width = 1.0, height = 1.0, texture = 3},
+          Sprite {top = cx, left = cy, width = 1.0, height = 1.0, texture = 2}
+        ]
+   in ss
 
 say :: (MonadIO io) => String -> String -> io ()
 say prefix msg = liftIO . putStrLn $ prefix ++ ": " ++ msg
@@ -309,8 +330,8 @@ debugUtilsMessengerCreateInfo =
   Vk.zero
     { Vk.messageSeverity =
         Vk.DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
-          .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT
-          .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
+          .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+          -- .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
       Vk.messageType =
         Vk.DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
           .|. Vk.DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
@@ -319,7 +340,7 @@ debugUtilsMessengerCreateInfo =
     }
 
 doBuffers :: [Sprite] -> (SV.Vector Vertex, SV.Vector Word32)
-doBuffers sprites =
+doBuffers ss =
   let toQuad Sprite {top = x, left = y, width = w, height = h, texture = tex} =
         SV.fromList
           [ Vertex {xy = G.vec2 y x, rgb = G.vec3 1.0 0.0 0.0, uv = G.vec2 0.0 0.0, texture = tex},
@@ -327,8 +348,8 @@ doBuffers sprites =
             Vertex {xy = G.vec2 (y + w) (x + h), rgb = G.vec3 0.0 0.0 1.0, uv = G.vec2 1.0 1.0, texture = tex},
             Vertex {xy = G.vec2 y (x + h), rgb = G.vec3 1.0 1.0 1.0, uv = G.vec2 0.0 1.0, texture = tex}
           ]
-      vertecies = mconcat $ toQuad <$> sprites
-      howMany = fromIntegral (length sprites)
+      vertecies = mconcat $ toQuad <$> ss
+      howMany = fromIntegral (length ss)
       go acc 0 = acc
       go acc n =
         let i = howMany - n
@@ -340,25 +361,6 @@ doBuffers sprites =
 copyBuffer ::
   forall a.
   (Storable a) =>
-  Vma.Allocator ->
-  Vk.Device ->
-  Vk.CommandPool ->
-  Vk.Queue ->
-  Vk.Buffer ->
-  SV.Vector a ->
-  Managed ()
-copyBuffer allocator device pool queue gpuBuffer v = do
-  let (src, len) = SV.unsafeToForeignPtr0 v
-      size = fromIntegral $ sizeOf (undefined :: a) * len
-  say "Engine" $ show len
-  (staging, ptr) <- withHostBuffer allocator size
-  liftIO . withForeignPtr src $ \s -> copyArray (castPtr ptr) s len
-  copyBuffer' device pool queue staging gpuBuffer size
-  say "Engine" "Copied staging buffer into GPU buffer"
-
-copyBuffer2 ::
-  forall a.
-  (Storable a) =>
   Vk.Device ->
   Vk.CommandPool ->
   Vk.Queue ->
@@ -366,11 +368,12 @@ copyBuffer2 ::
   (Vk.Buffer, Ptr ()) ->
   SV.Vector a ->
   Managed ()
-copyBuffer2 device pool queue gpuBuffer (stagingBuffer, stagingPtr) v = do
+copyBuffer device pool queue gpuBuffer (hostBuffer, hostBufferPtr) v = do
   let (src, len) = SV.unsafeToForeignPtr0 v
       size = fromIntegral $ sizeOf (undefined :: a) * len
-  liftIO . withForeignPtr src $ \s -> copyArray (castPtr stagingPtr) s len
-  copyBuffer' device pool queue stagingBuffer gpuBuffer size
+  liftIO . withForeignPtr src $ \s -> copyArray (castPtr hostBufferPtr) s len
+  let copy cmd = Vk.cmdCopyBuffer cmd hostBuffer gpuBuffer [Vk.zero {VkBufferCopy.size = size}]
+   in submitNow device pool queue copy
 
 withImage :: Vma.Allocator -> Int -> Int -> Managed Vk.Image
 withImage allocator width height = do
@@ -431,8 +434,12 @@ submitNow device pool queue use = do
   _ <-
     let info = Vk.zero {VkCommandBufferBeginInfo.flags = Vk.COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT}
      in Vk.useCommandBuffer buffer info $ use buffer
-  let info = Vk.SomeStruct $ Vk.zero {VkSubmitInfo.commandBuffers = [Vk.commandBufferHandle buffer]}
-   in Vk.queueSubmit queue [info] Vk.NULL_HANDLE
+  let work =
+        Vk.SomeStruct $
+          Vk.zero
+            { VkSubmitInfo.commandBuffers = [Vk.commandBufferHandle buffer]
+            }
+   in Vk.queueSubmit queue [work] Vk.NULL_HANDLE
   Vk.queueWaitIdle queue
 
 copyBufferToImage ::
@@ -495,23 +502,6 @@ tranistFromDstOptimalToShaderReadOnlyOptimal dst cmd =
     Vk.PIPELINE_STAGE_TRANSFER_BIT
     Vk.PIPELINE_STAGE_FRAGMENT_SHADER_BIT
 
-copyBuffer' :: Vk.Device -> Vk.CommandPool -> Vk.Queue -> Vk.Buffer -> Vk.Buffer -> Vk.DeviceSize -> Managed ()
-copyBuffer' device pool queue src dst size = do
-  buffer <-
-    let info =
-          Vk.zero
-            { VkCommandBufferAllocateInfo.level = Vk.COMMAND_BUFFER_LEVEL_PRIMARY,
-              VkCommandBufferAllocateInfo.commandPool = pool,
-              VkCommandBufferAllocateInfo.commandBufferCount = 1
-            }
-     in V.head <$> managed (Vk.withCommandBuffers device info bracket)
-  let info = Vk.zero {VkCommandBufferBeginInfo.flags = Vk.COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT}
-      copy = Vk.zero {VkBufferCopy.srcOffset = 0, VkBufferCopy.dstOffset = 0, VkBufferCopy.size = size}
-   in Vk.useCommandBuffer buffer info $ Vk.cmdCopyBuffer buffer src dst [copy]
-  let info = Vk.zero {VkSubmitInfo.commandBuffers = [Vk.commandBufferHandle buffer]}
-   in Vk.queueSubmit queue [Vk.SomeStruct info] Vk.NULL_HANDLE
-  Vk.queueWaitIdle queue
-
 withHostBuffer :: Vma.Allocator -> Vk.DeviceSize -> Managed (Vk.Buffer, Ptr ())
 withHostBuffer allocator size = do
   (buffer, _, Vma.AllocationInfo {Vma.mappedData = mem}) <-
@@ -549,18 +539,18 @@ withGPUBuffer allocator size flags = do
   say "Vulkan" $ "Created buffer on GPU of size " ++ show size ++ " bytes"
   return buffer
 
-mainLoop :: (Word32 -> Word32 -> Managed ()) -> Managed ()
-mainLoop draw = go 0
+mainLoop :: s -> (Word32 -> Word32 -> s -> Managed s) -> Managed ()
+mainLoop s draw = go s 0
   where
-    go t0 = do
+    go s0 t0 = do
       quit <- any isQuitEvent <$> SDL.pollEvents
       if quit
         then pure ()
         else do
           t <- SDL.ticks
-          draw (t - t0) t
+          s1 <- draw (t - t0) t s0
           liftIO . threadDelay $ 1000 * 10
-          go t
+          go s1 t
 
 isQuitEvent :: SDL.Event -> Bool
 isQuitEvent = \case
@@ -921,7 +911,6 @@ createShaders dev =
     fragCode <- liftIO $ BS.readFile "frag.spv"
     vertCode <- liftIO $ BS.readFile "vert.spv"
     fragModule <- managed $ Vk.withShaderModule dev Vk.zero {VkShaderModuleCreateInfo.code = fragCode} Nothing bracket
-    -- fragModule <- managed $ Vk.withShadersEXT dev Vk.zero {VkShaderModuleCreateInfo.code = fragCode} Nothing bracket
     vertModule <- managed $ Vk.withShaderModule dev Vk.zero {VkShaderModuleCreateInfo.code = vertCode} Nothing bracket
     let vertextInfo =
           Vk.zero
@@ -1151,8 +1140,8 @@ withVulkan w = do
           ::& debugUtilsMessengerCreateInfo
             :& Vk.ValidationFeaturesEXT
               [ -- Vk.VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
-                Vk.VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT,
-                Vk.VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT
+                Vk.VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT --,
+                -- Vk.VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT
               ]
               []
             :& ()

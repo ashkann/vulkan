@@ -1,6 +1,6 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.35.2.
+-- This file has been generated from package.yaml by hpack version 0.36.0.
 --
 -- see: https://github.com/sol/hpack
 
@@ -12,6 +12,7 @@ build-type:     Simple
 executable vulkan2dengine
   main-is: Main.hs
   other-modules:
+      Ashkan
       Paths_Vulkan2DEngine
   hs-source-dirs:
       app
@@ -21,9 +22,12 @@ executable vulkan2dengine
     , VulkanMemoryAllocator
     , base >=4.7 && <5
     , bytestring
+    , containers
     , dear-imgui
     , extra
     , geomancy
+    , inline-c
+    , inline-c-cpp
     , managed
     , mtl
     , sdl2

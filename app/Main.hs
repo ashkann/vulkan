@@ -1,3 +1,4 @@
+{-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -7,12 +8,15 @@
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE NoFieldSelectors #-}
 
 module Main (main) where
 
+import Ashkan (vulkanCtx)
 import Codec.Picture qualified as JP
 import Control.Applicative ((<|>))
 import Control.Concurrent (threadDelay)
@@ -24,16 +28,24 @@ import Data.ByteString qualified as BS (readFile)
 import Data.ByteString.Char8 qualified as BS (pack, unpack)
 import Data.Foldable (foldlM, for_)
 import Data.Functor (($>), (<&>))
+import Data.Map.Strict qualified as Map (fromList)
 import Data.Traversable (for)
 import Data.Vector ((!))
 import Data.Vector qualified as V
 import Data.Vector.Storable qualified as SV
-import Foreign (Bits (zeroBits), Ptr, Storable, Word32, castPtr, copyArray, withForeignPtr)
+import DearImGui qualified as ImGui
+import DearImGui.SDL.Vulkan qualified as ImGui
+import DearImGui.Vulkan qualified as ImGui
+import Foreign (Bits (zeroBits), FunPtr, Ptr, Storable, Word32, castPtr, copyArray, withForeignPtr)
 import Foreign.C (peekCAString)
 import Foreign.Ptr (castFunPtr)
 import Foreign.Storable (Storable (..), sizeOf)
 import Foreign.Storable.Record qualified as Store
 import Geomancy qualified as G
+import Language.C.Inline qualified as C
+import Language.C.Inline.Context qualified as C
+import Language.C.Inline.Cpp qualified as Cpp
+import Language.C.Types qualified as C
 import SDL qualified
 import SDL.Video.Vulkan qualified as SDL
 import Vulkan qualified as Vk
@@ -100,6 +112,32 @@ import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCre
 import VulkanMemoryAllocator qualified as VmaAllocatorCreateInfo (AllocatorCreateInfo (..))
 import Prelude hiding (init)
 
+vulkanTypesTable :: C.TypesTable
+vulkanTypesTable =
+  Map.fromList
+    [ (C.TypeName "VkAllocationCallbacks", [t|Vk.AllocationCallbacks|]),
+      (C.TypeName "VkCommandBuffer_T", [t|Vk.CommandBuffer_T|]),
+      (C.TypeName "VkDescriptorPool", [t|Vk.DescriptorPool|]),
+      (C.TypeName "VkDevice_T", [t|Vk.Device_T|]),
+      (C.TypeName "VkInstance_T", [t|Vk.Instance_T|]),
+      (C.TypeName "VkPhysicalDevice_T", [t|Vk.PhysicalDevice_T|]),
+      (C.TypeName "VkPipeline", [t|Vk.Pipeline|]),
+      (C.TypeName "VkPipelineCache", [t|Vk.PipelineCache|]),
+      (C.TypeName "VkQueue_T", [t|Vk.Queue_T|]),
+      (C.TypeName "VkRenderPass", [t|Vk.RenderPass|]),
+      (C.TypeName "VkResult", [t|Vk.Result|]),
+      (C.TypeName "VkSampleCountFlagBits", [t|Vk.SampleCountFlagBits|]),
+      (C.TypeName "VkSampler", [t|Vk.Sampler|]),
+      (C.TypeName "VkImageView", [t|Vk.ImageView|]),
+      (C.TypeName "VkImageLayout", [t|Vk.ImageLayout|]),
+      (C.TypeName "VkDescriptorSet", [t|Vk.DescriptorSet|])
+    ]
+
+C.context (Cpp.cppCtx <> C.funCtx <> vulkanCtx)
+C.include "imgui.h"
+C.include "backends/imgui_impl_vulkan.h"
+Cpp.using "namespace ImGui"
+
 data Vertex = Vertex {xy :: G.Vec2, rgb :: G.Vec3, uv :: G.Vec2, texture :: Word32}
   deriving (Show, Eq)
 
@@ -119,10 +157,8 @@ instance Storable Vertex where
   poke = Store.poke store
 
 data Sprite = Sprite
-  { top :: Float,
-    left :: Float,
-    width :: Float,
-    height :: Float,
+  { xy :: G.Vec2,
+    wh :: G.Vec2,
     texture :: Word32
   }
   deriving (Show, Eq)
@@ -145,8 +181,6 @@ main = runManaged $ do
   say "Vulkan" $ "Picked up " ++ show (Vk.deviceName props) ++ ", present queue " ++ show present ++ ", graphics queue " ++ show gfx
   say "Vulkan" "Creating device"
   device <- withDevice gpu present gfx portable
-  allocator <- withMemoryAllocator vulkan gpu device
-  say "VMA" "Created allocator"
   say "Vulkan" "Device created"
   gfxQueue <- Vk.getDeviceQueue device gfx 0
   say "Vulkan" "Got graphics queue"
@@ -172,6 +206,8 @@ main = runManaged $ do
             }
      in managed $ Vk.withCommandPool device info Nothing bracket
   say "Vulkan" "Created command pool"
+  allocator <- withMemoryAllocator vulkan gpu device
+  say "VMA" "Created allocator"
   let size = 1024
   vertexBuffer <- withGPUBuffer allocator size Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
   say "Vulkan" "Created vertex buffer"
@@ -217,17 +253,17 @@ main = runManaged $ do
   say "Engine" "Entering the main loop"
   let world0 =
         World
-          { a = Thingie {pos = G.vec2 (-0.8) (-0.8), vel = G.vec2 (0.0001) (0.001)},
+          { a = Thingie {pos = G.vec2 (-0.5) (-0.5), vel = G.vec2 0.002 0.001},
             b = Thingie {pos = G.vec2 (-0.5) (-0.5), vel = G.vec2 0.0 0.0},
-            c = Thingie {pos = G.vec2 (-0.2) (-0.2), vel = G.vec2 0.001 0.002}
+            c = Thingie {pos = G.vec2 (-0.5) (-0.5), vel = G.vec2 0.001 0.002}
           }
   let waitForPrevDrawCallToFinish = Vk.waitForFences device [inFlight] True maxBound *> Vk.resetFences device [inFlight]
       draw dt t w0 = do
-        let w1 = world dt t w0
-            (vertices, indices) = doBuffers $ sprites w1
+        w1 <- world dt t w0
+        let (vertices, indices) = doBuffers $ sprites w1
         copyBuffer device commandPool gfxQueue vertexBuffer (vstaging, vptr) vertices
         copyBuffer device commandPool gfxQueue indexBuffer (istaging, iptr) indices
-        -- say "Engine" $ show dt ++ " " ++ show t
+        let World {a = (Thingie {pos = p, vel = v})} = w1 in say "Engine" $ show p ++ " " ++ show v
         waitForPrevDrawCallToFinish
         index <- acquireNextFrame device swapchain imageAvailable
         let frame = images ! fromIntegral index
@@ -239,12 +275,81 @@ main = runManaged $ do
         Vk.deviceWaitIdle device $> w1
    in mainLoop world0 draw
 
-world :: Word32 -> Word32 -> World -> World
-world dt t (World {a = a, b = b, c = c}) = World {a = update a, b = update b, c = update c}
+imgui vulkan gpu device window queue cmdPool gfx =
+  do
+    pool <-
+      let poolSizes = f <$> types
+          info =
+            Vk.zero
+              { VkDescriptorPoolCreateInfo.poolSizes = poolSizes,
+                VkDescriptorPoolCreateInfo.maxSets = 1000,
+                VkDescriptorPoolCreateInfo.flags = Vk.DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT
+              }
+       in managed $ Vk.withDescriptorPool device info Nothing bracket
+    _ <- liftIO ImGui.createContext
+    _ <- liftIO $ ImGui.sdl2InitForVulkan window
+    let x = do
+          _ <- submitNow device cmdPool queue $ \cmd -> ImGui.vulkanCreateFontsTexture cmd
+          liftIO ImGui.vulkanDestroyFontUploadObjects
+    liftIO $ bracket_ (vulkanInit pool) vulkanShutdown (runManaged x)
+  where
+    types =
+      [ Vk.DESCRIPTOR_TYPE_SAMPLER,
+        Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        Vk.DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+        Vk.DESCRIPTOR_TYPE_STORAGE_IMAGE,
+        Vk.DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER,
+        Vk.DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER,
+        Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        Vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
+        Vk.DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC,
+        Vk.DESCRIPTOR_TYPE_INPUT_ATTACHMENT
+      ]
+    f typ =
+      Vk.zero
+        { VkDescriptorPoolSize.descriptorCount = 1000,
+          VkDescriptorPoolSize.type' = typ
+        }
+    vulkanInit p = do
+      let instancePtr :: Ptr Vk.Instance_T
+          instancePtr = Vk.instanceHandle vulkan
+          physicalDevicePtr :: Ptr Vk.PhysicalDevice_T
+          physicalDevicePtr = Vk.physicalDeviceHandle gpu
+          devicePtr :: Ptr Vk.Device_T
+          devicePtr = Vk.deviceHandle device
+          queuePtr :: Ptr Vk.Queue_T
+          queuePtr = Vk.queueHandle gfx
+          msaaSamples = Vk.SAMPLE_COUNT_1_BIT
+          pool = p
+      do
+        res <-
+          [C.block| bool {
+              ImGui_ImplVulkan_InitInfo initInfo;
+              VkInstance instance = { $( VkInstance_T* instancePtr ) };
+              initInfo.Instance = instance;
+              VkPhysicalDevice physicalDevice = { $( VkPhysicalDevice_T* physicalDevicePtr ) };
+              initInfo.PhysicalDevice = physicalDevice;
+              VkDevice device = { $( VkDevice_T* devicePtr ) };
+              initInfo.Device = device;
+              VkQueue queue = { $( VkQueue_T* queuePtr ) };
+              initInfo.Queue = queue;
+              initInfo.DescriptorPool = $(VkDescriptorPool pool);
+              initInfo.MinImageCount = 3;
+              initInfo.ImageCount = 3;
+              initInfo.MSAASamples = $(VkSampleCountFlagBits msaaSamples);
+              initInfo.UseDynamicRendering = true;
+              return ImGui_ImplVulkan_Init(&initInfo, null) );
+            }|]
+        if res /= 0 then return () else sayErr "ImGui" "Failed to initialize Vulkan"
+    vulkanShutdown = [C.exp| void { ImGui_ImplVulkan_Shutdown(); } |]
+
+world :: (Monad io) => Word32 -> Word32 -> World -> io World
+world dt t (World {a = a, b = b, c = c}) = return World {a = update a, b = update b, c = update c}
   where
     update Thingie {pos = p0, vel = v0} =
       let p1 = p0 + (v0 G.^* fromIntegral dt)
-          v1 = G.emap2 (\vi pi -> if pi > 1.0 || pi < -1.0 then -vi else vi) v0 p1
+          v1 = G.emap2 (\vi pi -> if pi >= 1.0 || pi <= -1.0 then -vi else vi) v0 p1
        in Thingie {pos = p1, vel = v1}
 
 acquireNextFrame :: (MonadIO io) => Vk.Device -> Vk.SwapchainKHR -> Vk.Semaphore -> io Word32
@@ -279,12 +384,12 @@ presentFrame swapchain present idx renderFinished =
    in Vk.queuePresentKHR present info $> ()
 
 sprites :: World -> [Sprite]
-sprites (World Thingie {pos = G.WithVec2 ax ay} Thingie {pos = G.WithVec2 bx by} Thingie {pos = G.WithVec2 cx cy}) =
+sprites (World Thingie {pos = pa} Thingie {pos = pb} Thingie {pos = pc}) =
   let ss =
-        [ Sprite {top = -1.0, left = -1.0, width = 2.0, height = 2.0, texture = 0},
-          Sprite {top = ax, left = ay, width = 1.0, height = 1.0, texture = 1},
-          Sprite {top = bx, left = by, width = 1.0, height = 1.0, texture = 3},
-          Sprite {top = cx, left = cy, width = 1.0, height = 1.0, texture = 2}
+        [ Sprite {xy = G.vec2 (-1.0) (-1.0), wh = G.vec2 2.0 2.0, texture = 0},
+          Sprite {xy = pa, wh = G.vec2 1.0 1.0, texture = 1},
+          Sprite {xy = pb, wh = G.vec2 1.0 1.0, texture = 3},
+          Sprite {xy = pc, wh = G.vec2 1.0 1.0, texture = 2}
         ]
    in ss
 
@@ -331,7 +436,7 @@ debugUtilsMessengerCreateInfo =
     { Vk.messageSeverity =
         Vk.DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
           .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
-          -- .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
+      -- .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
       Vk.messageType =
         Vk.DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
           .|. Vk.DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
@@ -341,12 +446,13 @@ debugUtilsMessengerCreateInfo =
 
 doBuffers :: [Sprite] -> (SV.Vector Vertex, SV.Vector Word32)
 doBuffers ss =
-  let toQuad Sprite {top = x, left = y, width = w, height = h, texture = tex} =
+  let rgb = G.vec3 1.0 0.0 0.0
+      toQuad Sprite {xy = G.WithVec2 x y, wh = G.WithVec2 w h, texture = tex} =
         SV.fromList
-          [ Vertex {xy = G.vec2 y x, rgb = G.vec3 1.0 0.0 0.0, uv = G.vec2 0.0 0.0, texture = tex},
-            Vertex {xy = G.vec2 (y + w) x, rgb = G.vec3 0.0 1.0 0.0, uv = G.vec2 1.0 0.0, texture = tex},
-            Vertex {xy = G.vec2 (y + w) (x + h), rgb = G.vec3 0.0 0.0 1.0, uv = G.vec2 1.0 1.0, texture = tex},
-            Vertex {xy = G.vec2 y (x + h), rgb = G.vec3 1.0 1.0 1.0, uv = G.vec2 0.0 1.0, texture = tex}
+          [ Vertex {xy = G.vec2 x y, rgb = rgb, uv = G.vec2 0.0 0.0, texture = tex},
+            Vertex {xy = G.vec2 (x + w) y, rgb = rgb, uv = G.vec2 1.0 0.0, texture = tex},
+            Vertex {xy = G.vec2 (x + w) (y + h), rgb = rgb, uv = G.vec2 1.0 1.0, texture = tex},
+            Vertex {xy = G.vec2 x (y + h), rgb = rgb, uv = G.vec2 0.0 1.0, texture = tex}
           ]
       vertecies = mconcat $ toQuad <$> ss
       howMany = fromIntegral (length ss)
@@ -1140,7 +1246,7 @@ withVulkan w = do
           ::& debugUtilsMessengerCreateInfo
             :& Vk.ValidationFeaturesEXT
               [ -- Vk.VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
-                Vk.VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT --,
+                Vk.VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT -- ,
                 -- Vk.VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT
               ]
               []

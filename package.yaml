@@ -18,6 +18,9 @@ dependencies:
   - geomancy
   - JuicyPixels
   - storable-record
+  - inline-c
+  - inline-c-cpp
+  - containers
 
 ghc-options:
   - -Wall

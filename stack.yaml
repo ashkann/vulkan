@@ -29,7 +29,7 @@ resolver: lts-21.21
 #   - auto-update
 #   - wai
 packages:
-- .
+  - .
 # Dependency packages to be pulled from upstream that are not in the resolver.
 # These entries can reference officially published versions as well as
 # forks / in-progress versions pinned to a git hash. For example:
@@ -59,19 +59,26 @@ packages:
 # arch: x86_64
 #
 # Extra directories used by Stack for building
-# extra-include-dirs: [/path/to/dir]
-# extra-lib-dirs: [/path/to/dir]
+extra-include-dirs: [/Users/A.Nazary/Haskell/vulkan/imgui]
+extra-lib-dirs: [/Users/A.Nazary/Haskell/vulkan/imgui]
 #
 # Allow a newer minor version of GHC than the snapshot specifies
 # compiler-check: newer-minor
+
+# extra-source-files123123:
+# - imgui/*.h
+# - imgui/backends/*.h
+# - imgui/backends/*.mm
+# - imgui/imconfig.h
+
 extra-deps:
-- vulkan-3.26.1
-- vulkan-utils-0.5.10.6
-- VulkanMemoryAllocator-0.11.0.1
-- dear-imgui-2.2.0
-- geomancy-0.2.6.0
-- gl-block-1.0
-- ptrdiff-0
+  - vulkan-3.26.1
+  - vulkan-utils-0.5.10.6
+  - VulkanMemoryAllocator-0.11.0.1
+  - dear-imgui-2.2.0
+  - geomancy-0.2.6.0
+  - gl-block-1.0
+  - ptrdiff-0
 
 flags:
   dear-imgui:

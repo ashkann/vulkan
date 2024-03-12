@@ -17,6 +17,7 @@
 module Main (main) where
 
 import Ashkan (vulkanCtx)
+import Ashkan2 qualified as Ashkan2
 import Codec.Picture qualified as JP
 import Control.Applicative ((<|>))
 import Control.Concurrent (threadDelay)
@@ -112,31 +113,10 @@ import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCre
 import VulkanMemoryAllocator qualified as VmaAllocatorCreateInfo (AllocatorCreateInfo (..))
 import Prelude hiding (init)
 
-vulkanTypesTable :: C.TypesTable
-vulkanTypesTable =
-  Map.fromList
-    [ (C.TypeName "VkAllocationCallbacks", [t|Vk.AllocationCallbacks|]),
-      (C.TypeName "VkCommandBuffer_T", [t|Vk.CommandBuffer_T|]),
-      (C.TypeName "VkDescriptorPool", [t|Vk.DescriptorPool|]),
-      (C.TypeName "VkDevice_T", [t|Vk.Device_T|]),
-      (C.TypeName "VkInstance_T", [t|Vk.Instance_T|]),
-      (C.TypeName "VkPhysicalDevice_T", [t|Vk.PhysicalDevice_T|]),
-      (C.TypeName "VkPipeline", [t|Vk.Pipeline|]),
-      (C.TypeName "VkPipelineCache", [t|Vk.PipelineCache|]),
-      (C.TypeName "VkQueue_T", [t|Vk.Queue_T|]),
-      (C.TypeName "VkRenderPass", [t|Vk.RenderPass|]),
-      (C.TypeName "VkResult", [t|Vk.Result|]),
-      (C.TypeName "VkSampleCountFlagBits", [t|Vk.SampleCountFlagBits|]),
-      (C.TypeName "VkSampler", [t|Vk.Sampler|]),
-      (C.TypeName "VkImageView", [t|Vk.ImageView|]),
-      (C.TypeName "VkImageLayout", [t|Vk.ImageLayout|]),
-      (C.TypeName "VkDescriptorSet", [t|Vk.DescriptorSet|])
-    ]
-
-C.context (Cpp.cppCtx <> C.funCtx <> vulkanCtx)
-C.include "imgui.h"
-C.include "backends/imgui_impl_vulkan.h"
-Cpp.using "namespace ImGui"
+-- C.context (Cpp.cppCtx <> C.funCtx <> vulkanCtx)
+-- C.include "imgui.h"
+-- C.include "backends/imgui_impl_vulkan.h"
+-- Cpp.using "namespace ImGui"
 
 data Vertex = Vertex {xy :: G.Vec2, rgb :: G.Vec3, uv :: G.Vec2, texture :: Word32}
   deriving (Show, Eq)
@@ -291,7 +271,7 @@ imgui vulkan gpu device window queue cmdPool gfx =
     let x = do
           _ <- submitNow device cmdPool queue $ \cmd -> ImGui.vulkanCreateFontsTexture cmd
           liftIO ImGui.vulkanDestroyFontUploadObjects
-    liftIO $ bracket_ (vulkanInit pool) vulkanShutdown (runManaged x)
+    liftIO $ bracket_ (Ashkan2.vulkanInit vulkan gpu device gfx pool) Ashkan2.vulkanShutdown (runManaged x)
   where
     types =
       [ Vk.DESCRIPTOR_TYPE_SAMPLER,
@@ -311,38 +291,39 @@ imgui vulkan gpu device window queue cmdPool gfx =
         { VkDescriptorPoolSize.descriptorCount = 1000,
           VkDescriptorPoolSize.type' = typ
         }
-    vulkanInit p = do
-      let instancePtr :: Ptr Vk.Instance_T
-          instancePtr = Vk.instanceHandle vulkan
-          physicalDevicePtr :: Ptr Vk.PhysicalDevice_T
-          physicalDevicePtr = Vk.physicalDeviceHandle gpu
-          devicePtr :: Ptr Vk.Device_T
-          devicePtr = Vk.deviceHandle device
-          queuePtr :: Ptr Vk.Queue_T
-          queuePtr = Vk.queueHandle gfx
-          msaaSamples = Vk.SAMPLE_COUNT_1_BIT
-          pool = p
-      do
-        res <-
-          [C.block| bool {
-              ImGui_ImplVulkan_InitInfo initInfo;
-              VkInstance instance = { $( VkInstance_T* instancePtr ) };
-              initInfo.Instance = instance;
-              VkPhysicalDevice physicalDevice = { $( VkPhysicalDevice_T* physicalDevicePtr ) };
-              initInfo.PhysicalDevice = physicalDevice;
-              VkDevice device = { $( VkDevice_T* devicePtr ) };
-              initInfo.Device = device;
-              VkQueue queue = { $( VkQueue_T* queuePtr ) };
-              initInfo.Queue = queue;
-              initInfo.DescriptorPool = $(VkDescriptorPool pool);
-              initInfo.MinImageCount = 3;
-              initInfo.ImageCount = 3;
-              initInfo.MSAASamples = $(VkSampleCountFlagBits msaaSamples);
-              initInfo.UseDynamicRendering = true;
-              return ImGui_ImplVulkan_Init(&initInfo, null) );
-            }|]
-        if res /= 0 then return () else sayErr "ImGui" "Failed to initialize Vulkan"
-    vulkanShutdown = [C.exp| void { ImGui_ImplVulkan_Shutdown(); } |]
+
+-- vulkanInit p = do
+--   let instancePtr :: Ptr Vk.Instance_T
+--       instancePtr = Vk.instanceHandle vulkan
+--       physicalDevicePtr :: Ptr Vk.PhysicalDevice_T
+--       physicalDevicePtr = Vk.physicalDeviceHandle gpu
+--       devicePtr :: Ptr Vk.Device_T
+--       devicePtr = Vk.deviceHandle device
+--       queuePtr :: Ptr Vk.Queue_T
+--       queuePtr = Vk.queueHandle gfx
+--       msaaSamples = Vk.SAMPLE_COUNT_1_BIT
+--       pool = p
+--   do
+--     res <-
+--       [C.block| bool {
+--           ImGui_ImplVulkan_InitInfo initInfo;
+--           VkInstance instance = { $( VkInstance_T* instancePtr ) };
+--           initInfo.Instance = instance;
+--           VkPhysicalDevice physicalDevice = { $( VkPhysicalDevice_T* physicalDevicePtr ) };
+--           initInfo.PhysicalDevice = physicalDevice;
+--           VkDevice device = { $( VkDevice_T* devicePtr ) };
+--           initInfo.Device = device;
+--           VkQueue queue = { $( VkQueue_T* queuePtr ) };
+--           initInfo.Queue = queue;
+--           initInfo.DescriptorPool = $(VkDescriptorPool pool);
+--           initInfo.MinImageCount = 3;
+--           initInfo.ImageCount = 3;
+--           initInfo.MSAASamples = $(VkSampleCountFlagBits msaaSamples);
+--           initInfo.UseDynamicRendering = true;
+--           return ImGui_ImplVulkan_Init(&initInfo, null) );
+--         }|]
+--     if res /= 0 then return () else sayErr "ImGui" "Failed to initialize Vulkan"
+-- vulkanShutdown = [C.exp| void { ImGui_ImplVulkan_Shutdown(); } |]
 
 world :: (Monad io) => Word32 -> Word32 -> World -> io World
 world dt t (World {a = a, b = b, c = c}) = return World {a = update a, b = update b, c = update c}

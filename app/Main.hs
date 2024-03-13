@@ -8,15 +8,12 @@
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
-{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE NoFieldSelectors #-}
 
 module Main (main) where
 
-import Ashkan (vulkanCtx)
 import Ashkan2 qualified as Ashkan2
 import Codec.Picture qualified as JP
 import Control.Applicative ((<|>))
@@ -27,9 +24,8 @@ import Control.Monad.Managed (Managed, MonadIO (liftIO), MonadManaged, managed, 
 import Data.Bits ((.&.), (.|.))
 import Data.ByteString qualified as BS (readFile)
 import Data.ByteString.Char8 qualified as BS (pack, unpack)
-import Data.Foldable (foldlM, for_)
+import Data.Foldable (foldlM)
 import Data.Functor (($>), (<&>))
-import Data.Map.Strict qualified as Map (fromList)
 import Data.Traversable (for)
 import Data.Vector ((!))
 import Data.Vector qualified as V
@@ -37,16 +33,12 @@ import Data.Vector.Storable qualified as SV
 import DearImGui qualified as ImGui
 import DearImGui.SDL.Vulkan qualified as ImGui
 import DearImGui.Vulkan qualified as ImGui
-import Foreign (Bits (zeroBits), FunPtr, Ptr, Storable, Word32, castPtr, copyArray, withForeignPtr)
+import Foreign (Bits (zeroBits), Ptr, Storable, Word32, castPtr, copyArray, withForeignPtr)
 import Foreign.C (peekCAString)
 import Foreign.Ptr (castFunPtr)
 import Foreign.Storable (Storable (..), sizeOf)
 import Foreign.Storable.Record qualified as Store
 import Geomancy qualified as G
-import Language.C.Inline qualified as C
-import Language.C.Inline.Context qualified as C
-import Language.C.Inline.Cpp qualified as Cpp
-import Language.C.Types qualified as C
 import SDL qualified
 import SDL.Video.Vulkan qualified as SDL
 import Vulkan qualified as Vk
@@ -112,11 +104,6 @@ import VulkanMemoryAllocator qualified as Vma
 import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCreateInfo (..))
 import VulkanMemoryAllocator qualified as VmaAllocatorCreateInfo (AllocatorCreateInfo (..))
 import Prelude hiding (init)
-
--- C.context (Cpp.cppCtx <> C.funCtx <> vulkanCtx)
--- C.include "imgui.h"
--- C.include "backends/imgui_impl_vulkan.h"
--- Cpp.using "namespace ImGui"
 
 data Vertex = Vertex {xy :: G.Vec2, rgb :: G.Vec3, uv :: G.Vec2, texture :: Word32}
   deriving (Show, Eq)
@@ -231,6 +218,7 @@ main = runManaged $ do
   SDL.showWindow window
   SDL.raiseWindow window
   say "Engine" "Entering the main loop"
+  imgui vulkan gpu device window gfxQueue commandPool gfxQueue
   let world0 =
         World
           { a = Thingie {pos = G.vec2 (-0.5) (-0.5), vel = G.vec2 0.002 0.001},
@@ -243,7 +231,7 @@ main = runManaged $ do
         let (vertices, indices) = doBuffers $ sprites w1
         copyBuffer device commandPool gfxQueue vertexBuffer (vstaging, vptr) vertices
         copyBuffer device commandPool gfxQueue indexBuffer (istaging, iptr) indices
-        let World {a = (Thingie {pos = p, vel = v})} = w1 in say "Engine" $ show p ++ " " ++ show v
+        -- let World {a = (Thingie {pos = p, vel = v})} = w1 in say "Engine" $ show p ++ " " ++ show v
         waitForPrevDrawCallToFinish
         index <- acquireNextFrame device swapchain imageAvailable
         let frame = images ! fromIntegral index
@@ -266,11 +254,15 @@ imgui vulkan gpu device window queue cmdPool gfx =
                 VkDescriptorPoolCreateInfo.flags = Vk.DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT
               }
        in managed $ Vk.withDescriptorPool device info Nothing bracket
-    _ <- liftIO ImGui.createContext
-    _ <- liftIO $ ImGui.sdl2InitForVulkan window
+    b0 <- liftIO ImGui.createContext
+    say "ImGui" "Created context"
+    b1 <- liftIO $ ImGui.sdl2InitForVulkan window
+    say "ImGui" $ "Initialized for SDL2 Vulkan" ++ show b1
     let x = do
           _ <- submitNow device cmdPool queue $ \cmd -> ImGui.vulkanCreateFontsTexture cmd
+          say "ImGui" "Created fonts texture"
           liftIO ImGui.vulkanDestroyFontUploadObjects
+          say "ImGui" "Destroyed font upload objects"
     liftIO $ bracket_ (Ashkan2.vulkanInit vulkan gpu device gfx pool) Ashkan2.vulkanShutdown (runManaged x)
   where
     types =
@@ -291,39 +283,6 @@ imgui vulkan gpu device window queue cmdPool gfx =
         { VkDescriptorPoolSize.descriptorCount = 1000,
           VkDescriptorPoolSize.type' = typ
         }
-
--- vulkanInit p = do
---   let instancePtr :: Ptr Vk.Instance_T
---       instancePtr = Vk.instanceHandle vulkan
---       physicalDevicePtr :: Ptr Vk.PhysicalDevice_T
---       physicalDevicePtr = Vk.physicalDeviceHandle gpu
---       devicePtr :: Ptr Vk.Device_T
---       devicePtr = Vk.deviceHandle device
---       queuePtr :: Ptr Vk.Queue_T
---       queuePtr = Vk.queueHandle gfx
---       msaaSamples = Vk.SAMPLE_COUNT_1_BIT
---       pool = p
---   do
---     res <-
---       [C.block| bool {
---           ImGui_ImplVulkan_InitInfo initInfo;
---           VkInstance instance = { $( VkInstance_T* instancePtr ) };
---           initInfo.Instance = instance;
---           VkPhysicalDevice physicalDevice = { $( VkPhysicalDevice_T* physicalDevicePtr ) };
---           initInfo.PhysicalDevice = physicalDevice;
---           VkDevice device = { $( VkDevice_T* devicePtr ) };
---           initInfo.Device = device;
---           VkQueue queue = { $( VkQueue_T* queuePtr ) };
---           initInfo.Queue = queue;
---           initInfo.DescriptorPool = $(VkDescriptorPool pool);
---           initInfo.MinImageCount = 3;
---           initInfo.ImageCount = 3;
---           initInfo.MSAASamples = $(VkSampleCountFlagBits msaaSamples);
---           initInfo.UseDynamicRendering = true;
---           return ImGui_ImplVulkan_Init(&initInfo, null) );
---         }|]
---     if res /= 0 then return () else sayErr "ImGui" "Failed to initialize Vulkan"
--- vulkanShutdown = [C.exp| void { ImGui_ImplVulkan_Shutdown(); } |]
 
 world :: (Monad io) => Word32 -> Word32 -> World -> io World
 world dt t (World {a = a, b = b, c = c}) = return World {a = update a, b = update b, c = update c}

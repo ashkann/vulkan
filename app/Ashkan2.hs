@@ -41,7 +41,9 @@ vulkanInit vulkan gpu device gfx p = do
       msaaSamples = Vk.SAMPLE_COUNT_1_BIT
       renderPass = Vk.NULL_HANDLE
       pool = p
+      format = Vk.FORMAT_B8G8R8A8_SRGB
   do
+    putStrLn "Before calling ImGui_ImplVulkan_Init"
     res <-
       [C.block| bool {
               ImGui_ImplVulkan_InitInfo initInfo;
@@ -58,9 +60,11 @@ vulkanInit vulkan gpu device gfx p = do
               initInfo.ImageCount = 3;
               initInfo.MSAASamples = $(VkSampleCountFlagBits msaaSamples);
               initInfo.UseDynamicRendering = true;
+              initInfo.ColorAttachmentFormat = $(VkFormat format);
               return ImGui_ImplVulkan_Init(&initInfo, $(VkRenderPass renderPass) );
             }|]
-    if res /= 0 then return () else error "ImGui_ImplVulkan_Init failed"
+    putStrLn "After calling ImGui_ImplVulkan_Init"
+    if res /= 0 then putStrLn "ImGui_ImplVulkan_Init successfull" else putStrLn "ImGui_ImplVulkan_Init failed"
 
 vulkanShutdown :: IO ()
 vulkanShutdown = [C.exp| void { ImGui_ImplVulkan_Shutdown(); } |]

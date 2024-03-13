@@ -39,7 +39,8 @@ vulkanTypesTable =
       (C.TypeName "VkSampler", [t|Vk.Sampler|]),
       (C.TypeName "VkImageView", [t|Vk.ImageView|]),
       (C.TypeName "VkImageLayout", [t|Vk.ImageLayout|]),
-      (C.TypeName "VkDescriptorSet", [t|Vk.DescriptorSet|])
+      (C.TypeName "VkDescriptorSet", [t|Vk.DescriptorSet|]),
+      (C.TypeName "VkFormat", [t|Vk.Format|])
     ]
 
 vulkanCtx :: C.Context

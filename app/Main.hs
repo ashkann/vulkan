@@ -31,6 +31,7 @@ import Data.Vector ((!))
 import Data.Vector qualified as V
 import Data.Vector.Storable qualified as SV
 import DearImGui qualified as ImGui
+import DearImGui.SDL qualified as ImGui
 import DearImGui.SDL.Vulkan qualified as ImGui
 import DearImGui.Vulkan qualified as ImGui
 import Foreign (Bits (zeroBits), Ptr, Storable, Word32, castPtr, copyArray, withForeignPtr)
@@ -136,7 +137,7 @@ data World = World {a :: Thingie, b :: Thingie, c :: Thingie}
 
 main :: IO ()
 main = runManaged $ do
-  let windowWidth = 500
+  let windowWidth = 1000
       windowHeight = 500
   withSDL
   window <- withWindow windowWidth windowHeight
@@ -227,6 +228,12 @@ main = runManaged $ do
           }
   let waitForPrevDrawCallToFinish = Vk.waitForFences device [inFlight] True maxBound *> Vk.resetFences device [inFlight]
       draw dt t w0 = do
+        ImGui.vulkanNewFrame
+        ImGui.sdl2NewFrame
+        ImGui.newFrame
+        ImGui.showDemoWindow
+        ImGui.render
+        imguiData <- ImGui.getDrawData
         w1 <- world dt t w0
         let (vertices, indices) = doBuffers $ sprites w1
         copyBuffer device commandPool gfxQueue vertexBuffer (vstaging, vptr) vertices
@@ -237,12 +244,13 @@ main = runManaged $ do
         let frame = images ! fromIntegral index
             cmd = commandBuffers ! fromIntegral index
             count = fromIntegral $ SV.length indices
-        render pipeline layout set vertexBuffer indexBuffer extent count frame cmd
+        render pipeline layout set vertexBuffer indexBuffer extent count frame cmd imguiData
         renderFrame cmd gfxQueue imageAvailable renderFinished inFlight
         presentFrame swapchain presentQueue index renderFinished
         Vk.deviceWaitIdle device $> w1
    in mainLoop world0 draw
 
+imgui :: Vk.Instance -> Vk.PhysicalDevice -> Vk.Device -> SDL.Window -> Vk.Queue -> Vk.CommandPool -> Vk.Queue -> Managed ()
 imgui vulkan gpu device window queue cmdPool gfx =
   do
     pool <-
@@ -257,13 +265,16 @@ imgui vulkan gpu device window queue cmdPool gfx =
     b0 <- liftIO ImGui.createContext
     say "ImGui" "Created context"
     b1 <- liftIO $ ImGui.sdl2InitForVulkan window
-    say "ImGui" $ "Initialized for SDL2 Vulkan" ++ show b1
+    say "ImGui" $ "Initialized for SDL2 Vulkan: " ++ show b1
     let x = do
           _ <- submitNow device cmdPool queue $ \cmd -> ImGui.vulkanCreateFontsTexture cmd
           say "ImGui" "Created fonts texture"
           liftIO ImGui.vulkanDestroyFontUploadObjects
           say "ImGui" "Destroyed font upload objects"
-    liftIO $ bracket_ (Ashkan2.vulkanInit vulkan gpu device gfx pool) Ashkan2.vulkanShutdown (runManaged x)
+    managed_ \f -> do
+      Ashkan2.vulkanInit2 vulkan gpu device gfx pool
+      _ <- runManaged x
+      f <* Ashkan2.vulkanShutdown
   where
     types =
       [ Vk.DESCRIPTOR_TYPE_SAMPLER,
@@ -589,7 +600,7 @@ mainLoop :: s -> (Word32 -> Word32 -> s -> Managed s) -> Managed ()
 mainLoop s draw = go s 0
   where
     go s0 t0 = do
-      quit <- any isQuitEvent <$> SDL.pollEvents
+      quit <- any isQuitEvent <$> ImGui.pollEventsWithImGui
       if quit
         then pure ()
         else do
@@ -616,8 +627,9 @@ render ::
   Word32 ->
   (Vk.Image, Vk.ImageView) ->
   Vk.CommandBuffer ->
+  ImGui.DrawData ->
   Managed ()
-render pipeline layout set vertex index extent indexCount (img, view) cmd =
+render pipeline layout set vertex index extent indexCount (img, view) cmd imgui =
   Vk.useCommandBuffer cmd Vk.zero $ do
     renderLayout
     Vk.cmdBindPipeline cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
@@ -666,7 +678,9 @@ render pipeline layout set vertex index extent indexCount (img, view) cmd =
                 VkRenderingInfo.layerCount = 1,
                 VkRenderingInfo.colorAttachments = [attachment]
               }
-       in Vk.cmdUseRendering cmd info $ Vk.cmdDrawIndexed cmd indexCount 1 0 0 0
+          drawImgui = ImGui.vulkanRenderDrawData imgui cmd Nothing
+          drawScene = Vk.cmdDrawIndexed cmd indexCount 1 0 0 0
+       in Vk.cmdUseRendering cmd info $ drawScene *> drawImgui
 
 transitImageLayout ::
   Vk.CommandBuffer ->

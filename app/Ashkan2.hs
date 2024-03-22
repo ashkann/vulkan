@@ -20,6 +20,7 @@ import Ashkan (vulkanCtx)
 import Foreign qualified as F
 import Language.C.Inline qualified as C
 import Language.C.Inline.Cpp qualified as Cpp
+import Utils (say, sayErr)
 import Vulkan qualified as Vk
 import Prelude hiding (init)
 
@@ -43,7 +44,9 @@ vulkanInit2 vulkan gpu device gfx p = do
       minImageCount = 3
       imageCount = 3
       format = Vk.FORMAT_B8G8R8A8_SRGB
-      checkResult r = putStrLn ("ImGui_ImplVulkan_Init: Vulkan Result: " <> show r)
+      checkResult :: Vk.Result -> IO ()
+      checkResult Vk.SUCCESS = return ()
+      checkResult r = sayErr "ImGui" $ "Vulkan call failed with " ++ show r
   do
     checkResultFunPtr <- $(C.mkFunPtr [t|Vk.Result -> IO ()|]) checkResult
     putStrLn "Before calling ImGui_ImplVulkan_Init"
@@ -68,8 +71,9 @@ vulkanInit2 vulkan gpu device gfx p = do
           initInfo.ColorAttachmentFormat = $(VkFormat format);
           return ImGui_ImplVulkan_Init(&initInfo, VK_NULL_HANDLE );
         }|]
-    putStrLn "After calling ImGui_ImplVulkan_Init"
-    if res /= 0 then putStrLn "ImGui_ImplVulkan_Init successfull" else putStrLn "ImGui_ImplVulkan_Init failed"
+    if res /= 0
+      then say "ImGui" "ImGui_ImplVulkan_Init succeeded"
+      else sayErr "ImGui" "ImGui_ImplVulkan_Init failed"
 
 vulkanShutdown :: IO ()
 vulkanShutdown = do

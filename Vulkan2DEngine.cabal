@@ -14,6 +14,7 @@ executable vulkan2dengine
   other-modules:
       Ashkan
       Ashkan2
+      Utils
       Paths_Vulkan2DEngine
   hs-source-dirs:
       app

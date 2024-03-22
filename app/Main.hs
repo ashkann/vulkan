@@ -82,6 +82,7 @@ import Vulkan qualified as VkPipelineRenderingCreateInfo (PipelineRenderingCreat
 import Vulkan qualified as VkPipelineShaderStageCreateInfo (PipelineShaderStageCreateInfo (..))
 import Vulkan qualified as VkPipelineVertexInputStateCreateInfo (PipelineVertexInputStateCreateInfo (..))
 import Vulkan qualified as VkPresentInfoKHR (PresentInfoKHR (..))
+import Vulkan qualified as VkPushConstantRange (PushConstantRange (..))
 import Vulkan qualified as VkRect2D (Rect2D (..))
 import Vulkan qualified as VkRenderingAttachmentInfo (RenderingAttachmentInfo (..))
 import Vulkan qualified as VkRenderingInfo (RenderingInfo (..))
@@ -104,6 +105,7 @@ import Vulkan.Zero qualified as Vk
 import VulkanMemoryAllocator qualified as Vma
 import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCreateInfo (..))
 import VulkanMemoryAllocator qualified as VmaAllocatorCreateInfo (AllocatorCreateInfo (..))
+import Utils (say, sayErr)
 import Prelude hiding (init)
 
 data Vertex = Vertex {xy :: G.Vec2, rgb :: G.Vec3, uv :: G.Vec2, texture :: Word32}
@@ -228,12 +230,6 @@ main = runManaged $ do
           }
   let waitForPrevDrawCallToFinish = Vk.waitForFences device [inFlight] True maxBound *> Vk.resetFences device [inFlight]
       draw dt t w0 = do
-        ImGui.vulkanNewFrame
-        ImGui.sdl2NewFrame
-        ImGui.newFrame
-        ImGui.showDemoWindow
-        ImGui.render
-        imguiData <- ImGui.getDrawData
         w1 <- world dt t w0
         let (vertices, indices) = doBuffers $ sprites w1
         copyBuffer device commandPool gfxQueue vertexBuffer (vstaging, vptr) vertices
@@ -241,10 +237,44 @@ main = runManaged $ do
         -- let World {a = (Thingie {pos = p, vel = v})} = w1 in say "Engine" $ show p ++ " " ++ show v
         waitForPrevDrawCallToFinish
         index <- acquireNextFrame device swapchain imageAvailable
-        let frame = images ! fromIntegral index
+        let (img, view) = images ! fromIntegral index
             cmd = commandBuffers ! fromIntegral index
             count = fromIntegral $ SV.length indices
-        render pipeline layout set vertexBuffer indexBuffer extent count frame cmd imguiData
+        let presentLayout =
+              transitImageLayout
+                cmd
+                img
+                Vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+                (Vk.AccessFlagBits 0)
+                Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+                Vk.IMAGE_LAYOUT_PRESENT_SRC_KHR
+                Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+                Vk.PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT
+            renderLayout =
+              transitImageLayout
+                cmd
+                img
+                (Vk.AccessFlagBits 0)
+                Vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+                Vk.IMAGE_LAYOUT_UNDEFINED
+                Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+                Vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT
+                Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+        ImGui.vulkanNewFrame
+        ImGui.sdl2NewFrame
+        ImGui.newFrame
+        ImGui.showDemoWindow
+        ImGui.render
+        imguiData <- ImGui.getDrawData
+        say "Engine" "Rendering frame BEGIN"
+        Vk.useCommandBuffer cmd Vk.zero $ do
+          setupRenderState pipeline layout set vertexBuffer indexBuffer cmd
+          renderLayout
+          renderScene extent count view cmd
+          say "Engine" "Rendering ImGUI BEGIN"
+          renderImgui cmd view extent imguiData
+          presentLayout
+          say "Engine" "Rendering frame END"
         renderFrame cmd gfxQueue imageAvailable renderFinished inFlight
         presentFrame swapchain presentQueue index renderFinished
         Vk.deviceWaitIdle device $> w1
@@ -343,12 +373,6 @@ sprites (World Thingie {pos = pa} Thingie {pos = pb} Thingie {pos = pc}) =
           Sprite {xy = pc, wh = G.vec2 1.0 1.0, texture = 2}
         ]
    in ss
-
-say :: (MonadIO io) => String -> String -> io ()
-say prefix msg = liftIO . putStrLn $ prefix ++ ": " ++ msg
-
-sayErr :: (MonadIO io) => String -> String -> io a
-sayErr prefix msg = liftIO . throwError . userError $ prefix ++ ": " ++ msg
 
 vulkanVersion :: Word32
 vulkanVersion = Vk.API_VERSION_1_2
@@ -617,70 +641,62 @@ isQuitEvent = \case
         True
   _ -> False
 
-render ::
+setupRenderState ::
   Vk.Pipeline ->
   Vk.PipelineLayout ->
   Vk.DescriptorSet ->
   Vk.Buffer ->
   Vk.Buffer ->
+  Vk.CommandBuffer ->
+  Managed ()
+setupRenderState pipeline layout set vertex index cmd = do
+  Vk.cmdBindPipeline cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
+  Vk.cmdBindVertexBuffers cmd 0 [vertex] [0]
+  Vk.cmdBindIndexBuffer cmd index 0 Vk.INDEX_TYPE_UINT32
+  Vk.cmdBindDescriptorSets cmd Vk.PIPELINE_BIND_POINT_GRAPHICS layout 0 [set] []
+
+renderScene ::
   Vk.Extent2D ->
   Word32 ->
-  (Vk.Image, Vk.ImageView) ->
+  Vk.ImageView ->
   Vk.CommandBuffer ->
-  ImGui.DrawData ->
   Managed ()
-render pipeline layout set vertex index extent indexCount (img, view) cmd imgui =
-  Vk.useCommandBuffer cmd Vk.zero $ do
-    renderLayout
-    Vk.cmdBindPipeline cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
-    Vk.cmdBindVertexBuffers cmd 0 [vertex] [0]
-    Vk.cmdBindIndexBuffer cmd index 0 Vk.INDEX_TYPE_UINT32
-    Vk.cmdBindDescriptorSets cmd Vk.PIPELINE_BIND_POINT_GRAPHICS layout 0 [set] []
-    draw
-    presentLayout
-  where
-    renderLayout =
-      transitImageLayout
-        cmd
-        img
-        (Vk.AccessFlagBits 0)
-        Vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT
-        Vk.IMAGE_LAYOUT_UNDEFINED
-        Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
-        Vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT
-        Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+renderScene extent indexCount view cmd = do
+  let clear = Vk.Color (Vk.Float32 1.0 0.0 1.0 0)
+      attachment =
+        Vk.zero
+          { VkRenderingAttachmentInfo.imageView = view,
+            VkRenderingAttachmentInfo.imageLayout = Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            VkRenderingAttachmentInfo.loadOp = Vk.ATTACHMENT_LOAD_OP_CLEAR,
+            VkRenderingAttachmentInfo.storeOp = Vk.ATTACHMENT_STORE_OP_STORE,
+            VkRenderingAttachmentInfo.clearValue = clear
+          }
+      scissor = Vk.Rect2D {VkRect2D.offset = Vk.Offset2D 0 0, VkRect2D.extent = extent}
+      info =
+        Vk.zero
+          { VkRenderingInfo.renderArea = scissor,
+            VkRenderingInfo.layerCount = 1,
+            VkRenderingInfo.colorAttachments = [attachment]
+          }
+      drawScene = Vk.cmdDrawIndexed cmd indexCount 1 0 0 0
+   in Vk.cmdUseRendering cmd info drawScene
 
-    presentLayout =
-      transitImageLayout
-        cmd
-        img
-        Vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT
-        (Vk.AccessFlagBits 0)
-        Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
-        Vk.IMAGE_LAYOUT_PRESENT_SRC_KHR
-        Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
-        Vk.PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT
-
-    draw =
-      let clear = Vk.Color (Vk.Float32 1.0 0.0 1.0 0)
-          attachment =
-            Vk.zero
-              { VkRenderingAttachmentInfo.imageView = view,
-                VkRenderingAttachmentInfo.imageLayout = Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                VkRenderingAttachmentInfo.loadOp = Vk.ATTACHMENT_LOAD_OP_CLEAR,
-                VkRenderingAttachmentInfo.storeOp = Vk.ATTACHMENT_STORE_OP_STORE,
-                VkRenderingAttachmentInfo.clearValue = clear
-              }
-          scissor = Vk.Rect2D {VkRect2D.offset = Vk.Offset2D 0 0, VkRect2D.extent = extent}
-          info =
-            Vk.zero
-              { VkRenderingInfo.renderArea = scissor,
-                VkRenderingInfo.layerCount = 1,
-                VkRenderingInfo.colorAttachments = [attachment]
-              }
-          drawImgui = ImGui.vulkanRenderDrawData imgui cmd Nothing
-          drawScene = Vk.cmdDrawIndexed cmd indexCount 1 0 0 0
-       in Vk.cmdUseRendering cmd info $ drawScene *> drawImgui
+renderImgui cmd view extent imguiData =
+  let attachment =
+        Vk.zero
+          { VkRenderingAttachmentInfo.imageView = view,
+            VkRenderingAttachmentInfo.imageLayout = Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            VkRenderingAttachmentInfo.loadOp = Vk.ATTACHMENT_LOAD_OP_LOAD,
+            VkRenderingAttachmentInfo.storeOp = Vk.ATTACHMENT_STORE_OP_STORE
+          }
+      scissor = Vk.Rect2D {VkRect2D.offset = Vk.Offset2D 0 0, VkRect2D.extent = extent}
+      info =
+        Vk.zero
+          { VkRenderingInfo.renderArea = scissor,
+            VkRenderingInfo.layerCount = 1,
+            VkRenderingInfo.colorAttachments = [attachment]
+          }
+   in Vk.cmdUseRendering cmd info $ ImGui.vulkanRenderDrawData imguiData cmd Nothing
 
 transitImageLayout ::
   Vk.CommandBuffer ->
@@ -821,7 +837,17 @@ createPipeline ::
 createPipeline dev extent textures sampler = do
   (setLayout, set) <- doDescriptors dev textures sampler
   pipelineLayout <-
-    let info = Vk.zero {VkPipelineLayoutCreateInfo.setLayouts = [setLayout]}
+    let pushConstants =
+          Vk.zero
+            { VkPushConstantRange.offset = 0,
+              VkPushConstantRange.size = 16,
+              VkPushConstantRange.stageFlags = Vk.SHADER_STAGE_FRAGMENT_BIT
+            }
+        info =
+          Vk.zero
+            { VkPipelineLayoutCreateInfo.setLayouts = [setLayout],
+              VkPipelineLayoutCreateInfo.pushConstantRanges = [pushConstants]
+            }
      in managed $ Vk.withPipelineLayout dev info Nothing bracket
   (vert, frag) <- createShaders dev
   (_, res) <-

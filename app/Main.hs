@@ -42,6 +42,7 @@ import Foreign.Storable.Record qualified as Store
 import Geomancy qualified as G
 import SDL qualified
 import SDL.Video.Vulkan qualified as SDL
+import Utils
 import Vulkan qualified as Vk
 import Vulkan qualified as VkApplicationInfo (ApplicationInfo (..))
 import Vulkan qualified as VkBufferCopy (BufferCopy (..))
@@ -105,7 +106,6 @@ import Vulkan.Zero qualified as Vk
 import VulkanMemoryAllocator qualified as Vma
 import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCreateInfo (..))
 import VulkanMemoryAllocator qualified as VmaAllocatorCreateInfo (AllocatorCreateInfo (..))
-import Utils (say, sayErr)
 import Prelude hiding (init)
 
 data Vertex = Vertex {xy :: G.Vec2, rgb :: G.Vec3, uv :: G.Vec2, texture :: Word32}
@@ -221,7 +221,7 @@ main = runManaged $ do
   SDL.showWindow window
   SDL.raiseWindow window
   say "Engine" "Entering the main loop"
-  imgui vulkan gpu device window gfxQueue commandPool gfxQueue
+  withImGui vulkan gpu device window gfxQueue commandPool gfxQueue
   let world0 =
         World
           { a = Thingie {pos = G.vec2 (-0.5) (-0.5), vel = G.vec2 0.002 0.001},
@@ -229,7 +229,7 @@ main = runManaged $ do
             c = Thingie {pos = G.vec2 (-0.5) (-0.5), vel = G.vec2 0.001 0.002}
           }
   let waitForPrevDrawCallToFinish = Vk.waitForFences device [inFlight] True maxBound *> Vk.resetFences device [inFlight]
-      draw dt t w0 = do
+      frame dt t w0 = do
         w1 <- world dt t w0
         let (vertices, indices) = doBuffers $ sprites w1
         copyBuffer device commandPool gfxQueue vertexBuffer (vstaging, vptr) vertices
@@ -278,13 +278,13 @@ main = runManaged $ do
         renderFrame cmd gfxQueue imageAvailable renderFinished inFlight
         presentFrame swapchain presentQueue index renderFinished
         Vk.deviceWaitIdle device $> w1
-   in mainLoop world0 draw
+   in mainLoop world0 frame
 
-imgui :: Vk.Instance -> Vk.PhysicalDevice -> Vk.Device -> SDL.Window -> Vk.Queue -> Vk.CommandPool -> Vk.Queue -> Managed ()
-imgui vulkan gpu device window queue cmdPool gfx =
+withImGui :: Vk.Instance -> Vk.PhysicalDevice -> Vk.Device -> SDL.Window -> Vk.Queue -> Vk.CommandPool -> Vk.Queue -> Managed ()
+withImGui vulkan gpu device window queue cmdPool gfx =
   do
     pool <-
-      let poolSizes = f <$> types
+      let poolSizes = poolSize <$> types
           info =
             Vk.zero
               { VkDescriptorPoolCreateInfo.poolSizes = poolSizes,
@@ -292,19 +292,7 @@ imgui vulkan gpu device window queue cmdPool gfx =
                 VkDescriptorPoolCreateInfo.flags = Vk.DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT
               }
        in managed $ Vk.withDescriptorPool device info Nothing bracket
-    b0 <- liftIO ImGui.createContext
-    say "ImGui" "Created context"
-    b1 <- liftIO $ ImGui.sdl2InitForVulkan window
-    say "ImGui" $ "Initialized for SDL2 Vulkan: " ++ show b1
-    let x = do
-          _ <- submitNow device cmdPool queue $ \cmd -> ImGui.vulkanCreateFontsTexture cmd
-          say "ImGui" "Created fonts texture"
-          liftIO ImGui.vulkanDestroyFontUploadObjects
-          say "ImGui" "Destroyed font upload objects"
-    managed_ \f -> do
-      Ashkan2.vulkanInit2 vulkan gpu device gfx pool
-      _ <- runManaged x
-      f <* Ashkan2.vulkanShutdown
+    managed_ $ bracket_ (init pool) Ashkan2.vulkanShutdown
   where
     types =
       [ Vk.DESCRIPTOR_TYPE_SAMPLER,
@@ -319,11 +307,21 @@ imgui vulkan gpu device window queue cmdPool gfx =
         Vk.DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC,
         Vk.DESCRIPTOR_TYPE_INPUT_ATTACHMENT
       ]
-    f typ =
+    poolSize typ =
       Vk.zero
         { VkDescriptorPoolSize.descriptorCount = 1000,
           VkDescriptorPoolSize.type' = typ
         }
+    init pool = do
+      _ <- ImGui.createContext
+      say "ImGui" "Created context"
+      _ <- ImGui.sdl2InitForVulkan window
+      say "ImGui" "Initialized for SDL2 Vulkan"
+      Ashkan2.vulkanInit vulkan gpu device gfx pool
+      _ <- runManaged $ submitNow device cmdPool queue ImGui.vulkanCreateFontsTexture
+      say "ImGui" "Created fonts texture"
+      ImGui.vulkanDestroyFontUploadObjects
+      say "ImGui" "Destroyed font upload objects"
 
 world :: (Monad io) => Word32 -> Word32 -> World -> io World
 world dt t (World {a = a, b = b, c = c}) = return World {a = update a, b = update b, c = update c}

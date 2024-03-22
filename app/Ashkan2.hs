@@ -14,7 +14,7 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE NoFieldSelectors #-}
 
-module Ashkan2 (vulkanInit2, vulkanShutdown) where
+module Ashkan2 (vulkanInit, vulkanShutdown) where
 
 import Ashkan (vulkanCtx)
 import Foreign qualified as F
@@ -29,8 +29,8 @@ C.include "imgui.h"
 C.include "backends/imgui_impl_vulkan.h"
 Cpp.using "namespace ImGui"
 
-vulkanInit2 :: Vk.Instance -> Vk.PhysicalDevice -> Vk.Device -> Vk.Queue -> Vk.DescriptorPool -> IO ()
-vulkanInit2 vulkan gpu device gfx p = do
+vulkanInit :: Vk.Instance -> Vk.PhysicalDevice -> Vk.Device -> Vk.Queue -> Vk.DescriptorPool -> IO ()
+vulkanInit vulkan gpu device gfx p = do
   let msaaSamples = Vk.SAMPLE_COUNT_1_BIT
       descriptorPool = p
       instancePtr :: F.Ptr Vk.Instance_T

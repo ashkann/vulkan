@@ -200,15 +200,9 @@ main = runManaged $ do
               VkSamplerCreateInfo.borderColor = Vk.BORDER_COLOR_INT_OPAQUE_WHITE
             }
      in managed $ Vk.withSampler device info Nothing bracket
-  checkerboard <- texture allocator device commandPool gfxQueue "textures/checkerboard.png"
-  say "Vulkan" $ "Created texture " ++ show checkerboard
-  tex1 <- texture allocator device commandPool gfxQueue "textures/image3.png"
-  say "Vulkan" $ "Created texture " ++ show tex1
-  tex2 <- texture allocator device commandPool gfxQueue "textures/image.png"
-  say "Vulkan" $ "Created texture " ++ show tex2
-  tex3 <- texture allocator device commandPool gfxQueue "textures/image4.png"
-  say "Vulkan" $ "Created texture " ++ show tex3
-  let textures = [checkerboard, tex1, tex2, tex3]
+  textures <-
+    let textures = ["checkerboard", "image3", "image", "image4"] :: [String]
+     in traverse (\tex -> let file = "textures/" ++ tex ++ ".png" in texture allocator device commandPool gfxQueue file) textures
   commandBuffers <- createCommandBuffers device commandPool (fromIntegral $ V.length images)
   (pipeline, layout, set) <- createPipeline device extent textures sampler
   say "Vulkan" "Recorded command buffers"
@@ -562,7 +556,7 @@ copyBufferToImage device pool queue src dst width height = do
     Vk.cmdCopyBufferToImage cmd src dst Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL [region]
     tranistDstOptimalToShaderReadOnlyOptimal cmd dst
 
-tranistToDstOptimal ::  Vk.CommandBuffer -> Vk.Image -> Managed ()
+tranistToDstOptimal :: Vk.CommandBuffer -> Vk.Image -> Managed ()
 tranistToDstOptimal cmd img =
   transitImageLayout
     cmd
@@ -574,7 +568,7 @@ tranistToDstOptimal cmd img =
     Vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT
     Vk.PIPELINE_STAGE_TRANSFER_BIT
 
-tranistDstOptimalToShaderReadOnlyOptimal :: Vk.CommandBuffer -> Vk.Image  -> Managed ()
+tranistDstOptimalToShaderReadOnlyOptimal :: Vk.CommandBuffer -> Vk.Image -> Managed ()
 tranistDstOptimalToShaderReadOnlyOptimal cmd img =
   transitImageLayout
     cmd

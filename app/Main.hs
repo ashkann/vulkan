@@ -275,7 +275,7 @@ main = runManaged $ do
           -- say "Engine" "Rendering ImGUI BEGIN"
           -- renderImgui cmd view extent imguiData
           presentLayout
-          -- say "Engine" "Rendering frame END"
+        -- say "Engine" "Rendering frame END"
         renderFrame cmd gfxQueue imageAvailable renderFinished inFlight
         presentFrame swapchain presentQueue index renderFinished
         Vk.deviceWaitIdle device $> w1
@@ -344,7 +344,7 @@ acquireNextFrame dev swapchain imageAvailable = do
   when (r == Vk.SUBOPTIMAL_KHR || r == Vk.ERROR_OUT_OF_DATE_KHR) $ say "acquireNextFrame" $ show r
   return index
 
-renderFrame :: (MonadIO io) => Vk.CommandBuffer -> Vk.Queue -> Vk.Semaphore -> Vk.Semaphore -> Vk.Fence -> io ()
+renderFrame :: Vk.CommandBuffer -> Vk.Queue -> Vk.Semaphore -> Vk.Semaphore -> Vk.Fence -> Managed ()
 renderFrame cmd gfx imageAvailable renderFinished inFlight =
   let info =
         Vk.zero
@@ -355,7 +355,7 @@ renderFrame cmd gfx imageAvailable renderFinished inFlight =
           }
    in Vk.queueSubmit gfx [Vk.SomeStruct info] inFlight
 
-presentFrame :: (MonadIO io) => Vk.SwapchainKHR -> Vk.Queue -> Word32 -> Vk.Semaphore -> io ()
+presentFrame :: Vk.SwapchainKHR -> Vk.Queue -> Word32 -> Vk.Semaphore -> Managed ()
 presentFrame swapchain present idx renderFinished = do
   r <-
     let info =
@@ -558,15 +558,15 @@ copyBufferToImage device pool queue src dst width height = do
             VkBufferImageCopy.imageExtent = dims
           }
   submitNow device pool queue $ \cmd -> do
-    tranistFromUndefinedToDstOptimal dst cmd
+    tranistToDstOptimal cmd dst
     Vk.cmdCopyBufferToImage cmd src dst Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL [region]
-    tranistFromDstOptimalToShaderReadOnlyOptimal dst cmd
+    tranistDstOptimalToShaderReadOnlyOptimal cmd dst
 
-tranistFromUndefinedToDstOptimal :: Vk.Image -> Vk.CommandBuffer -> Managed ()
-tranistFromUndefinedToDstOptimal dst cmd =
+tranistToDstOptimal ::  Vk.CommandBuffer -> Vk.Image -> Managed ()
+tranistToDstOptimal cmd img =
   transitImageLayout
     cmd
-    dst
+    img
     (Vk.AccessFlagBits 0)
     Vk.ACCESS_TRANSFER_WRITE_BIT
     Vk.IMAGE_LAYOUT_UNDEFINED
@@ -574,11 +574,11 @@ tranistFromUndefinedToDstOptimal dst cmd =
     Vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT
     Vk.PIPELINE_STAGE_TRANSFER_BIT
 
-tranistFromDstOptimalToShaderReadOnlyOptimal :: Vk.Image -> Vk.CommandBuffer -> Managed ()
-tranistFromDstOptimalToShaderReadOnlyOptimal dst cmd =
+tranistDstOptimalToShaderReadOnlyOptimal :: Vk.CommandBuffer -> Vk.Image  -> Managed ()
+tranistDstOptimalToShaderReadOnlyOptimal cmd img =
   transitImageLayout
     cmd
-    dst
+    img
     Vk.ACCESS_TRANSFER_WRITE_BIT
     Vk.ACCESS_SHADER_READ_BIT
     Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL

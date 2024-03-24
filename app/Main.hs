@@ -19,6 +19,7 @@ import Codec.Picture qualified as JP
 import Control.Applicative ((<|>))
 import Control.Concurrent (threadDelay)
 import Control.Exception (bracket, bracket_)
+import Control.Monad (when)
 import Control.Monad.Except (ExceptT (ExceptT), MonadError (throwError), runExceptT)
 import Control.Monad.Managed (Managed, MonadIO (liftIO), MonadManaged, managed, managed_, runManaged)
 import Data.Bits ((.&.), (.|.))
@@ -139,8 +140,8 @@ data World = World {a :: Thingie, b :: Thingie, c :: Thingie}
 
 main :: IO ()
 main = runManaged $ do
-  let windowWidth = 1000
-      windowHeight = 500
+  let windowWidth = 700
+      windowHeight = 700
   withSDL
   window <- withWindow windowWidth windowHeight
   vulkan <- withVulkan window
@@ -260,21 +261,21 @@ main = runManaged $ do
                 Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
                 Vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT
                 Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
-        ImGui.vulkanNewFrame
-        ImGui.sdl2NewFrame
-        ImGui.newFrame
-        ImGui.showDemoWindow
-        ImGui.render
-        imguiData <- ImGui.getDrawData
-        say "Engine" "Rendering frame BEGIN"
+        -- ImGui.vulkanNewFrame
+        -- ImGui.sdl2NewFrame
+        -- ImGui.newFrame
+        -- ImGui.showDemoWindow
+        -- ImGui.render
+        -- imguiData <- ImGui.getDrawData
+        -- say "Engine" "Rendering frame BEGIN"
         Vk.useCommandBuffer cmd Vk.zero $ do
           setupRenderState pipeline layout set vertexBuffer indexBuffer cmd
           renderLayout
           renderScene extent count view cmd
-          say "Engine" "Rendering ImGUI BEGIN"
-          renderImgui cmd view extent imguiData
+          -- say "Engine" "Rendering ImGUI BEGIN"
+          -- renderImgui cmd view extent imguiData
           presentLayout
-          say "Engine" "Rendering frame END"
+          -- say "Engine" "Rendering frame END"
         renderFrame cmd gfxQueue imageAvailable renderFinished inFlight
         presentFrame swapchain presentQueue index renderFinished
         Vk.deviceWaitIdle device $> w1
@@ -332,14 +333,16 @@ world dt t (World {a = a, b = b, c = c}) = return World {a = update a, b = updat
        in Thingie {pos = p1, vel = v1}
 
 acquireNextFrame :: (MonadIO io) => Vk.Device -> Vk.SwapchainKHR -> Vk.Semaphore -> io Word32
-acquireNextFrame dev swapchain imageAvailable =
-  snd
-    <$> Vk.acquireNextImageKHR
+acquireNextFrame dev swapchain imageAvailable = do
+  (r, index) <-
+    Vk.acquireNextImageKHR
       dev
       swapchain
       maxBound
       imageAvailable
       Vk.zero
+  when (r == Vk.SUBOPTIMAL_KHR || r == Vk.ERROR_OUT_OF_DATE_KHR) $ say "acquireNextFrame" $ show r
+  return index
 
 renderFrame :: (MonadIO io) => Vk.CommandBuffer -> Vk.Queue -> Vk.Semaphore -> Vk.Semaphore -> Vk.Fence -> io ()
 renderFrame cmd gfx imageAvailable renderFinished inFlight =
@@ -353,14 +356,16 @@ renderFrame cmd gfx imageAvailable renderFinished inFlight =
    in Vk.queueSubmit gfx [Vk.SomeStruct info] inFlight
 
 presentFrame :: (MonadIO io) => Vk.SwapchainKHR -> Vk.Queue -> Word32 -> Vk.Semaphore -> io ()
-presentFrame swapchain present idx renderFinished =
-  let info =
-        Vk.zero
-          { VkPresentInfoKHR.waitSemaphores = [renderFinished],
-            VkPresentInfoKHR.swapchains = [swapchain],
-            VkPresentInfoKHR.imageIndices = [idx]
-          }
-   in Vk.queuePresentKHR present info $> ()
+presentFrame swapchain present idx renderFinished = do
+  r <-
+    let info =
+          Vk.zero
+            { VkPresentInfoKHR.waitSemaphores = [renderFinished],
+              VkPresentInfoKHR.swapchains = [swapchain],
+              VkPresentInfoKHR.imageIndices = [idx]
+            }
+     in Vk.queuePresentKHR present info
+  when (r == Vk.SUBOPTIMAL_KHR || r == Vk.ERROR_OUT_OF_DATE_KHR) $ say "presentFrame" $ show r
 
 sprites :: World -> [Sprite]
 sprites (World Thingie {pos = pa} Thingie {pos = pb} Thingie {pos = pc}) =

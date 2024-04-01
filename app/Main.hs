@@ -19,7 +19,7 @@ import Codec.Picture qualified as JP
 import Control.Applicative ((<|>))
 import Control.Concurrent (threadDelay)
 import Control.Exception (bracket, bracket_)
-import Control.Monad (when)
+import Control.Monad (forM, when)
 import Control.Monad.Except (ExceptT (ExceptT), MonadError (throwError), runExceptT)
 import Control.Monad.Managed (Managed, MonadIO (liftIO), MonadManaged, managed, managed_, runManaged)
 import Data.Bits ((.&.), (.|.))
@@ -27,6 +27,7 @@ import Data.ByteString qualified as BS (readFile)
 import Data.ByteString.Char8 qualified as BS (pack, unpack)
 import Data.Foldable (foldlM)
 import Data.Functor (($>), (<&>))
+import Data.Int (Int32)
 import Data.Traversable (for)
 import Data.Vector ((!))
 import Data.Vector qualified as V
@@ -41,9 +42,11 @@ import Foreign.Ptr (castFunPtr)
 import Foreign.Storable (Storable (..), sizeOf)
 import Foreign.Storable.Record qualified as Store
 import Geomancy qualified as G
+import Language.C.Types (TypeSpecifier (Float))
 import SDL qualified
 import SDL.Video.Vulkan qualified as SDL
 import Utils
+import Vulkan qualified as PhysicalDeviceVulkan12Features (PhysicalDeviceVulkan12Features (..))
 import Vulkan qualified as Vk
 import Vulkan qualified as VkApplicationInfo (ApplicationInfo (..))
 import Vulkan qualified as VkBufferCopy (BufferCopy (..))
@@ -77,6 +80,7 @@ import Vulkan qualified as VkInstance (Instance (..))
 import Vulkan qualified as VkInstanceCreateInfo (InstanceCreateInfo (..))
 import Vulkan qualified as VkPhysicalDeviceDescriptorIndexingFeatures (PhysicalDeviceDescriptorIndexingFeatures (..))
 import Vulkan qualified as VkPhysicalDeviceDynamicRenderingFeatures (PhysicalDeviceDynamicRenderingFeatures (..))
+import Vulkan qualified as VkPhysicalDeviceFeatures (PhysicalDeviceFeatures (..))
 import Vulkan qualified as VkPhysicalDeviceFeatures2 (PhysicalDeviceFeatures2 (..))
 import Vulkan qualified as VkPipelineColorBlendStateCreateInfo (PipelineColorBlendStateCreateInfo (..))
 import Vulkan qualified as VkPipelineLayoutCreateInfo (PipelineLayoutCreateInfo (..))
@@ -128,20 +132,20 @@ instance Storable Vertex where
   poke = Store.poke store
 
 data Sprite = Sprite
-  { xy :: G.Vec2,
-    wh :: G.Vec2,
+  { pos :: G.Vec2,
+    size :: G.Vec2,
     texture :: Word32
   }
   deriving (Show, Eq)
 
 data Thingie = Thingie {pos :: G.Vec2, vel :: G.Vec2}
 
-data World = World {a :: Thingie, b :: Thingie, c :: Thingie}
+data World = World {pointer :: G.Vec2, a :: Thingie, b :: Thingie, c :: Thingie}
+
+data Texture = Texture {index :: Word32, size :: !G.UVec2, view :: !Vk.ImageView}
 
 main :: IO ()
 main = runManaged $ do
-  let windowWidth = 700
-      windowHeight = 700
   withSDL
   window <- withWindow windowWidth windowHeight
   vulkan <- withVulkan window
@@ -188,23 +192,16 @@ main = runManaged $ do
   say "Vulkan" "Created index buffer"
   (istaging, iptr) <- withHostBuffer allocator size
   say "Vulkan" "Created staging index buffer"
-  sampler <-
-    let info =
-          Vk.zero
-            { VkSamplerCreateInfo.magFilter = Vk.FILTER_LINEAR,
-              VkSamplerCreateInfo.minFilter = Vk.FILTER_LINEAR,
-              VkSamplerCreateInfo.addressModeU = Vk.SAMPLER_ADDRESS_MODE_REPEAT,
-              VkSamplerCreateInfo.addressModeV = Vk.SAMPLER_ADDRESS_MODE_REPEAT,
-              VkSamplerCreateInfo.addressModeW = Vk.SAMPLER_ADDRESS_MODE_REPEAT,
-              VkSamplerCreateInfo.unnormalizedCoordinates = False,
-              VkSamplerCreateInfo.borderColor = Vk.BORDER_COLOR_INT_OPAQUE_WHITE
-            }
-     in managed $ Vk.withSampler device info Nothing bracket
   textures <-
-    let textures = ["checkerboard", "image3", "image", "image4"] :: [String]
+    let textures = ["checkerboard", "pointer", "image3", "image", "image4"] :: [String]
      in traverse (\tex -> let file = "textures/" ++ tex ++ ".png" in texture allocator device commandPool gfxQueue file) textures
-  commandBuffers <- createCommandBuffers device commandPool (fromIntegral $ V.length images)
-  (pipeline, layout, set) <- createPipeline device extent textures sampler
+  setLayout <- descriptorSetLayout device 17
+  (pipeline, pipelineLayout) <- createPipeline device extent setLayout
+
+  pool <- descriptorPool device 1000
+  descSet <- descriptorSet device setLayout pool
+  sampler <- sampler device
+  let vs = (\Texture {view = v} -> v) <$> textures in bindTextures device descSet vs sampler
   say "Vulkan" "Recorded command buffers"
   imageAvailable <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
   renderFinished <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
@@ -217,15 +214,17 @@ main = runManaged $ do
   SDL.raiseWindow window
   say "Engine" "Entering the main loop"
   withImGui vulkan gpu device window gfxQueue commandPool gfxQueue
+  commandBuffers <- createCommandBuffers device commandPool (fromIntegral $ V.length images)
   let world0 =
         World
-          { a = Thingie {pos = G.vec2 (-0.5) (-0.5), vel = G.vec2 0.002 0.001},
+          { pointer = G.vec2 0.0 0.0,
+            a = Thingie {pos = G.vec2 (-0.5) (-0.5), vel = G.vec2 0.002 0.001},
             b = Thingie {pos = G.vec2 (-0.5) (-0.5), vel = G.vec2 0.0 0.0},
             c = Thingie {pos = G.vec2 (-0.5) (-0.5), vel = G.vec2 0.001 0.002}
           }
   let waitForPrevDrawCallToFinish = Vk.waitForFences device [inFlight] True maxBound *> Vk.resetFences device [inFlight]
-      frame dt t w0 = do
-        w1 <- world dt t w0
+      frame dt t es w0 = do
+        w1 <- world dt t es w0
         let (vertices, indices) = doBuffers $ sprites w1
         copyBuffer device commandPool gfxQueue vertexBuffer (vstaging, vptr) vertices
         copyBuffer device commandPool gfxQueue indexBuffer (istaging, iptr) indices
@@ -263,7 +262,7 @@ main = runManaged $ do
         -- imguiData <- ImGui.getDrawData
         -- say "Engine" "Rendering frame BEGIN"
         Vk.useCommandBuffer cmd Vk.zero $ do
-          setupRenderState pipeline layout set vertexBuffer indexBuffer cmd
+          setupRenderState pipeline pipelineLayout descSet vertexBuffer indexBuffer cmd
           renderLayout
           renderScene extent count view cmd
           -- say "Engine" "Rendering ImGUI BEGIN"
@@ -274,6 +273,20 @@ main = runManaged $ do
         presentFrame swapchain presentQueue index renderFinished
         Vk.deviceWaitIdle device $> w1
    in mainLoop world0 frame
+
+sampler :: Vk.Device -> Managed Vk.Sampler
+sampler device =
+  let info =
+        Vk.zero
+          { VkSamplerCreateInfo.magFilter = Vk.FILTER_LINEAR,
+            VkSamplerCreateInfo.minFilter = Vk.FILTER_LINEAR,
+            VkSamplerCreateInfo.addressModeU = Vk.SAMPLER_ADDRESS_MODE_REPEAT,
+            VkSamplerCreateInfo.addressModeV = Vk.SAMPLER_ADDRESS_MODE_REPEAT,
+            VkSamplerCreateInfo.addressModeW = Vk.SAMPLER_ADDRESS_MODE_REPEAT,
+            VkSamplerCreateInfo.unnormalizedCoordinates = False,
+            VkSamplerCreateInfo.borderColor = Vk.BORDER_COLOR_INT_OPAQUE_WHITE
+          }
+   in managed $ Vk.withSampler device info Nothing bracket
 
 withImGui :: Vk.Instance -> Vk.PhysicalDevice -> Vk.Device -> SDL.Window -> Vk.Queue -> Vk.CommandPool -> Vk.Queue -> Managed ()
 withImGui vulkan gpu device window queue cmdPool gfx =
@@ -318,13 +331,27 @@ withImGui vulkan gpu device window queue cmdPool gfx =
       ImGui.vulkanDestroyFontUploadObjects
       say "ImGui" "Destroyed font upload objects"
 
-world :: (Monad io) => Word32 -> Word32 -> World -> io World
-world dt t (World {a = a, b = b, c = c}) = return World {a = update a, b = update b, c = update c}
+world :: (Monad io) => Word32 -> Word32 -> [SDL.Event] -> World -> io World
+world dt t es (World {pointer = p, a = a, b = b, c = c}) = return World {pointer = foldl f p es, a = update a, b = update b, c = update c}
   where
+    f _ (SDL.Event _ (SDL.MouseMotionEvent (SDL.MouseMotionEventData {mouseMotionEventPos = SDL.P (SDL.V2 x y)}))) = normal x y
+    f p _ = p
     update Thingie {pos = p0, vel = v0} =
       let p1 = p0 + (v0 G.^* fromIntegral dt)
           v1 = G.emap2 (\vi pi -> if pi >= 1.0 || pi <= -1.0 then -vi else vi) v0 p1
        in Thingie {pos = p1, vel = v1}
+
+windowWidth :: Int
+windowWidth = 500
+
+windowHeight :: Int
+windowHeight = 500
+
+normal :: (Integral i) => i -> i -> G.Vec2
+normal x y =
+  let x' = (2.0 * fromIntegral x / fromIntegral windowWidth) - 1.0
+      y' = (2.0 * fromIntegral y / fromIntegral windowHeight) - 1.0
+   in G.vec2 x' y'
 
 acquireNextFrame :: (MonadIO io) => Vk.Device -> Vk.SwapchainKHR -> Vk.Semaphore -> io Word32
 acquireNextFrame dev swapchain imageAvailable = do
@@ -362,12 +389,14 @@ presentFrame swapchain present idx renderFinished = do
   when (r == Vk.SUBOPTIMAL_KHR || r == Vk.ERROR_OUT_OF_DATE_KHR) $ say "presentFrame" $ show r
 
 sprites :: World -> [Sprite]
-sprites (World Thingie {pos = pa} Thingie {pos = pb} Thingie {pos = pc}) =
-  let ss =
-        [ Sprite {xy = G.vec2 (-1.0) (-1.0), wh = G.vec2 2.0 2.0, texture = 0},
-          Sprite {xy = pa, wh = G.vec2 1.0 1.0, texture = 1},
-          Sprite {xy = pb, wh = G.vec2 1.0 1.0, texture = 3},
-          Sprite {xy = pc, wh = G.vec2 1.0 1.0, texture = 2}
+sprites (World pointer Thingie {pos = pa} Thingie {pos = pb} Thingie {pos = pc}) =
+  let wh = G.vec2 0.2 0.2
+      ss =
+        [ Sprite {pos = G.vec2 (-1.0) (-1.0), size = G.vec2 2.0 2.0, texture = 0},
+          Sprite {pos = pa, size = wh, texture = 2},
+          Sprite {pos = pb, size = wh, texture = 3},
+          Sprite {pos = pc, size = wh, texture = 4},
+          Sprite {pos = pointer, size = G.vec2 0.2 0.2, texture = 1}
         ]
    in ss
 
@@ -419,7 +448,7 @@ debugUtilsMessengerCreateInfo =
 doBuffers :: [Sprite] -> (SV.Vector Vertex, SV.Vector Word32)
 doBuffers ss =
   let rgb = G.vec3 1.0 0.0 0.0
-      toQuad Sprite {xy = G.WithVec2 x y, wh = G.WithVec2 w h, texture = tex} =
+      toQuad Sprite {pos = G.WithVec2 x y, size = G.WithVec2 w h, texture = tex} =
         SV.fromList
           [ Vertex {xy = G.vec2 x y, rgb = rgb, uv = G.vec2 0.0 0.0, texture = tex},
             Vertex {xy = G.vec2 (x + w) y, rgb = rgb, uv = G.vec2 1.0 0.0, texture = tex},
@@ -484,7 +513,7 @@ withImage allocator width height = do
      in managed $ Vma.withImage allocator imgInfo allocInfo bracket
   return image
 
-texture :: Vma.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> FilePath -> Managed Vk.ImageView
+texture :: Vma.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> FilePath -> Managed Texture
 texture allocator device pool queue path = do
   JP.ImageRGBA8 (JP.Image width height pixels) <- liftIO $ JP.readPng path >>= either (sayErr "Texture" . show) return
   let size = width * height * 4
@@ -492,7 +521,8 @@ texture allocator device pool queue path = do
   liftIO $ copy pixels mem size
   image <- withImage allocator width height
   copyBufferToImage device pool queue staging image width height
-  withImageView device image Vk.FORMAT_R8G8B8A8_SRGB
+  let size = G.uvec2 (fromIntegral width) (fromIntegral height)
+   in (\v -> Texture {size = size, view = v}) <$> withImageView device image Vk.FORMAT_R8G8B8A8_SRGB
   where
     copy pixels mem size =
       let (src, _) = SV.unsafeToForeignPtr0 pixels
@@ -617,16 +647,17 @@ withGPUBuffer allocator size flags = do
   say "Vulkan" $ "Created buffer on GPU of size " ++ show size ++ " bytes"
   return buffer
 
-mainLoop :: s -> (Word32 -> Word32 -> s -> Managed s) -> Managed ()
+mainLoop :: s -> (Word32 -> Word32 -> [SDL.Event] -> s -> Managed s) -> Managed ()
 mainLoop s draw = go s 0
   where
     go s0 t0 = do
-      quit <- any isQuitEvent <$> ImGui.pollEventsWithImGui
+      es <- ImGui.pollEventsWithImGui
+      let quit = any isQuitEvent es
       if quit
         then pure ()
         else do
           t <- SDL.ticks
-          s1 <- draw (t - t0) t s0
+          s1 <- draw (t - t0) t es s0
           liftIO . threadDelay $ 1000 * 10
           go s1 t
 
@@ -745,105 +776,84 @@ createCommandBuffers device pool count = do
   say "Vulkan" "Created comamand buffers"
   return commandBuffers
 
-doDescriptors :: Vk.Device -> [Vk.ImageView] -> Vk.Sampler -> Managed (Vk.DescriptorSetLayout, Vk.DescriptorSet)
-doDescriptors dev textures sampler = do
-  let descriptorCount = fromIntegral $ length textures
-      types =
-        [ Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-          Vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
-          Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
-        ]
-      binding i typ =
+descriptorSetLayout :: Vk.Device -> Word32 -> Managed Vk.DescriptorSetLayout
+descriptorSetLayout dev count = do
+  let flags = Vk.DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT .|. Vk.DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT
+      binding =
         Vk.zero
-          { VkDescriptorSetLayoutBinding.binding = i,
-            VkDescriptorSetLayoutBinding.descriptorCount = descriptorCount,
-            VkDescriptorSetLayoutBinding.descriptorType = typ,
+          { VkDescriptorSetLayoutBinding.binding = 0,
+            VkDescriptorSetLayoutBinding.descriptorCount = count,
+            VkDescriptorSetLayoutBinding.descriptorType = Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
             VkDescriptorSetLayoutBinding.stageFlags = Vk.SHADER_STAGE_FRAGMENT_BIT
           }
-      poolSize typ =
+      flagsInfo =
         Vk.zero
-          { VkDescriptorPoolSize.descriptorCount = descriptorCount,
-            VkDescriptorPoolSize.type' = typ
+          { VkDescriptorSetLayoutBindingFlagsCreateInfo.bindingFlags = [flags]
           }
-  layout <-
-    let flags = Vk.DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT .|. Vk.DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT
-        flagsInfo =
-          Vk.zero
-            { VkDescriptorSetLayoutBindingFlagsCreateInfo.bindingFlags = [flags, flags, flags] -- TODO use types
-            }
-        layoutInfo =
-          Vk.zero
-            { VkDescriptorSetLayoutCreateInfo.bindings = V.fromList $ zipWith binding [0 ..] types,
-              VkDescriptorSetLayoutCreateInfo.flags = Vk.DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT
-            }
-            ::& flagsInfo :& ()
-     in managed $ Vk.withDescriptorSetLayout dev layoutInfo Nothing bracket
-  pool <-
-    let info =
-          Vk.zero
-            { VkDescriptorPoolCreateInfo.poolSizes = V.fromList $ poolSize <$> types,
-              VkDescriptorPoolCreateInfo.maxSets = 1,
-              VkDescriptorPoolCreateInfo.flags =
-                Vk.DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT .|. Vk.DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT
-            }
-     in managed $ Vk.withDescriptorPool dev info Nothing bracket
-  set <-
-    let info =
-          Vk.zero
-            { VkDescriptorSetAllocateInfo.descriptorPool = pool,
-              VkDescriptorSetAllocateInfo.setLayouts = [layout]
-            }
-     in V.head <$> managed (Vk.withDescriptorSets dev info bracket)
-  let bufferInfo =
+      layoutInfo =
         Vk.zero
-          { -- VkDescriptorBufferInfo.buffer = _,
-            VkDescriptorBufferInfo.offset = 0,
-            VkDescriptorBufferInfo.range = Vk.WHOLE_SIZE
+          { VkDescriptorSetLayoutCreateInfo.bindings = [binding],
+            VkDescriptorSetLayoutCreateInfo.flags = Vk.DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT
           }
-      bufferWriteInfo =
+          ::& flagsInfo :& ()
+  managed $ Vk.withDescriptorSetLayout dev layoutInfo Nothing bracket
+
+descriptorPool :: Vk.Device -> Word32 -> Managed Vk.DescriptorPool
+descriptorPool dev textureCount = do
+  let poolSize =
         Vk.zero
-          { VkWriteDescriptorSet.dstSet = set,
-            VkWriteDescriptorSet.dstBinding = 0,
-            VkWriteDescriptorSet.descriptorType = Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            VkWriteDescriptorSet.bufferInfo = [bufferInfo]
+          { VkDescriptorPoolSize.descriptorCount = textureCount,
+            VkDescriptorPoolSize.type' = Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
           }
-      imageInfo tex =
+      info =
         Vk.zero
-          { VkDescriptorImageInfo.imageLayout = Vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            VkDescriptorImageInfo.imageView = tex,
-            VkDescriptorImageInfo.sampler = sampler
+          { VkDescriptorPoolCreateInfo.poolSizes = [poolSize],
+            VkDescriptorPoolCreateInfo.maxSets = 1,
+            VkDescriptorPoolCreateInfo.flags =
+              Vk.DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT .|. Vk.DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT
           }
-      imageWriteInfo =
+   in managed $ Vk.withDescriptorPool dev info Nothing bracket
+
+descriptorSet :: Vk.Device -> Vk.DescriptorSetLayout -> Vk.DescriptorPool -> Managed Vk.DescriptorSet
+descriptorSet dev layout pool = do
+  let info =
+        Vk.zero
+          { VkDescriptorSetAllocateInfo.descriptorPool = pool,
+            VkDescriptorSetAllocateInfo.setLayouts = [layout]
+          }
+   in V.head <$> managed (Vk.withDescriptorSets dev info bracket)
+
+bindTextures :: Vk.Device -> Vk.DescriptorSet -> [Vk.ImageView] -> Vk.Sampler -> Managed ()
+bindTextures dev set textures sampler = do
+  let info =
         Vk.SomeStruct
           Vk.zero
             { VkWriteDescriptorSet.dstSet = set,
-              VkWriteDescriptorSet.dstBinding = 2,
+              VkWriteDescriptorSet.dstBinding = 0,
               VkWriteDescriptorSet.descriptorType = Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-              VkWriteDescriptorSet.descriptorCount = descriptorCount,
-              VkWriteDescriptorSet.imageInfo = V.fromList $ imageInfo <$> textures
+              VkWriteDescriptorSet.descriptorCount = fromIntegral $ length textures,
+              VkWriteDescriptorSet.imageInfo = V.fromList $ imageInfo <$> textures,
+              VkWriteDescriptorSet.dstArrayElement = 0
             }
-   in Vk.updateDescriptorSets dev [imageWriteInfo] []
-  return (layout, set)
+   in Vk.updateDescriptorSets dev [info] []
+  where
+    imageInfo tex =
+      Vk.zero
+        { VkDescriptorImageInfo.imageView = tex,
+          VkDescriptorImageInfo.sampler = sampler,
+          VkDescriptorImageInfo.imageLayout = Vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+        }
 
 createPipeline ::
   Vk.Device ->
   Vk.Extent2D ->
-  [Vk.ImageView] ->
-  Vk.Sampler ->
-  Managed (Vk.Pipeline, Vk.PipelineLayout, Vk.DescriptorSet)
-createPipeline dev extent textures sampler = do
-  (setLayout, set) <- doDescriptors dev textures sampler
+  Vk.DescriptorSetLayout ->
+  Managed (Vk.Pipeline, Vk.PipelineLayout)
+createPipeline dev extent setLayout = do
   pipelineLayout <-
-    let pushConstants =
+    let info =
           Vk.zero
-            { VkPushConstantRange.offset = 0,
-              VkPushConstantRange.size = 16,
-              VkPushConstantRange.stageFlags = Vk.SHADER_STAGE_FRAGMENT_BIT
-            }
-        info =
-          Vk.zero
-            { VkPipelineLayoutCreateInfo.setLayouts = [setLayout],
-              VkPipelineLayoutCreateInfo.pushConstantRanges = [pushConstants]
+            { VkPipelineLayoutCreateInfo.setLayouts = [setLayout]
             }
      in managed $ Vk.withPipelineLayout dev info Nothing bracket
   (vert, frag) <- createShaders dev
@@ -979,7 +989,7 @@ createPipeline dev extent textures sampler = do
             }
             ::& dynamicRendering :& ()
      in managed $ Vk.withGraphicsPipelines dev Vk.zero [Vk.SomeStruct pipelineCreateInfo] Nothing bracket
-  return . (,pipelineLayout,set) . V.head $ res
+  return . (,pipelineLayout) . V.head $ res
 
 framesInFlight :: Word32
 framesInFlight = 1
@@ -1102,13 +1112,10 @@ withDevice gpu gfx present portable =
       dynamicRendering = Vk.zero {VkPhysicalDeviceDynamicRenderingFeatures.dynamicRendering = True}
       bindlessDescriptors =
         Vk.zero
-          { VkPhysicalDeviceDescriptorIndexingFeatures.descriptorBindingPartiallyBound = True,
-            VkPhysicalDeviceDescriptorIndexingFeatures.shaderSampledImageArrayNonUniformIndexing = True,
-            VkPhysicalDeviceDescriptorIndexingFeatures.descriptorBindingSampledImageUpdateAfterBind = True,
-            VkPhysicalDeviceDescriptorIndexingFeatures.shaderUniformBufferArrayNonUniformIndexing = True,
-            VkPhysicalDeviceDescriptorIndexingFeatures.descriptorBindingUniformBufferUpdateAfterBind = True,
-            VkPhysicalDeviceDescriptorIndexingFeatures.shaderStorageBufferArrayNonUniformIndexing = True,
-            VkPhysicalDeviceDescriptorIndexingFeatures.descriptorBindingStorageBufferUpdateAfterBind = True
+          { PhysicalDeviceVulkan12Features.descriptorIndexing = True,
+            PhysicalDeviceVulkan12Features.descriptorBindingPartiallyBound = True,
+            PhysicalDeviceVulkan12Features.shaderSampledImageArrayNonUniformIndexing = True,
+            PhysicalDeviceVulkan12Features.descriptorBindingSampledImageUpdateAfterBind = True
           }
       info =
         Vk.zero
@@ -1146,19 +1153,15 @@ pickGPU vulkan surface = do
         out = if yes then Just () else Nothing
 
     good gpu = do
-      features <- Vk.getPhysicalDeviceFeatures2 gpu :: Managed (Vk.PhysicalDeviceFeatures2 '[Vk.PhysicalDeviceDescriptorIndexingFeatures])
-      let f1 = VkPhysicalDeviceFeatures2.features features
-      _ <- support (Vk.shaderSampledImageArrayDynamicIndexing f1) "shaderSampledImageArrayDynamicIndexing"
+      features2 <- Vk.getPhysicalDeviceFeatures2 gpu :: Managed (Vk.PhysicalDeviceFeatures2 '[Vk.PhysicalDeviceDescriptorIndexingFeatures])
+      let features = VkPhysicalDeviceFeatures2.features features2
+      _ <- support (VkPhysicalDeviceFeatures.shaderSampledImageArrayDynamicIndexing features) "shaderSampledImageArrayDynamicIndexing"
       _ <-
-        let f = fst $ VkPhysicalDeviceFeatures2.next features
+        let f = fst $ VkPhysicalDeviceFeatures2.next features2
          in do
               _ <- support (VkPhysicalDeviceDescriptorIndexingFeatures.descriptorBindingPartiallyBound f) "descriptorBindingPartiallyBound"
               _ <- support (VkPhysicalDeviceDescriptorIndexingFeatures.shaderSampledImageArrayNonUniformIndexing f) "shaderSampledImageArrayNonUniformIndexing"
               _ <- support (VkPhysicalDeviceDescriptorIndexingFeatures.descriptorBindingSampledImageUpdateAfterBind f) "descriptorBindingSampledImageUpdateAfterBind"
-              _ <- support (VkPhysicalDeviceDescriptorIndexingFeatures.shaderUniformBufferArrayNonUniformIndexing f) "shaderUniformBufferArrayNonUniformIndexing"
-              _ <- support (VkPhysicalDeviceDescriptorIndexingFeatures.descriptorBindingUniformBufferUpdateAfterBind f) "descriptorBindingUniformBufferUpdateAfterBind"
-              _ <- support (VkPhysicalDeviceDescriptorIndexingFeatures.shaderStorageBufferArrayNonUniformIndexing f) "shaderStorageBufferArrayNonUniformIndexing"
-              _ <- support (VkPhysicalDeviceDescriptorIndexingFeatures.descriptorBindingStorageBufferUpdateAfterBind f) "descriptorBindingStorageBufferUpdateAfterBind"
               support True "GPU Bindless Descriptors"
       (_, exts) <- Vk.enumerateDeviceExtensionProperties gpu Nothing
       r <- swapchainSupported exts

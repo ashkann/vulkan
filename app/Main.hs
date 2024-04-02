@@ -9,6 +9,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StrictData #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE NoFieldSelectors #-}
 
@@ -19,7 +20,7 @@ import Codec.Picture qualified as JP
 import Control.Applicative ((<|>))
 import Control.Concurrent (threadDelay)
 import Control.Exception (bracket, bracket_)
-import Control.Monad (forM, when)
+import Control.Monad (when)
 import Control.Monad.Except (ExceptT (ExceptT), MonadError (throwError), runExceptT)
 import Control.Monad.Managed (Managed, MonadIO (liftIO), MonadManaged, managed, managed_, runManaged)
 import Data.Bits ((.&.), (.|.))
@@ -27,7 +28,6 @@ import Data.ByteString qualified as BS (readFile)
 import Data.ByteString.Char8 qualified as BS (pack, unpack)
 import Data.Foldable (foldlM)
 import Data.Functor (($>), (<&>))
-import Data.Int (Int32)
 import Data.Traversable (for)
 import Data.Vector ((!))
 import Data.Vector qualified as V
@@ -42,7 +42,6 @@ import Foreign.Ptr (castFunPtr)
 import Foreign.Storable (Storable (..), sizeOf)
 import Foreign.Storable.Record qualified as Store
 import Geomancy qualified as G
-import Language.C.Types (TypeSpecifier (Float))
 import SDL qualified
 import SDL.Video.Vulkan qualified as SDL
 import Utils
@@ -56,7 +55,6 @@ import Vulkan qualified as VkCommandBufferAllocateInfo (CommandBufferAllocateInf
 import Vulkan qualified as VkCommandBufferBeginInfo (CommandBufferBeginInfo (..))
 import Vulkan qualified as VkCommandPoolCreateInfo (CommandPoolCreateInfo (..))
 import Vulkan qualified as VkDebugUtilsMessengerCreateInfoEXT (DebugUtilsMessengerCreateInfoEXT (..))
-import Vulkan qualified as VkDescriptorBufferInfo (DescriptorBufferInfo (..))
 import Vulkan qualified as VkDescriptorImageInfo (DescriptorImageInfo (..))
 import Vulkan qualified as VkDescriptorPoolCreateInfo (DescriptorPoolCreateInfo (..))
 import Vulkan qualified as VkDescriptorPoolSize (DescriptorPoolSize (..))
@@ -88,7 +86,6 @@ import Vulkan qualified as VkPipelineRenderingCreateInfo (PipelineRenderingCreat
 import Vulkan qualified as VkPipelineShaderStageCreateInfo (PipelineShaderStageCreateInfo (..))
 import Vulkan qualified as VkPipelineVertexInputStateCreateInfo (PipelineVertexInputStateCreateInfo (..))
 import Vulkan qualified as VkPresentInfoKHR (PresentInfoKHR (..))
-import Vulkan qualified as VkPushConstantRange (PushConstantRange (..))
 import Vulkan qualified as VkRect2D (Rect2D (..))
 import Vulkan qualified as VkRenderingAttachmentInfo (RenderingAttachmentInfo (..))
 import Vulkan qualified as VkRenderingInfo (RenderingInfo (..))
@@ -133,16 +130,17 @@ instance Storable Vertex where
 
 data Sprite = Sprite
   { pos :: G.Vec2,
-    size :: G.Vec2,
-    texture :: Word32
+    scale :: G.Vec2,
+    texture :: Texture
   }
-  deriving (Show, Eq)
 
-data Thingie = Thingie {pos :: G.Vec2, vel :: G.Vec2}
+data Thingie = Thingie {sprite :: Sprite, vel :: G.Vec2}
 
-data World = World {pointer :: G.Vec2, a :: Thingie, b :: Thingie, c :: Thingie}
+data World = World {background :: Sprite, pointer :: Sprite, a :: Thingie, b :: Thingie, c :: Thingie}
 
-data Texture = Texture {index :: Word32, size :: !G.UVec2, view :: !Vk.ImageView}
+data LoadedTexture = LoadedTexture {pixelSize :: G.UVec2, size :: G.Vec2, image :: Vk.Image, view :: Vk.ImageView}
+
+data Texture = Texture {index :: Word32, texture :: LoadedTexture}
 
 main :: IO ()
 main = runManaged $ do
@@ -192,16 +190,16 @@ main = runManaged $ do
   say "Vulkan" "Created index buffer"
   (istaging, iptr) <- withHostBuffer allocator size
   say "Vulkan" "Created staging index buffer"
-  textures <-
-    let textures = ["checkerboard", "pointer", "image3", "image", "image4"] :: [String]
-     in traverse (\tex -> let file = "textures/" ++ tex ++ ".png" in texture allocator device commandPool gfxQueue file) textures
   setLayout <- descriptorSetLayout device 17
   (pipeline, pipelineLayout) <- createPipeline device extent setLayout
 
   pool <- descriptorPool device 1000
   descSet <- descriptorSet device setLayout pool
   sampler <- sampler device
-  let vs = (\Texture {view = v} -> v) <$> textures in bindTextures device descSet vs sampler
+  textures <-
+    let textures = ["checkerboard", "pointer", "image3", "image", "image4"] :: [String]
+     in traverse (\tex -> let file = "textures/" ++ tex ++ ".png" in readTexture allocator device commandPool gfxQueue file) textures
+  [background, pointer, texture1, texture2, texture3] <- bindTextures device descSet textures sampler
   say "Vulkan" "Recorded command buffers"
   imageAvailable <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
   renderFinished <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
@@ -212,15 +210,19 @@ main = runManaged $ do
   say "Engine" "Show window"
   SDL.showWindow window
   SDL.raiseWindow window
+  SDL.cursorVisible SDL.$= False
   say "Engine" "Entering the main loop"
   withImGui vulkan gpu device window gfxQueue commandPool gfxQueue
   commandBuffers <- createCommandBuffers device commandPool (fromIntegral $ V.length images)
-  let world0 =
+  let p0 = G.vec2 (-0.5) (-0.5)
+      one = G.vec2 1 1
+      world0 =
         World
-          { pointer = G.vec2 0.0 0.0,
-            a = Thingie {pos = G.vec2 (-0.5) (-0.5), vel = G.vec2 0.002 0.001},
-            b = Thingie {pos = G.vec2 (-0.5) (-0.5), vel = G.vec2 0.0 0.0},
-            c = Thingie {pos = G.vec2 (-0.5) (-0.5), vel = G.vec2 0.001 0.002}
+          { background = Sprite {pos = G.vec2 (-1.0) (-1.0), scale = G.vec2 2 2, texture = background},
+            pointer = Sprite {pos = G.vec2 0.0 0.0, texture = pointer, scale = G.vec2 1.0 1.0},
+            a = Thingie {sprite = Sprite {pos = p0, scale = one, texture = texture1}, vel = G.vec2 0.002 0.001},
+            b = Thingie {sprite = Sprite {pos = p0, scale = one, texture = texture2}, vel = G.vec2 0.0 0.0},
+            c = Thingie {sprite = Sprite {pos = p0, scale = one, texture = texture3}, vel = G.vec2 0.001 0.002}
           }
   let waitForPrevDrawCallToFinish = Vk.waitForFences device [inFlight] True maxBound *> Vk.resetFences device [inFlight]
       frame dt t es w0 = do
@@ -332,14 +334,14 @@ withImGui vulkan gpu device window queue cmdPool gfx =
       say "ImGui" "Destroyed font upload objects"
 
 world :: (Monad io) => Word32 -> Word32 -> [SDL.Event] -> World -> io World
-world dt t es (World {pointer = p, a = a, b = b, c = c}) = return World {pointer = foldl f p es, a = update a, b = update b, c = update c}
+world dt _ es w@(World {pointer = pointer@Sprite {pos = p}, a = a, b = b, c = c}) = return w {pointer = pointer {pos = foldl f p es}, a = update a, b = update b, c = update c}
   where
-    f _ (SDL.Event _ (SDL.MouseMotionEvent (SDL.MouseMotionEventData {mouseMotionEventPos = SDL.P (SDL.V2 x y)}))) = normal x y
+    f _ (SDL.Event _ (SDL.MouseMotionEvent (SDL.MouseMotionEventData {mouseMotionEventPos = SDL.P (SDL.V2 x y)}))) = normalPos x y
     f p _ = p
-    update Thingie {pos = p0, vel = v0} =
+    update Thingie {sprite = sprite@Sprite {pos = p0}, vel = v0} =
       let p1 = p0 + (v0 G.^* fromIntegral dt)
           v1 = G.emap2 (\vi pi -> if pi >= 1.0 || pi <= -1.0 then -vi else vi) v0 p1
-       in Thingie {pos = p1, vel = v1}
+       in Thingie {sprite = sprite {pos = p1}, vel = v1}
 
 windowWidth :: Int
 windowWidth = 500
@@ -347,8 +349,14 @@ windowWidth = 500
 windowHeight :: Int
 windowHeight = 500
 
-normal :: (Integral i) => i -> i -> G.Vec2
-normal x y =
+normalSize :: G.UVec2 -> G.Vec2
+normalSize (G.WithUVec2 w h) =
+  let x' = (2.0 * fromIntegral w / fromIntegral windowWidth)
+      y' = (2.0 * fromIntegral h / fromIntegral windowHeight)
+   in G.vec2 x' y'
+
+normalPos :: (Integral i) => i -> i -> G.Vec2
+normalPos x y =
   let x' = (2.0 * fromIntegral x / fromIntegral windowWidth) - 1.0
       y' = (2.0 * fromIntegral y / fromIntegral windowHeight) - 1.0
    in G.vec2 x' y'
@@ -389,14 +397,13 @@ presentFrame swapchain present idx renderFinished = do
   when (r == Vk.SUBOPTIMAL_KHR || r == Vk.ERROR_OUT_OF_DATE_KHR) $ say "presentFrame" $ show r
 
 sprites :: World -> [Sprite]
-sprites (World pointer Thingie {pos = pa} Thingie {pos = pb} Thingie {pos = pc}) =
-  let wh = G.vec2 0.2 0.2
-      ss =
-        [ Sprite {pos = G.vec2 (-1.0) (-1.0), size = G.vec2 2.0 2.0, texture = 0},
-          Sprite {pos = pa, size = wh, texture = 2},
-          Sprite {pos = pb, size = wh, texture = 3},
-          Sprite {pos = pc, size = wh, texture = 4},
-          Sprite {pos = pointer, size = G.vec2 0.2 0.2, texture = 1}
+sprites (World background pointer Thingie {sprite = s1} Thingie {sprite = s2} Thingie {sprite = s3}) =
+  let ss =
+        [ background,
+          s1,
+          s2,
+          s3,
+          pointer
         ]
    in ss
 
@@ -448,7 +455,7 @@ debugUtilsMessengerCreateInfo =
 doBuffers :: [Sprite] -> (SV.Vector Vertex, SV.Vector Word32)
 doBuffers ss =
   let rgb = G.vec3 1.0 0.0 0.0
-      toQuad Sprite {pos = G.WithVec2 x y, size = G.WithVec2 w h, texture = tex} =
+      toQuad Sprite {pos = G.WithVec2 x y, texture = Texture {index = tex, texture = LoadedTexture {size = G.WithVec2 w h}}} =
         SV.fromList
           [ Vertex {xy = G.vec2 x y, rgb = rgb, uv = G.vec2 0.0 0.0, texture = tex},
             Vertex {xy = G.vec2 (x + w) y, rgb = rgb, uv = G.vec2 1.0 0.0, texture = tex},
@@ -513,8 +520,8 @@ withImage allocator width height = do
      in managed $ Vma.withImage allocator imgInfo allocInfo bracket
   return image
 
-texture :: Vma.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> FilePath -> Managed Texture
-texture allocator device pool queue path = do
+readTexture :: Vma.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> FilePath -> Managed LoadedTexture
+readTexture allocator device pool queue path = do
   JP.ImageRGBA8 (JP.Image width height pixels) <- liftIO $ JP.readPng path >>= either (sayErr "Texture" . show) return
   let size = width * height * 4
   (staging, mem) <- withHostBuffer allocator (fromIntegral size)
@@ -522,7 +529,7 @@ texture allocator device pool queue path = do
   image <- withImage allocator width height
   copyBufferToImage device pool queue staging image width height
   let size = G.uvec2 (fromIntegral width) (fromIntegral height)
-   in (\v -> Texture {size = size, view = v}) <$> withImageView device image Vk.FORMAT_R8G8B8A8_SRGB
+   in (\v -> LoadedTexture {pixelSize = size, size = normalSize size, image = image, view = v}) <$> withImageView device image Vk.FORMAT_R8G8B8A8_SRGB
   where
     copy pixels mem size =
       let (src, _) = SV.unsafeToForeignPtr0 pixels
@@ -823,7 +830,7 @@ descriptorSet dev layout pool = do
           }
    in V.head <$> managed (Vk.withDescriptorSets dev info bracket)
 
-bindTextures :: Vk.Device -> Vk.DescriptorSet -> [Vk.ImageView] -> Vk.Sampler -> Managed ()
+bindTextures :: Vk.Device -> Vk.DescriptorSet -> [LoadedTexture] -> Vk.Sampler -> Managed [Texture]
 bindTextures dev set textures sampler = do
   let info =
         Vk.SomeStruct
@@ -832,11 +839,14 @@ bindTextures dev set textures sampler = do
               VkWriteDescriptorSet.dstBinding = 0,
               VkWriteDescriptorSet.descriptorType = Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
               VkWriteDescriptorSet.descriptorCount = fromIntegral $ length textures,
-              VkWriteDescriptorSet.imageInfo = V.fromList $ imageInfo <$> textures,
+              VkWriteDescriptorSet.imageInfo = V.fromList $ imageInfo . view <$> textures,
               VkWriteDescriptorSet.dstArrayElement = 0
             }
    in Vk.updateDescriptorSets dev [info] []
+  return $ zipWith update [0 ..] textures
   where
+    update i tex = Texture {index = i, texture = tex}
+    view LoadedTexture {view = v} = v
     imageInfo tex =
       Vk.zero
         { VkDescriptorImageInfo.imageView = tex,

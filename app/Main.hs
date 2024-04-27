@@ -187,7 +187,7 @@ main = runManaged $ do
   -- bigBuffer <- withGPUBuffer allocator bigBufferSize Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
   -- say "Vulkan" "Created vertex buffer"
 
-  let size = 1024
+  let size = 1048576
   vertexBuffer <- withGPUBuffer allocator size Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
   say "Vulkan" "Created vertex buffer"
   (vertextStagingBuffer, vertextStagingBufferPointer) <- withHostBuffer allocator size
@@ -266,7 +266,9 @@ main = runManaged $ do
         -- imguiData <- ImGui.getDrawData
         -- say "Engine" "Rendering frame BEGIN"
         Vk.useCommandBuffer cmd Vk.zero $ do
-          setupRenderState pipeline pipelineLayout descSet vertexBuffer indexBuffer cmd
+          Vk.cmdBindPipeline cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
+          Vk.cmdBindVertexBuffers cmd 0 [vertexBuffer] [0]
+          Vk.cmdBindDescriptorSets cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipelineLayout 0 [descSet] []
           transitToRenderLayout
           renderScene extent vertextCount view cmd
           -- say "Engine" "Rendering ImGUI BEGIN"
@@ -674,13 +676,11 @@ setupRenderState ::
   Vk.PipelineLayout ->
   Vk.DescriptorSet ->
   Vk.Buffer ->
-  Vk.Buffer ->
   Vk.CommandBuffer ->
   Managed ()
-setupRenderState pipeline layout set vertex index cmd = do
+setupRenderState pipeline layout set vertex cmd = do
   Vk.cmdBindPipeline cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
   Vk.cmdBindVertexBuffers cmd 0 [vertex] [0]
-  Vk.cmdBindIndexBuffer cmd index 0 Vk.INDEX_TYPE_UINT32
   Vk.cmdBindDescriptorSets cmd Vk.PIPELINE_BIND_POINT_GRAPHICS layout 0 [set] []
 
 renderScene ::

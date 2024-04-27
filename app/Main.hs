@@ -15,7 +15,7 @@
 
 module Main (main) where
 
-import Ashkan2 qualified as Ashkan2
+import Ashkan2 qualified
 import Codec.Picture qualified as JP
 import Control.Applicative ((<|>))
 import Control.Concurrent (threadDelay)
@@ -181,6 +181,10 @@ main = runManaged $ do
   say "Vulkan" "Created command pool"
   allocator <- withMemoryAllocator vulkan gpu device
   say "VMA" "Created allocator"
+  -- let bigBufferSize = 1048576
+  -- bigBuffer <- withGPUBuffer allocator bigBufferSize Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
+  -- say "Vulkan" "Created vertex buffer"
+
   let size = 1024
   vertexBuffer <- withGPUBuffer allocator size Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
   say "Vulkan" "Created vertex buffer"
@@ -212,17 +216,19 @@ main = runManaged $ do
   SDL.raiseWindow window
   SDL.cursorVisible SDL.$= False
   say "Engine" "Entering the main loop"
-  withImGui vulkan gpu device window gfxQueue commandPool gfxQueue
+  -- withImGui vulkan gpu device window gfxQueue commandPool gfxQueue
   commandBuffers <- createCommandBuffers device commandPool (fromIntegral $ V.length images)
   let p0 = G.vec2 (-0.5) (-0.5)
       one = G.vec2 1 1
+      half = G.vec2 0.5 0.5
+      third = G.vec2 0.33 0.33
       world0 =
         World
-          { background = Sprite {pos = G.vec2 (-1.0) (-1.0), scale = G.vec2 2 2, texture = background},
-            pointer = Sprite {pos = G.vec2 0.0 0.0, texture = pointer, scale = G.vec2 1.0 1.0},
-            a = Thingie {sprite = Sprite {pos = p0, scale = one, texture = texture1}, vel = G.vec2 0.002 0.001},
-            b = Thingie {sprite = Sprite {pos = p0, scale = one, texture = texture2}, vel = G.vec2 0.0 0.0},
-            c = Thingie {sprite = Sprite {pos = p0, scale = one, texture = texture3}, vel = G.vec2 0.001 0.002}
+          { background = Sprite {pos = G.vec2 (-1.0) (-1.0), scale = G.vec2 0.2 0.2, texture = background},
+            pointer = Sprite {pos = G.vec2 0.0 0.0, texture = pointer, scale = half},
+            a = Thingie {sprite = Sprite {pos = p0, scale = third, texture = texture1}, vel = G.vec2 0.002 0.001},
+            b = Thingie {sprite = Sprite {pos = p0, scale = third, texture = texture2}, vel = G.vec2 0.0 0.0},
+            c = Thingie {sprite = Sprite {pos = p0, scale = third, texture = texture3}, vel = G.vec2 0.001 0.002}
           }
   let waitForPrevDrawCallToFinish = Vk.waitForFences device [inFlight] True maxBound *> Vk.resetFences device [inFlight]
       frame dt t es w0 = do
@@ -398,14 +404,12 @@ presentFrame swapchain present idx renderFinished = do
 
 sprites :: World -> [Sprite]
 sprites (World background pointer Thingie {sprite = s1} Thingie {sprite = s2} Thingie {sprite = s3}) =
-  let ss =
-        [ background,
-          s1,
-          s2,
-          s3,
-          pointer
-        ]
-   in ss
+  [ background,
+    s1,
+    s2,
+    s3,
+    pointer
+  ]
 
 vulkanVersion :: Word32
 vulkanVersion = Vk.API_VERSION_1_2
@@ -455,13 +459,17 @@ debugUtilsMessengerCreateInfo =
 doBuffers :: [Sprite] -> (SV.Vector Vertex, SV.Vector Word32)
 doBuffers ss =
   let rgb = G.vec3 1.0 0.0 0.0
-      toQuad Sprite {pos = G.WithVec2 x y, texture = Texture {index = tex, texture = LoadedTexture {size = G.WithVec2 w h}}} =
-        SV.fromList
-          [ Vertex {xy = G.vec2 x y, rgb = rgb, uv = G.vec2 0.0 0.0, texture = tex},
-            Vertex {xy = G.vec2 (x + w) y, rgb = rgb, uv = G.vec2 1.0 0.0, texture = tex},
-            Vertex {xy = G.vec2 (x + w) (y + h), rgb = rgb, uv = G.vec2 1.0 1.0, texture = tex},
-            Vertex {xy = G.vec2 x (y + h), rgb = rgb, uv = G.vec2 0.0 1.0, texture = tex}
-          ]
+      toQuad Sprite {pos = G.WithVec2 x y, scale = G.WithVec2 sx sy, texture = Texture {index = tex, texture = LoadedTexture {size = G.WithVec2 w h}}} =
+        let topLeft = Vertex {xy = G.vec2 x y, rgb = rgb, uv = G.vec2 0.0 0.0, texture = tex}
+            topRight = Vertex {xy = G.vec2 (x + w * sx) y, rgb = rgb, uv = G.vec2 1.0 0.0, texture = tex}
+            bottomRight = Vertex {xy = G.vec2 (x + w * sx) (y + h * sy), rgb = rgb, uv = G.vec2 1.0 1.0, texture = tex}
+            bottomLeft = Vertex {xy = G.vec2 x (y + h * sy), rgb = rgb, uv = G.vec2 0.0 1.0, texture = tex}
+         in SV.fromList
+              [ topLeft,
+                topRight,
+                bottomRight,
+                bottomLeft
+              ]
       vertecies = mconcat $ toQuad <$> ss
       howMany = fromIntegral (length ss)
       go acc 0 = acc
@@ -658,7 +666,8 @@ mainLoop :: s -> (Word32 -> Word32 -> [SDL.Event] -> s -> Managed s) -> Managed 
 mainLoop s draw = go s 0
   where
     go s0 t0 = do
-      es <- ImGui.pollEventsWithImGui
+      -- es <- ImGui.pollEventsWithImGui
+      es <- SDL.pollEvents
       let quit = any isQuitEvent es
       if quit
         then pure ()

@@ -109,6 +109,8 @@ import VulkanMemoryAllocator qualified as Vma
 import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCreateInfo (..))
 import VulkanMemoryAllocator qualified as VmaAllocatorCreateInfo (AllocatorCreateInfo (..))
 import Prelude hiding (init)
+import qualified Data.ByteString as VS
+import Vulkan.Utils.ShaderQQ.GLSL.Glslang (vert)
 
 data Vertex = Vertex {xy :: G.Vec2, rgb :: G.Vec3, uv :: G.Vec2, texture :: Word32}
   deriving (Show, Eq)
@@ -233,7 +235,9 @@ main = runManaged $ do
   let waitForPrevDrawCallToFinish = Vk.waitForFences device [inFlight] True maxBound *> Vk.resetFences device [inFlight]
       frame dt t es w0 = do
         w1 <- world dt t es w0
-        let (vertices, indices) = doBuffers $ sprites w1
+        let  ss = sprites w1
+             (vertices, indices) = doBuffers ss
+             vertextCount = fromIntegral $ SV.length vertices
         copyBuffer device commandPool gfxQueue vertexBuffer (vstaging, vptr) vertices
         copyBuffer device commandPool gfxQueue indexBuffer (istaging, iptr) indices
         -- let World {a = (Thingie {pos = p, vel = v})} = w1 in say "Engine" $ show p ++ " " ++ show v
@@ -241,7 +245,7 @@ main = runManaged $ do
         index <- acquireNextFrame device swapchain imageAvailable
         let (img, view) = images ! fromIntegral index
             cmd = commandBuffers ! fromIntegral index
-            count = fromIntegral $ SV.length indices
+            -- count = fromIntegral $ SV.length indices
         let presentLayout =
               transitImageLayout
                 cmd
@@ -272,7 +276,7 @@ main = runManaged $ do
         Vk.useCommandBuffer cmd Vk.zero $ do
           setupRenderState pipeline pipelineLayout descSet vertexBuffer indexBuffer cmd
           renderLayout
-          renderScene extent count view cmd
+          renderScene extent vertextCount view cmd
           -- say "Engine" "Rendering ImGUI BEGIN"
           -- renderImgui cmd view extent imguiData
           presentLayout
@@ -465,20 +469,16 @@ doBuffers ss =
             bottomRight = Vertex {xy = G.vec2 (x + w * sx) (y + h * sy), rgb = rgb, uv = G.vec2 1.0 1.0, texture = tex}
             bottomLeft = Vertex {xy = G.vec2 x (y + h * sy), rgb = rgb, uv = G.vec2 0.0 1.0, texture = tex}
          in SV.fromList
-              [ topLeft,
-                topRight,
-                bottomRight,
-                bottomLeft
-              ]
+              [topLeft, topRight, bottomRight, bottomRight, bottomLeft, topLeft]
       vertecies = mconcat $ toQuad <$> ss
-      howMany = fromIntegral (length ss)
-      go acc 0 = acc
-      go acc n =
-        let i = howMany - n
-            new = (+ (i * 4)) <$> [0 :: Word32, 1, 2, 2, 3, 0]
-         in go (acc ++ new) (n - 1)
-      indecies = SV.fromList $ go [] howMany
-   in (vertecies, indecies)
+      -- howMany = fromIntegral (length ss)
+      -- go acc 0 = acc
+      -- go acc n =
+      --   let i = howMany - n
+      --       new = (+ (i * 4)) <$> [0 :: Word32, 1, 2, 2, 3, 0]
+      --    in go (acc ++ new) (n - 1)
+      -- indecies = SV.fromList $ go [] howMany
+   in (vertecies, [])
 
 copyBuffer ::
   forall a.
@@ -705,11 +705,11 @@ renderScene ::
   Vk.ImageView ->
   Vk.CommandBuffer ->
   Managed ()
-renderScene extent indexCount view cmd = do
+renderScene extent vertextCount target cmd = do
   let clear = Vk.Color (Vk.Float32 1.0 0.0 1.0 0)
       attachment =
         Vk.zero
-          { VkRenderingAttachmentInfo.imageView = view,
+          { VkRenderingAttachmentInfo.imageView = target,
             VkRenderingAttachmentInfo.imageLayout = Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
             VkRenderingAttachmentInfo.loadOp = Vk.ATTACHMENT_LOAD_OP_CLEAR,
             VkRenderingAttachmentInfo.storeOp = Vk.ATTACHMENT_STORE_OP_STORE,
@@ -722,7 +722,8 @@ renderScene extent indexCount view cmd = do
             VkRenderingInfo.layerCount = 1,
             VkRenderingInfo.colorAttachments = [attachment]
           }
-      drawScene = Vk.cmdDrawIndexed cmd indexCount 1 0 0 0
+      -- drawScene = Vk.cmdDrawIndexed cmd indexCount 1 0 0 0
+      drawScene = Vk.cmdDraw cmd (vertextCount+12) 1 0 0
    in Vk.cmdUseRendering cmd info drawScene
 
 renderImgui cmd view extent imguiData =

@@ -25,7 +25,6 @@ import Control.Monad.Except (ExceptT (ExceptT), MonadError (throwError), runExce
 import Control.Monad.Managed (Managed, MonadIO (liftIO), MonadManaged, managed, managed_, runManaged)
 import Data.Bits ((.&.), (.|.))
 import Data.ByteString qualified as BS (readFile)
-import Data.ByteString qualified as VS
 import Data.ByteString.Char8 qualified as BS (pack, unpack)
 import Data.Foldable (foldlM)
 import Data.Functor (($>), (<&>))
@@ -1210,7 +1209,7 @@ withVulkan w = do
     liftIO $
       let extra =
             [ Vk.EXT_DEBUG_UTILS_EXTENSION_NAME,
-              Vk.EXT_VALIDATION_FEATURES_EXTENSION_NAME,
+              "VK_EXT_layer_settings",
               Vk.KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME
             ]
        in (++ extra) <$> reqExts

@@ -1197,10 +1197,10 @@ withVulkan :: SDL.Window -> Managed Vk.Instance
 withVulkan w = do
   exts <-
     let extraExts =
-            [ Vk.EXT_DEBUG_UTILS_EXTENSION_NAME,
-              "VK_EXT_layer_settings",
-              Vk.KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME
-            ]
+          [ Vk.EXT_DEBUG_UTILS_EXTENSION_NAME,
+            "VK_EXT_layer_settings",
+            Vk.KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME
+          ]
         sdlExts = mapM (fmap BS.pack . peekCAString) =<< SDL.vkGetInstanceExtensions w
      in liftIO $ (++ extraExts) <$> sdlExts
   say "Vulkan" $ "Instance extenions: " ++ unwords (BS.unpack <$> exts)
@@ -1243,9 +1243,9 @@ withWindow width height =
     win =
       SDL.defaultWindow
         { SDL.windowInitialSize = size,
-              SDL.windowGraphicsContext = SDL.VulkanContext,
-              SDL.windowPosition = SDL.Centered
-            }
+          SDL.windowGraphicsContext = SDL.VulkanContext,
+          SDL.windowPosition = SDL.Centered
+        }
 
 withSDL :: Managed ()
 withSDL = do
@@ -1253,6 +1253,6 @@ withSDL = do
   with_ (SDL.initialize flags <* say "SDL" "Initialized") (SDL.quit <* say "SDL" "Quit")
   with_ (SDL.vkLoadLibrary Nothing <* say "SDL" "Loaded Vulkan lib") (SDL.vkUnloadLibrary <* say "SDL" "Unloaded Vulkan lib")
   where
-    ver = SDL.version >>= (\(v0 :: Int, v1, v2) -> putStrLn $ "SDL: Version " ++ show v0 ++ "." ++ show v1 ++ "." ++ show v2)
-    init = SDL.initialize ([SDL.InitEvents, SDL.InitVideo] :: [SDL.InitFlag])
-    withVkLib = bracket_ (SDL.vkLoadLibrary Nothing) SDL.vkUnloadLibrary
+    with_ acq rel = managed_ $ bracket_ acq rel
+    printVersion = SDL.version >>= (\(v0 :: Int, v1, v2) -> putStrLn $ "SDL: Version " ++ show v0 ++ "." ++ show v1 ++ "." ++ show v2)
+    flags = [SDL.InitEvents :: SDL.InitFlag, SDL.InitVideo] :: [SDL.InitFlag]

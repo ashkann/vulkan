@@ -517,9 +517,9 @@ readTexture allocator device pool queue path = do
   let size = width * height * 4
   image <- withImage allocator width height
   do
-  (staging, mem) <- withHostBuffer allocator (fromIntegral size)
-  liftIO $ copy pixels mem size
-  copyBufferToImage device pool queue staging image width height
+    (staging, mem) <- withHostBuffer allocator (fromIntegral size)
+    liftIO $ copy pixels mem size
+    copyBufferToImage device pool queue staging image width height
   let size = G.uvec2 (fromIntegral width) (fromIntegral height)
    in (\v -> LoadedTexture {pixelSize = size, size = normalSize size, image = image, view = v}) <$> withImageView device image Vk.FORMAT_R8G8B8A8_SRGB
   where
@@ -539,12 +539,12 @@ submitNow device pool queue f = buffer $ \buffs ->
     Vk.queueWaitIdle queue
   where
     buffer =
-    let info =
-          Vk.zero
-            { VkCommandBufferAllocateInfo.level = Vk.COMMAND_BUFFER_LEVEL_PRIMARY,
-              VkCommandBufferAllocateInfo.commandPool = pool,
-              VkCommandBufferAllocateInfo.commandBufferCount = 1
-            }
+      let info =
+            Vk.zero
+              { VkCommandBufferAllocateInfo.level = Vk.COMMAND_BUFFER_LEVEL_PRIMARY,
+                VkCommandBufferAllocateInfo.commandPool = pool,
+                VkCommandBufferAllocateInfo.commandBufferCount = 1
+              }
        in Vk.withCommandBuffers device info bracket
 
 copyBufferToImage ::

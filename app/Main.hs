@@ -22,7 +22,7 @@ import Control.Concurrent (threadDelay)
 import Control.Exception (bracket, bracket_)
 import Control.Monad (when)
 import Control.Monad.Except (ExceptT (ExceptT), MonadError (throwError), runExceptT)
-import Control.Monad.Managed (Managed, MonadIO (liftIO), MonadManaged, managed, managed_, runManaged)
+import Control.Monad.Managed (Managed, MonadIO (liftIO), managed, managed_, runManaged)
 import Data.Bits ((.&.), (.|.))
 import Data.ByteString qualified as BS (readFile)
 import Data.ByteString.Char8 qualified as BS (pack, unpack)
@@ -33,7 +33,6 @@ import Data.Vector ((!))
 import Data.Vector qualified as V
 import Data.Vector.Storable qualified as SV
 import DearImGui qualified as ImGui
-import DearImGui.SDL qualified as ImGui
 import DearImGui.SDL.Vulkan qualified as ImGui
 import DearImGui.Vulkan qualified as ImGui
 import Foreign (Bits (zeroBits), Ptr, Storable, Word32, castPtr, copyArray, withForeignPtr)
@@ -104,7 +103,6 @@ import Vulkan.CStruct.Extends (pattern (:&), pattern (::&))
 import Vulkan.CStruct.Extends qualified as Vk
 import Vulkan.Dynamic qualified as Vk
 import Vulkan.Utils.Debug qualified as Vk
-import Vulkan.Utils.ShaderQQ.GLSL.Glslang (vert)
 import Vulkan.Zero qualified as Vk
 import VulkanMemoryAllocator qualified as Vma
 import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCreateInfo (..))
@@ -277,7 +275,7 @@ main = runManaged $ do
         renderFrame cmd gfxQueue imageAvailable renderFinished inFlight
         presentFrame swapchain presentQueue index renderFinished
         Vk.deviceWaitIdle device $> w1
-   in mainLoop world0 frame
+   in liftIO $ mainLoop world0 frame
 
 sampler :: Vk.Device -> Managed Vk.Sampler
 sampler device =
@@ -331,7 +329,7 @@ withImGui vulkan gpu device window queue cmdPool gfx =
       _ <- ImGui.sdl2InitForVulkan window
       say "ImGui" "Initialized for SDL2 Vulkan"
       Ashkan2.vulkanInit vulkan gpu device gfx pool
-      _ <- runManaged $ submitNow device cmdPool queue ImGui.vulkanCreateFontsTexture
+      _ <- submitNow device cmdPool queue (\cmd -> ImGui.vulkanCreateFontsTexture cmd $> ())
       say "ImGui" "Created fonts texture"
       ImGui.vulkanDestroyFontUploadObjects
       say "ImGui" "Destroyed font upload objects"
@@ -376,7 +374,7 @@ acquireNextFrame dev swapchain imageAvailable = do
   when (r == Vk.SUBOPTIMAL_KHR || r == Vk.ERROR_OUT_OF_DATE_KHR) $ say "acquireNextFrame" $ show r
   return index
 
-renderFrame :: Vk.CommandBuffer -> Vk.Queue -> Vk.Semaphore -> Vk.Semaphore -> Vk.Fence -> Managed ()
+renderFrame :: (MonadIO io) => Vk.CommandBuffer -> Vk.Queue -> Vk.Semaphore -> Vk.Semaphore -> Vk.Fence -> io ()
 renderFrame cmd gfx imageAvailable renderFinished inFlight =
   let info =
         Vk.zero
@@ -387,7 +385,7 @@ renderFrame cmd gfx imageAvailable renderFinished inFlight =
           }
    in Vk.queueSubmit gfx [Vk.SomeStruct info] inFlight
 
-presentFrame :: Vk.SwapchainKHR -> Vk.Queue -> Word32 -> Vk.Semaphore -> Managed ()
+presentFrame :: (MonadIO io) => Vk.SwapchainKHR -> Vk.Queue -> Word32 -> Vk.Semaphore -> io ()
 presentFrame swapchain present idx renderFinished = do
   r <-
     let info =
@@ -474,7 +472,7 @@ copyBuffer ::
   Vk.Buffer ->
   (Vk.Buffer, Ptr ()) ->
   SV.Vector a ->
-  Managed ()
+  IO ()
 copyBuffer device pool queue gpuBuffer (hostBuffer, hostBufferPtr) v = do
   let (src, len) = SV.unsafeToForeignPtr0 v
       size = fromIntegral $ sizeOf (undefined :: a) * len
@@ -517,9 +515,10 @@ readTexture :: Vma.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> FileP
 readTexture allocator device pool queue path = do
   JP.ImageRGBA8 (JP.Image width height pixels) <- liftIO $ JP.readPng path >>= either (sayErr "Texture" . show) return
   let size = width * height * 4
+  image <- withImage allocator width height
+  do
   (staging, mem) <- withHostBuffer allocator (fromIntegral size)
   liftIO $ copy pixels mem size
-  image <- withImage allocator width height
   copyBufferToImage device pool queue staging image width height
   let size = G.uvec2 (fromIntegral width) (fromIntegral height)
    in (\v -> LoadedTexture {pixelSize = size, size = normalSize size, image = image, view = v}) <$> withImageView device image Vk.FORMAT_R8G8B8A8_SRGB
@@ -529,28 +528,27 @@ readTexture allocator device pool queue path = do
           dst = castPtr mem
        in withForeignPtr src $ \src -> copyArray dst src size
 
-submitNow :: Vk.Device -> Vk.CommandPool -> Vk.Queue -> (Vk.CommandBuffer -> Managed r) -> Managed ()
-submitNow device pool queue use = do
-  buffer <-
+submitNow :: Vk.Device -> Vk.CommandPool -> Vk.Queue -> (Vk.CommandBuffer -> IO ()) -> IO ()
+submitNow device pool queue f = buffer $ \buffs ->
+  do
+    let buff = V.head buffs
+    let info = Vk.zero {VkCommandBufferBeginInfo.flags = Vk.COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT}
+     in Vk.useCommandBuffer buff info $ f buff
+    let work = Vk.SomeStruct $ Vk.zero {VkSubmitInfo.commandBuffers = [Vk.commandBufferHandle buff]}
+     in Vk.queueSubmit queue [work] Vk.NULL_HANDLE
+    Vk.queueWaitIdle queue
+  where
+    buffer =
     let info =
           Vk.zero
             { VkCommandBufferAllocateInfo.level = Vk.COMMAND_BUFFER_LEVEL_PRIMARY,
               VkCommandBufferAllocateInfo.commandPool = pool,
               VkCommandBufferAllocateInfo.commandBufferCount = 1
             }
-     in V.head <$> managed (Vk.withCommandBuffers device info bracket)
-  _ <-
-    let info = Vk.zero {VkCommandBufferBeginInfo.flags = Vk.COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT}
-     in Vk.useCommandBuffer buffer info $ use buffer
-  let work =
-        Vk.SomeStruct $
-          Vk.zero
-            { VkSubmitInfo.commandBuffers = [Vk.commandBufferHandle buffer]
-            }
-   in Vk.queueSubmit queue [work] Vk.NULL_HANDLE
-  Vk.queueWaitIdle queue
+       in Vk.withCommandBuffers device info bracket
 
 copyBufferToImage ::
+  (MonadIO io) =>
   VkDevice.Device ->
   Vk.CommandPool ->
   Vk.Queue ->
@@ -558,8 +556,8 @@ copyBufferToImage ::
   Vk.Image ->
   Int ->
   Int ->
-  Managed ()
-copyBufferToImage device pool queue src dst width height = do
+  io ()
+copyBufferToImage device pool queue src dst width height = liftIO $ do
   let subresource =
         Vk.zero
           { VkImageSubresourceLayers.aspectMask = Vk.IMAGE_ASPECT_COLOR_BIT,
@@ -586,7 +584,7 @@ copyBufferToImage device pool queue src dst width height = do
     Vk.cmdCopyBufferToImage cmd src dst Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL [region]
     tranistDstOptimalToShaderReadOnlyOptimal cmd dst
 
-tranistToDstOptimal :: Vk.CommandBuffer -> Vk.Image -> Managed ()
+tranistToDstOptimal :: (MonadIO io) => Vk.CommandBuffer -> Vk.Image -> io ()
 tranistToDstOptimal cmd img =
   transitImageLayout
     cmd
@@ -598,7 +596,7 @@ tranistToDstOptimal cmd img =
     Vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT
     Vk.PIPELINE_STAGE_TRANSFER_BIT
 
-tranistDstOptimalToShaderReadOnlyOptimal :: Vk.CommandBuffer -> Vk.Image -> Managed ()
+tranistDstOptimalToShaderReadOnlyOptimal :: (MonadIO io) => Vk.CommandBuffer -> Vk.Image -> io ()
 tranistDstOptimalToShaderReadOnlyOptimal cmd img =
   transitImageLayout
     cmd
@@ -647,7 +645,7 @@ withGPUBuffer allocator size flags = do
   say "Vulkan" $ "Created buffer on GPU of size " ++ show size ++ " bytes"
   return buffer
 
-mainLoop :: s -> (Word32 -> Word32 -> [SDL.Event] -> s -> Managed s) -> Managed ()
+mainLoop :: (MonadIO io) => s -> (Word32 -> Word32 -> [SDL.Event] -> s -> io s) -> io ()
 mainLoop s draw = go s 0
   where
     go s0 t0 = do
@@ -670,24 +668,13 @@ isQuitEvent = \case
         True
   _ -> False
 
-setupRenderState ::
-  Vk.Pipeline ->
-  Vk.PipelineLayout ->
-  Vk.DescriptorSet ->
-  Vk.Buffer ->
-  Vk.CommandBuffer ->
-  Managed ()
-setupRenderState pipeline layout set vertex cmd = do
-  Vk.cmdBindPipeline cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
-  Vk.cmdBindVertexBuffers cmd 0 [vertex] [0]
-  Vk.cmdBindDescriptorSets cmd Vk.PIPELINE_BIND_POINT_GRAPHICS layout 0 [set] []
-
 renderScene ::
+  (MonadIO io) =>
   Vk.Extent2D ->
   Word32 ->
   Vk.ImageView ->
   Vk.CommandBuffer ->
-  Managed ()
+  io ()
 renderScene extent vertextCount target cmd = do
   let clear = Vk.Color (Vk.Float32 1.0 0.0 1.0 0)
       attachment =
@@ -727,6 +714,7 @@ renderImgui cmd view extent imguiData =
    in Vk.cmdUseRendering cmd info $ ImGui.vulkanRenderDrawData imguiData cmd Nothing
 
 transitImageLayout ::
+  (MonadIO io) =>
   Vk.CommandBuffer ->
   Vk.Image ->
   Vk.AccessFlagBits ->
@@ -735,7 +723,7 @@ transitImageLayout ::
   Vk.ImageLayout ->
   Vk.PipelineStageFlags ->
   Vk.PipelineStageFlags ->
-  Managed ()
+  io ()
 transitImageLayout cmd img srcMask dstMask old new srcStage dstStage =
   let range =
         Vk.zero
@@ -999,9 +987,8 @@ framesInFlight = 1
 
 -- TODO break into two functions
 createShaders ::
-  (MonadManaged m) =>
   Vk.Device ->
-  m (Vk.SomeStruct Vk.PipelineShaderStageCreateInfo, Vk.SomeStruct Vk.PipelineShaderStageCreateInfo)
+  Managed (Vk.SomeStruct Vk.PipelineShaderStageCreateInfo, Vk.SomeStruct Vk.PipelineShaderStageCreateInfo)
 createShaders dev =
   do
     fragCode <- liftIO $ BS.readFile "frag.spv"
@@ -1236,7 +1223,7 @@ withVulkan w = do
             :& ()
   managed $ Vk.withInstance instanceCreateInfo Nothing bracket
 
-withSurface :: (MonadManaged m) => SDL.Window -> Vk.Instance -> m Vk.SurfaceKHR
+withSurface :: SDL.Window -> Vk.Instance -> Managed Vk.SurfaceKHR
 withSurface w v@(Vk.Instance v' _) =
   managed $
     bracket
@@ -1245,12 +1232,12 @@ withSurface w v@(Vk.Instance v' _) =
   where
     create = Vk.SurfaceKHR <$> SDL.vkCreateSurface w (castPtr v')
 
-withWindow :: (MonadManaged m) => Int -> Int -> m SDL.Window
+withWindow :: Int -> Int -> Managed SDL.Window
 withWindow width height =
   managed $
     bracket
-      (putStrLn "SDL: Creating window" *> create <* putStrLn "SDL: Window created")
-      (\w -> putStrLn "SDL: Window destroyed" *> SDL.destroyWindow w)
+      (say "SDL" "Creating window" *> create <* say "SDL" "Window created")
+      (\w -> say "SDL" "Window destroyed" *> SDL.destroyWindow w)
   where
     create =
       SDL.createWindow
@@ -1265,12 +1252,12 @@ withWindow width height =
             }
         )
 
-withSDL :: (MonadManaged m) => m ()
+withSDL :: Managed ()
 withSDL =
   managed_ $
     bracket_
-      (ver *> init <* putStrLn "SDL: Initialized")
-      (SDL.quit *> putStrLn "SDL: Quit")
+      (ver *> init <* say "SDL" "Initialized")
+      (SDL.quit *> say "SDL" "Quit")
       . withVkLib
   where
     ver = SDL.version >>= (\(v0 :: Int, v1, v2) -> putStrLn $ "SDL: Version " ++ show v0 ++ "." ++ show v1 ++ "." ++ show v2)

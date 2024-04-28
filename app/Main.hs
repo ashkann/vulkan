@@ -108,6 +108,7 @@ import VulkanMemoryAllocator qualified as Vma
 import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCreateInfo (..))
 import VulkanMemoryAllocator qualified as VmaAllocatorCreateInfo (AllocatorCreateInfo (..))
 import Prelude hiding (init)
+import Data.String (IsString)
 
 data Vertex = Vertex {xy :: G.Vec2, rgb :: G.Vec3, uv :: G.Vec2, texture :: Word32}
   deriving (Show, Eq)
@@ -1189,27 +1190,29 @@ pickGPU vulkan surface = do
 
         portabilitySubSetPresent = any ((== Vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME) . Vk.extensionName)
 
+applicationName :: IsString a => a
+applicationName = "Vulkan 2D Engine"
+
 withVulkan :: SDL.Window -> Managed Vk.Instance
 withVulkan w = do
-  reqExts <- mapM (fmap BS.pack . peekCAString) <$> SDL.vkGetInstanceExtensions w
-  instExts <-
-    liftIO $
-      let extra =
+  exts <-
+    let extraExts =
             [ Vk.EXT_DEBUG_UTILS_EXTENSION_NAME,
               "VK_EXT_layer_settings",
               Vk.KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME
             ]
-       in (++ extra) <$> reqExts
-  say "Vulkan" $ "Instance extenions: " ++ unwords (BS.unpack <$> instExts)
-  let instanceCreateInfo =
+        sdlExts = mapM (fmap BS.pack . peekCAString) =<< SDL.vkGetInstanceExtensions w
+     in liftIO $ (++ extraExts) <$> sdlExts
+  say "Vulkan" $ "Instance extenions: " ++ unwords (BS.unpack <$> exts)
+  let info =
         Vk.zero
           { VkInstanceCreateInfo.applicationInfo =
               Just
                 Vk.zero
-                  { VkApplicationInfo.applicationName = Just "Vulkan",
+                  { VkApplicationInfo.applicationName = Just applicationName,
                     VkApplicationInfo.apiVersion = vulkanVersion
                   },
-            VkInstanceCreateInfo.enabledExtensionNames = V.fromList instExts,
+            VkInstanceCreateInfo.enabledExtensionNames = V.fromList exts,
             VkInstanceCreateInfo.enabledLayerNames = ["VK_LAYER_KHRONOS_validation"],
             VkInstanceCreateInfo.flags = Vk.INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR
           }
@@ -1221,44 +1224,34 @@ withVulkan w = do
               ]
               []
             :& ()
-  managed $ Vk.withInstance instanceCreateInfo Nothing bracket
+   in managed $ Vk.withInstance info Nothing bracket
 
 withSurface :: SDL.Window -> Vk.Instance -> Managed Vk.SurfaceKHR
-withSurface w v@(Vk.Instance v' _) =
-  managed $
-    bracket
-      (putStrLn "SDL: Creating Vulkan surface" *> create <* putStrLn "SDL: Vulkan surface created")
-      (\s -> Vk.destroySurfaceKHR v s Nothing <* putStrLn "Vulkan: Destroyed surface")
+withSurface w v@(Vk.Instance v' _) = managed $ bracket create destroy
   where
-    create = Vk.SurfaceKHR <$> SDL.vkCreateSurface w (castPtr v')
+    destroy s = Vk.destroySurfaceKHR v s Nothing <* say "Vulkan" "Destroyed surface"
+    create = Vk.SurfaceKHR <$> SDL.vkCreateSurface w (castPtr v') <* say "SDL" "Vulkan surface created"
 
 withWindow :: Int -> Int -> Managed SDL.Window
 withWindow width height =
   managed $
     bracket
-      (say "SDL" "Creating window" *> create <* say "SDL" "Window created")
-      (\w -> say "SDL" "Window destroyed" *> SDL.destroyWindow w)
+      (SDL.createWindow applicationName win <* say "SDL" "Window created")
+      (\w -> SDL.destroyWindow w <* say "SDL" "Window destroyed")
   where
-    create =
-      SDL.createWindow
-        "Vulkan"
-        ( SDL.defaultWindow
-            { SDL.windowInitialSize =
-                SDL.V2
-                  (fromIntegral width)
-                  (fromIntegral height),
+    size = SDL.V2 (fromIntegral width) (fromIntegral height)
+    win =
+      SDL.defaultWindow
+        { SDL.windowInitialSize = size,
               SDL.windowGraphicsContext = SDL.VulkanContext,
               SDL.windowPosition = SDL.Centered
             }
-        )
 
 withSDL :: Managed ()
-withSDL =
-  managed_ $
-    bracket_
-      (ver *> init <* say "SDL" "Initialized")
-      (SDL.quit *> say "SDL" "Quit")
-      . withVkLib
+withSDL = do
+  liftIO printVersion
+  with_ (SDL.initialize flags <* say "SDL" "Initialized") (SDL.quit <* say "SDL" "Quit")
+  with_ (SDL.vkLoadLibrary Nothing <* say "SDL" "Loaded Vulkan lib") (SDL.vkUnloadLibrary <* say "SDL" "Unloaded Vulkan lib")
   where
     ver = SDL.version >>= (\(v0 :: Int, v1, v2) -> putStrLn $ "SDL: Version " ++ show v0 ++ "." ++ show v1 ++ "." ++ show v2)
     init = SDL.initialize ([SDL.InitEvents, SDL.InitVideo] :: [SDL.InitFlag])

@@ -25,7 +25,6 @@ import Control.Monad.Except (ExceptT (ExceptT), MonadError (throwError), runExce
 import Control.Monad.Managed (Managed, MonadIO (liftIO), managed, managed_, runManaged)
 import Data.Bits ((.&.), (.|.))
 import Data.ByteString qualified as BS (readFile)
-import Data.ByteString.Char8 qualified as BS (pack, unpack)
 import Data.Foldable (foldlM)
 import Data.Functor (($>), (<&>))
 import Data.Traversable (for)
@@ -36,24 +35,20 @@ import DearImGui qualified as ImGui
 import DearImGui.SDL.Vulkan qualified as ImGui
 import DearImGui.Vulkan qualified as ImGui
 import Foreign (Bits (zeroBits), Ptr, Storable, Word32, castPtr, copyArray, withForeignPtr)
-import Foreign.C (peekCAString)
 import Foreign.Ptr (castFunPtr)
 import Foreign.Storable (Storable (..), sizeOf)
 import Foreign.Storable.Record qualified as Store
 import Geomancy qualified as G
 import SDL qualified
-import SDL.Video.Vulkan qualified as SDL
 import Utils
 import Vulkan qualified as PhysicalDeviceVulkan12Features (PhysicalDeviceVulkan12Features (..))
 import Vulkan qualified as Vk
-import Vulkan qualified as VkApplicationInfo (ApplicationInfo (..))
 import Vulkan qualified as VkBufferCopy (BufferCopy (..))
 import Vulkan qualified as VkBufferCreateInfo (BufferCreateInfo (..))
 import Vulkan qualified as VkBufferImageCopy (BufferImageCopy (..))
 import Vulkan qualified as VkCommandBufferAllocateInfo (CommandBufferAllocateInfo (..))
 import Vulkan qualified as VkCommandBufferBeginInfo (CommandBufferBeginInfo (..))
 import Vulkan qualified as VkCommandPoolCreateInfo (CommandPoolCreateInfo (..))
-import Vulkan qualified as VkDebugUtilsMessengerCreateInfoEXT (DebugUtilsMessengerCreateInfoEXT (..))
 import Vulkan qualified as VkDescriptorImageInfo (DescriptorImageInfo (..))
 import Vulkan qualified as VkDescriptorPoolCreateInfo (DescriptorPoolCreateInfo (..))
 import Vulkan qualified as VkDescriptorPoolSize (DescriptorPoolSize (..))
@@ -74,7 +69,6 @@ import Vulkan qualified as VkImageSubresourceLayers (ImageSubresourceLayers (..)
 import Vulkan qualified as VkImageSubresourceRange (ImageSubresourceRange (..))
 import Vulkan qualified as VkImageViewCreateInfo (ImageViewCreateInfo (..))
 import Vulkan qualified as VkInstance (Instance (..))
-import Vulkan qualified as VkInstanceCreateInfo (InstanceCreateInfo (..))
 import Vulkan qualified as VkPhysicalDeviceDescriptorIndexingFeatures (PhysicalDeviceDescriptorIndexingFeatures (..))
 import Vulkan qualified as VkPhysicalDeviceDynamicRenderingFeatures (PhysicalDeviceDynamicRenderingFeatures (..))
 import Vulkan qualified as VkPhysicalDeviceFeatures (PhysicalDeviceFeatures (..))
@@ -102,13 +96,11 @@ import Vulkan qualified as VkWriteDescriptorSet (WriteDescriptorSet (..))
 import Vulkan.CStruct.Extends (pattern (:&), pattern (::&))
 import Vulkan.CStruct.Extends qualified as Vk
 import Vulkan.Dynamic qualified as Vk
-import Vulkan.Utils.Debug qualified as Vk
 import Vulkan.Zero qualified as Vk
 import VulkanMemoryAllocator qualified as Vma
 import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCreateInfo (..))
 import VulkanMemoryAllocator qualified as VmaAllocatorCreateInfo (AllocatorCreateInfo (..))
 import Prelude hiding (init)
-import Data.String (IsString)
 
 data Vertex = Vertex {xy :: G.Vec2, rgb :: G.Vec3, uv :: G.Vec2, texture :: Word32}
   deriving (Show, Eq)
@@ -407,9 +399,6 @@ sprites (World background pointer Thingie {sprite = s1} Thingie {sprite = s2} Th
     pointer
   ]
 
-vulkanVersion :: Word32
-vulkanVersion = Vk.API_VERSION_1_2
-
 withMemoryAllocator :: Vk.Instance -> Vk.PhysicalDevice -> Vk.Device -> Managed Vma.Allocator
 withMemoryAllocator vulkan gpu device =
   let insanceCmds = VkInstance.instanceCmds vulkan
@@ -428,29 +417,6 @@ withMemoryAllocator vulkan gpu device =
                   }
           }
    in managed $ Vma.withAllocator info bracket
-
-withDebug :: Vk.Instance -> Managed ()
-withDebug vulkan = do
-  _ <- managed $ Vk.withDebugUtilsMessengerEXT vulkan debugUtilsMessengerCreateInfo Nothing bracket
-  Vk.submitDebugUtilsMessageEXT
-    vulkan
-    Vk.DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
-    Vk.DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
-    Vk.zero {Vk.message = "Debug Message Test"}
-
-debugUtilsMessengerCreateInfo :: Vk.DebugUtilsMessengerCreateInfoEXT
-debugUtilsMessengerCreateInfo =
-  Vk.zero
-    { Vk.messageSeverity =
-        Vk.DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
-          .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
-      -- .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
-      Vk.messageType =
-        Vk.DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
-          .|. Vk.DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
-          .|. Vk.DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
-      VkDebugUtilsMessengerCreateInfoEXT.pfnUserCallback = Vk.debugCallbackPtr
-    }
 
 vertices :: [Sprite] -> SV.Vector Vertex
 vertices ss =
@@ -660,14 +626,6 @@ mainLoop s draw = go s 0
           s1 <- draw (t - t0) t es s0
           liftIO . threadDelay $ 1000 * 10
           go s1 t
-
-isQuitEvent :: SDL.Event -> Bool
-isQuitEvent = \case
-  (SDL.Event _ SDL.QuitEvent) -> True
-  SDL.Event _ (SDL.KeyboardEvent (SDL.KeyboardEventData _ SDL.Released False (SDL.Keysym _ code _)))
-    | code == SDL.KeycodeQ || code == SDL.KeycodeEscape ->
-        True
-  _ -> False
 
 renderScene ::
   (MonadIO io) =>
@@ -1189,70 +1147,3 @@ pickGPU vulkan surface = do
           return swapChain
 
         portabilitySubSetPresent = any ((== Vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME) . Vk.extensionName)
-
-applicationName :: IsString a => a
-applicationName = "Vulkan 2D Engine"
-
-withVulkan :: SDL.Window -> Managed Vk.Instance
-withVulkan w = do
-  exts <-
-    let extraExts =
-          [ Vk.EXT_DEBUG_UTILS_EXTENSION_NAME,
-            "VK_EXT_layer_settings",
-            Vk.KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME
-          ]
-        sdlExts = mapM (fmap BS.pack . peekCAString) =<< SDL.vkGetInstanceExtensions w
-     in liftIO $ (++ extraExts) <$> sdlExts
-  say "Vulkan" $ "Instance extenions: " ++ unwords (BS.unpack <$> exts)
-  let info =
-        Vk.zero
-          { VkInstanceCreateInfo.applicationInfo =
-              Just
-                Vk.zero
-                  { VkApplicationInfo.applicationName = Just applicationName,
-                    VkApplicationInfo.apiVersion = vulkanVersion
-                  },
-            VkInstanceCreateInfo.enabledExtensionNames = V.fromList exts,
-            VkInstanceCreateInfo.enabledLayerNames = ["VK_LAYER_KHRONOS_validation"],
-            VkInstanceCreateInfo.flags = Vk.INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR
-          }
-          ::& debugUtilsMessengerCreateInfo
-            :& Vk.ValidationFeaturesEXT
-              [ -- Vk.VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
-                Vk.VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT -- ,
-                -- Vk.VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT
-              ]
-              []
-            :& ()
-   in managed $ Vk.withInstance info Nothing bracket
-
-withSurface :: SDL.Window -> Vk.Instance -> Managed Vk.SurfaceKHR
-withSurface w v@(Vk.Instance v' _) = managed $ bracket create destroy
-  where
-    destroy s = Vk.destroySurfaceKHR v s Nothing <* say "Vulkan" "Destroyed surface"
-    create = Vk.SurfaceKHR <$> SDL.vkCreateSurface w (castPtr v') <* say "SDL" "Vulkan surface created"
-
-withWindow :: Int -> Int -> Managed SDL.Window
-withWindow width height =
-  managed $
-    bracket
-      (SDL.createWindow applicationName win <* say "SDL" "Window created")
-      (\w -> SDL.destroyWindow w <* say "SDL" "Window destroyed")
-  where
-    size = SDL.V2 (fromIntegral width) (fromIntegral height)
-    win =
-      SDL.defaultWindow
-        { SDL.windowInitialSize = size,
-          SDL.windowGraphicsContext = SDL.VulkanContext,
-          SDL.windowPosition = SDL.Centered
-        }
-
-withSDL :: Managed ()
-withSDL = do
-  liftIO printVersion
-  with_ (SDL.initialize flags <* say "SDL" "Initialized") (SDL.quit <* say "SDL" "Quit")
-  with_ (SDL.vkLoadLibrary Nothing <* say "SDL" "Loaded Vulkan lib") (SDL.vkUnloadLibrary <* say "SDL" "Unloaded Vulkan lib")
-  where
-    with_ acq rel = managed_ $ bracket_ acq rel
-    printVersion = SDL.version >>= (\(v0 :: Int, v1, v2) -> putStrLn $ "SDL: Version " ++ show v0 ++ "." ++ show v1 ++ "." ++ show v2)
-    flags = [SDL.InitEvents :: SDL.InitFlag, SDL.InitVideo] :: [SDL.InitFlag]

@@ -33,6 +33,7 @@ ghc-options:
   - -Wpartial-fields
   - -Wredundant-constraints
   - -Wambiguous-fields
+  - -O1
   # - -dynamic
   # - -dynload deploy
   # - -optl-Wl,-rpath,'$ORIGIN'

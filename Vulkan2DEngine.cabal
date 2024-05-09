@@ -18,7 +18,7 @@ executable vulkan2dengine
       Paths_Vulkan2DEngine
   hs-source-dirs:
       app
-  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -Wambiguous-fields -optl-Wl,-rpath,/usr/local/lib -threaded -rtsopts -with-rtsopts=-N -Wall -g -rtsopts -dcore-lint -debug -optcxx-std=c++11
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -Wambiguous-fields -O1 -optl-Wl,-rpath,/usr/local/lib -threaded -rtsopts -with-rtsopts=-N -Wall -g -rtsopts -dcore-lint -debug -optcxx-std=c++11
   build-depends:
       JuicyPixels
     , VulkanMemoryAllocator

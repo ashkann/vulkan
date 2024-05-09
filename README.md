@@ -14,28 +14,27 @@ stack run
 ## TODO (doubling as a roadmap)
 - [ ] Allocate both index and vertex buffers in one buffer
 - [ ] Maybe images from the same buffer as well
-- [x] More than one in-flight frame
+- [ ] More than one in-flight frame
+- [ ] Proper synchronization between frames
 - [x] Some memory is not properly freed before vulkan instance is destroyed
-- [x] Just use VMA ~~Don't map/unmap memory for vertex/index buffers every frame. Instead map/unmap once and just copy the data every frame~~
-- [x] Add texture support
-- [x] Multiple sprites using the different textures in one frame
+- [x] Just use VMA
+- [x] Basic texture support
+- [x] Make the use of required feaures explicit
+- [x] Multiple sprites using different textures in one frame
 - [ ] Use a texture atlas probably? Not sure yet
-- [ ] Investigate sampler2DArray
+- [x] Investigate sampler2DArray 
 - [x] Sprite back-to-front sorting
 - [x] Alpha blending?
-- [ ] Generate Vertex and Index buffers per frame
-- [ ] Basic static (no animation) stripe
+- [x] Generate Vertex and Index buffers per frame
+- [ ] Basic static (no animation) sprite
 - [ ] Sprite bacthing
-- [ ] Bindless textures
-- [ ] VK_KHR_buffer_device_address
+- [x] Bindless textures
+- [ ] Buffer device addresses
 - [ ] GPU driven rendering (DrawIndirect, etc)
-- [ ] Use Debug Print as Vk 1.3, not the extension
 - [ ] Basic DearImGUI integration
 - [ ] Somewhat model a single moving light source
-- [ ] Use normal maps on the static stripe to intract with the light sources
+- [ ] Use normal maps on the static sprite to intract with the light sources
 - [ ] Use specular maps for more realism
 - [ ] Think about bloom and glow effects
 - [ ] Suuport multiple light sources
 - [ ] 2D global illumination
-- [x] Make the use of required feaures explicit
-- [ ] Make Dynamic Rendering features explicit

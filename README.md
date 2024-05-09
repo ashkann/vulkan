@@ -2,14 +2,8 @@
 
 Trying to learn vulkan and Haskell hand in hand by doing a 2D engine. Hopefully at some point I can add 2D global illumination as well.
 
-## Building and running
-### Compile the shaders
 ```
-./compile
-```
-### Run
-```
-stack run
+./run.sh
 ```
 ## TODO (doubling as a roadmap)
 - [ ] Allocate both index and vertex buffers in one buffer

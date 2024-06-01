@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
@@ -34,6 +35,7 @@ import Data.Vector.Storable qualified as SV
 import DearImGui qualified as ImGui
 import DearImGui.SDL.Vulkan qualified as ImGui
 import DearImGui.Vulkan qualified as ImGui
+import Debug.Trace (trace)
 import Foreign (Bits (zeroBits), Ptr, Storable, Word32, castPtr, copyArray, withForeignPtr)
 import Foreign.Ptr (castFunPtr)
 import Foreign.Storable (Storable (..), sizeOf)
@@ -213,9 +215,8 @@ main = runManaged $ do
   pipeline <- createPipeline device extent pipelineLayout
   presentQueue <- Vk.getDeviceQueue device present 0 <* say "Vulkan" "Got present queue"
   let waitForPrevDrawCallToFinish = Vk.waitForFences device [inFlight] True maxBound *> Vk.resetFences device [inFlight]
-      frame dt t es w0 = do
-        w1 <- world dt t es w0
-        let verts = vertices $ sprites w1
+      frame w0 = do
+        let verts = vertices $ sprites w0
             vertextCount = fromIntegral $ SV.length verts
         copyBuffer device commandPool gfxQueue vertexBuffer (vertextStagingBuffer, vertextStagingBufferPointer) verts
         waitForPrevDrawCallToFinish
@@ -261,8 +262,33 @@ main = runManaged $ do
         -- say "Engine" "Rendering frame END"
         renderFrame cmd gfxQueue imageAvailable renderFinished inFlight
         presentFrame swapchain presentQueue index renderFinished
-        Vk.deviceWaitIdle device $> w1
-   in liftIO $ mainLoop world0 frame
+   in liftIO $ mainLoop world0 (\dt t es w0 -> let w1 = world dt t es w0 in frame w0 *> w1)
+
+mainLoop :: (MonadIO io) => s -> (Word32 -> Word32 -> [SDL.Event] -> s -> io s) -> io ()
+mainLoop s0 draw = SDL.ticks >>= \t0 -> go t0 s0
+  where
+    lockFrameRate fps t1 =
+      do
+        t <- SDL.ticks
+        let dt = t - t1
+            minIdle = 1000 `div` fps
+        if dt < minIdle then (liftIO . threadDelay $ 1000 * fromIntegral (minIdle - dt)) *> SDL.ticks else pure t
+    go t1 s = do
+      t <- lockFrameRate 60 t1
+      -- es <- ImGui.pollEventsWithImGui
+      es <- SDL.pollEvents
+      if any isQuitEvent es then pure () else draw (t - t1) t es s >>= go t
+
+world :: (Monad io) => Word32 -> Word32 -> [SDL.Event] -> World -> io World
+world 0 _ _ w = return w
+world dt _ es w@(World {pointer = pointer@Sprite {pos = p}, a = a, b = b, c = c}) = return w {pointer = pointer {pos = foldl f p es}, a = update a, b = update b, c = update c}
+  where
+    f _ (SDL.Event _ (SDL.MouseMotionEvent (SDL.MouseMotionEventData {mouseMotionEventPos = SDL.P (SDL.V2 x y)}))) = normalPos x y
+    f p _ = p
+    update Thingie {sprite = sprite@Sprite {pos = p0}, vel = v0} =
+      let p1 = p0 + (v0 G.^* fromIntegral dt)
+          v1 = G.emap2 (\vi pi -> if pi >= 1.0 || pi <= -1.0 then -vi else vi) v0 p1
+       in Thingie {sprite = sprite {pos = p1}, vel = v1}
 
 repeatingSampler :: Vk.Device -> Managed Vk.Sampler
 repeatingSampler device =
@@ -320,16 +346,6 @@ withImGui vulkan gpu device window queue cmdPool gfx =
       say "ImGui" "Created fonts texture"
       ImGui.vulkanDestroyFontUploadObjects
       say "ImGui" "Destroyed font upload objects"
-
-world :: (Monad io) => Word32 -> Word32 -> [SDL.Event] -> World -> io World
-world dt _ es w@(World {pointer = pointer@Sprite {pos = p}, a = a, b = b, c = c}) = return w {pointer = pointer {pos = foldl f p es}, a = update a, b = update b, c = update c}
-  where
-    f _ (SDL.Event _ (SDL.MouseMotionEvent (SDL.MouseMotionEventData {mouseMotionEventPos = SDL.P (SDL.V2 x y)}))) = normalPos x y
-    f p _ = p
-    update Thingie {sprite = sprite@Sprite {pos = p0}, vel = v0} =
-      let p1 = p0 + (v0 G.^* fromIntegral dt)
-          v1 = G.emap2 (\vi pi -> if pi >= 1.0 || pi <= -1.0 then -vi else vi) v0 p1
-       in Thingie {sprite = sprite {pos = p1}, vel = v1}
 
 windowWidth :: Int
 windowWidth = 500
@@ -606,21 +622,6 @@ withGPUBuffer allocator size flags = do
      in managed $ Vma.withBuffer allocator bufferInfo vmaInfo bracket
   say "Vulkan" $ "Created GPU buffer (" ++ show size ++ " bytes)"
   return buffer
-
-mainLoop :: (MonadIO io) => s -> (Word32 -> Word32 -> [SDL.Event] -> s -> io s) -> io ()
-mainLoop s draw = go s 0
-  where
-    go s0 t0 = do
-      -- es <- ImGui.pollEventsWithImGui
-      es <- SDL.pollEvents
-      let quit = any isQuitEvent es
-      if quit
-        then pure ()
-        else do
-          t <- SDL.ticks
-          s1 <- draw (t - t0) t es s0
-          liftIO . threadDelay $ 1000 * 10
-          go s1 t
 
 renderScene ::
   (MonadIO io) =>

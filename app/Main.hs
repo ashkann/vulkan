@@ -274,10 +274,13 @@ mainLoop s0 draw = SDL.ticks >>= \t0 -> go t0 s0
             minIdle = 1000 `div` fps
         if dt < minIdle then (liftIO . threadDelay $ 1000 * fromIntegral (minIdle - dt)) *> SDL.ticks else pure t
     go t1 s = do
-      t <- lockFrameRate 60 t1
       -- es <- ImGui.pollEventsWithImGui
       es <- SDL.pollEvents
-      if any isQuitEvent es then pure () else draw (t - t1) t es s >>= go t
+      if any isQuitEvent es
+        then pure ()
+        else do
+          t <- lockFrameRate 60 t1
+          draw (t - t1) t es s >>= go t
 
 world :: (Monad io) => Word32 -> Word32 -> [SDL.Event] -> World -> io World
 world 0 _ _ w = return w

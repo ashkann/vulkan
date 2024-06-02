@@ -189,7 +189,7 @@ main = runManaged $ do
             c = Thingie {sprite = Sprite {pos = p0, scale = third, texture = texture3}, vel = G.vec2 0.001 0.002}
           }
 
-  (swapchain, swapchainImagesAndViews, swapchainExtent) <-
+  (swapchain, swapchainExtent, swapchainImgViewCmd) <-
     createSwapchain
       gpu
       device
@@ -198,11 +198,12 @@ main = runManaged $ do
       present
       windowWidth
       windowHeight
+      commandPool
+
   pipelineLayout <-
     let info = Vk.zero {VkPipelineLayoutCreateInfo.setLayouts = [descSetLayout]}
      in managed $ Vk.withPipelineLayout device info Nothing bracket
   pipeline <- createPipeline device swapchainExtent pipelineLayout
-  cmds <- createCommandBuffers device commandPool (fromIntegral $ V.length swapchainImagesAndViews)
   presentQueue <- Vk.getDeviceQueue device present 0 <* say "Vulkan" "Got present queue"
   imageAvailable <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
   renderFinished <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
@@ -213,8 +214,7 @@ main = runManaged $ do
       frame w0 = do
         let verts = vertices $ sprites w0
         copyBuffer device commandPool gfxQueue vertexBuffer (vertextStagingBuffer, vertextStagingBufferPointer) verts
-        waitForPrevDrawCallToFinish
-        (index, image, view, cmd) <- swapChainNext device swapchain imageAvailable swapchainImagesAndViews cmds
+        (index, image, view, cmd) <- swapChainNext device swapchain imageAvailable swapchainImgViewCmd
         -- ImGui.vulkanNewFrame
         -- ImGui.sdl2NewFrame
         -- ImGui.newFrame
@@ -232,17 +232,23 @@ main = runManaged $ do
           -- renderImgui cmd view extent imguiData
           transitToPresentLayout cmd image
         -- say "Engine" "Rendering frame END"
-        renderFrame cmd gfxQueue imageAvailable renderFinished inFlight
+        waitForPrevDrawCallToFinish *> renderFrame cmd gfxQueue imageAvailable renderFinished inFlight
         presentFrame swapchain presentQueue index renderFinished
    in liftIO $
         say "Engine" "Entering the main loop"
           *> mainLoop world0 (\dt t es w0 -> let w1 = world dt t es w0 in frame w0 *> w1)
 
-swapChainNext :: (MonadIO m) => Vk.Device -> Vk.SwapchainKHR -> Vk.Semaphore -> V.Vector (Vk.Image, Vk.ImageView) -> V.Vector Vk.CommandBuffer -> m (Word32, Vk.Image, Vk.ImageView, Vk.CommandBuffer)
-swapChainNext device swapchain imageAvailable swapchainImagesAndViews commandBuffers = do
-  index <- acquireNextFrame device swapchain imageAvailable
-  let (image, view) = swapchainImagesAndViews ! fromIntegral index
-  let cmd = commandBuffers ! fromIntegral index
+swapChainNext ::
+  (MonadIO m) =>
+  Vk.Device ->
+  Vk.SwapchainKHR ->
+  Vk.Semaphore ->
+  V.Vector (Vk.Image, Vk.ImageView, Vk.CommandBuffer) ->
+  m (Word32, Vk.Image, Vk.ImageView, Vk.CommandBuffer)
+swapChainNext device swapchain imageAvailable imgViewCmds = do
+  (r, index) <- Vk.acquireNextImageKHR device swapchain maxBound imageAvailable Vk.zero
+  when (r == Vk.SUBOPTIMAL_KHR || r == Vk.ERROR_OUT_OF_DATE_KHR) $ say "Engine" $ "acquireNextFrame = " ++ show r
+  let (image, view, cmd) = imgViewCmds ! fromIntegral index
   return (index, image, view, cmd)
 
 mainLoop :: (MonadIO io) => s -> (Word32 -> Word32 -> [SDL.Event] -> s -> io s) -> io ()
@@ -349,18 +355,6 @@ normalPos x y =
       y' = (2.0 * fromIntegral y / fromIntegral windowHeight) - 1.0
    in G.vec2 x' y'
 
-acquireNextFrame :: (MonadIO io) => Vk.Device -> Vk.SwapchainKHR -> Vk.Semaphore -> io Word32
-acquireNextFrame dev swapchain imageAvailable = do
-  (r, index) <-
-    Vk.acquireNextImageKHR
-      dev
-      swapchain
-      maxBound
-      imageAvailable
-      Vk.zero
-  when (r == Vk.SUBOPTIMAL_KHR || r == Vk.ERROR_OUT_OF_DATE_KHR) $ say "acquireNextFrame" $ show r
-  return index
-
 renderFrame :: (MonadIO io) => Vk.CommandBuffer -> Vk.Queue -> Vk.Semaphore -> Vk.Semaphore -> Vk.Fence -> io ()
 renderFrame cmd gfx imageAvailable renderFinished inFlight =
   let info =
@@ -373,16 +367,16 @@ renderFrame cmd gfx imageAvailable renderFinished inFlight =
    in Vk.queueSubmit gfx [Vk.SomeStruct info] inFlight
 
 presentFrame :: (MonadIO io) => Vk.SwapchainKHR -> Vk.Queue -> Word32 -> Vk.Semaphore -> io ()
-presentFrame swapchain present idx renderFinished = do
+presentFrame swapchain present index renderFinished = do
   r <-
     let info =
           Vk.zero
             { VkPresentInfoKHR.waitSemaphores = [renderFinished],
               VkPresentInfoKHR.swapchains = [swapchain],
-              VkPresentInfoKHR.imageIndices = [idx]
+              VkPresentInfoKHR.imageIndices = [index]
             }
      in Vk.queuePresentKHR present info
-  when (r == Vk.SUBOPTIMAL_KHR || r == Vk.ERROR_OUT_OF_DATE_KHR) $ say "presentFrame" $ show r
+  when (r == Vk.SUBOPTIMAL_KHR || r == Vk.ERROR_OUT_OF_DATE_KHR) (say "Engine" $ "presentFrame" ++ show r)
 
 sprites :: World -> [Sprite]
 sprites (World background pointer Thingie {sprite = s1} Thingie {sprite = s2} Thingie {sprite = s3}) =
@@ -905,7 +899,8 @@ createSwapchain ::
   Word32 ->
   Int ->
   Int ->
-  Managed (Vk.SwapchainKHR, V.Vector (Vk.Image, Vk.ImageView), Vk.Extent2D)
+  Vk.CommandPool ->
+  Managed (Vk.SwapchainKHR, Vk.Extent2D, V.Vector (Vk.Image, Vk.ImageView, Vk.CommandBuffer))
 createSwapchain
   gpu
   dev
@@ -913,7 +908,8 @@ createSwapchain
   gfx
   present
   width
-  height =
+  height
+  pool =
     do
       surcafeCaps <- Vk.getPhysicalDeviceSurfaceCapabilitiesKHR gpu surface
       let minImageCount = VkSurfaceCaps.minImageCount surcafeCaps
@@ -948,8 +944,9 @@ createSwapchain
               }
       swapchain <- managed $ Vk.withSwapchainKHR dev info Nothing bracket
       (_, images) <- Vk.getSwapchainImagesKHR dev swapchain
-      imagesAndViews <- for images $ \image -> (image,) <$> withImageView dev image imageFormat
-      return (swapchain, imagesAndViews, extent)
+      cmds <- createCommandBuffers dev pool (fromIntegral $ V.length images)
+      imgViewCmd <- for (V.zip images cmds) $ \(image, cmd) -> (image,,cmd) <$> withImageView dev image imageFormat
+      return (swapchain, extent, imgViewCmd)
 
 withImageView :: Vk.Device -> Vk.Image -> Vk.Format -> Managed Vk.ImageView
 withImageView dev img format =

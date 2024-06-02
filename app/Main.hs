@@ -189,7 +189,7 @@ main = runManaged $ do
             c = Thingie {sprite = Sprite {pos = p0, scale = third, texture = texture3}, vel = G.vec2 0.001 0.002}
           }
 
-  (swapchain, swapchainExtent, swapchainImgViewCmd) <-
+  (swapchain, swapchainExtent, imagesAndViews) <-
     createSwapchain
       gpu
       device
@@ -198,7 +198,8 @@ main = runManaged $ do
       present
       windowWidth
       windowHeight
-      commandPool
+
+  cmds <- createCommandBuffers device commandPool (fromIntegral $ V.length imagesAndViews)
 
   pipelineLayout <-
     let info = Vk.zero {VkPipelineLayoutCreateInfo.setLayouts = [descSetLayout]}
@@ -220,7 +221,8 @@ main = runManaged $ do
         copyBuffer device commandPool gfxQueue vertexBuffer (vertextStagingBuffer, vertextStagingBufferPointer) verts
         (r, index) <- Vk.acquireNextImageKHR device swapchain maxBound imageAvailable Vk.zero
         when (r == Vk.SUBOPTIMAL_KHR || r == Vk.ERROR_OUT_OF_DATE_KHR) $ say "Engine" $ "acquireNextFrame = " ++ show r
-        let (image, view, cmd) = swapchainImgViewCmd ! fromIntegral index
+        let (image, view) = imagesAndViews ! fromIntegral index
+        let cmd = cmds ! fromIntegral index
         Vk.useCommandBuffer cmd Vk.zero $ do
           Vk.cmdBindPipeline cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
           Vk.cmdBindVertexBuffers cmd 0 [vertexBuffer] [0]
@@ -601,26 +603,25 @@ renderScene cmd extent vertextCount target = do
             VkRenderingInfo.layerCount = 1,
             VkRenderingInfo.colorAttachments = [attachment]
           }
-      -- drawScene = Vk.cmdDrawIndexed cmd indexCount 1 0 0 0
-      drawScene = Vk.cmdDraw cmd vertextCount 1 0 0
-   in Vk.cmdUseRendering cmd info drawScene
+      draw = Vk.cmdDraw cmd vertextCount 1 0 0
+   in Vk.cmdUseRendering cmd info draw
 
-renderImgui cmd view extent imguiData =
-  let attachment =
-        Vk.zero
-          { VkRenderingAttachmentInfo.imageView = view,
-            VkRenderingAttachmentInfo.imageLayout = Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            VkRenderingAttachmentInfo.loadOp = Vk.ATTACHMENT_LOAD_OP_LOAD,
-            VkRenderingAttachmentInfo.storeOp = Vk.ATTACHMENT_STORE_OP_STORE
-          }
-      scissor = Vk.Rect2D {VkRect2D.offset = Vk.Offset2D 0 0, VkRect2D.extent = extent}
-      info =
-        Vk.zero
-          { VkRenderingInfo.renderArea = scissor,
-            VkRenderingInfo.layerCount = 1,
-            VkRenderingInfo.colorAttachments = [attachment]
-          }
-   in Vk.cmdUseRendering cmd info $ ImGui.vulkanRenderDrawData imguiData cmd Nothing
+-- renderImgui cmd view extent imguiData =
+--   let attachment =
+--         Vk.zero
+--           { VkRenderingAttachmentInfo.imageView = view,
+--             VkRenderingAttachmentInfo.imageLayout = Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+--             VkRenderingAttachmentInfo.loadOp = Vk.ATTACHMENT_LOAD_OP_LOAD,
+--             VkRenderingAttachmentInfo.storeOp = Vk.ATTACHMENT_STORE_OP_STORE
+--           }
+--       scissor = Vk.Rect2D {VkRect2D.offset = Vk.Offset2D 0 0, VkRect2D.extent = extent}
+--       info =
+--         Vk.zero
+--           { VkRenderingInfo.renderArea = scissor,
+--             VkRenderingInfo.layerCount = 1,
+--             VkRenderingInfo.colorAttachments = [attachment]
+--           }
+--    in Vk.cmdUseRendering cmd info $ ImGui.vulkanRenderDrawData imguiData cmd Nothing
 
 createCommandBuffers ::
   Vk.Device ->
@@ -875,8 +876,7 @@ createSwapchain ::
   Word32 ->
   Int ->
   Int ->
-  Vk.CommandPool ->
-  Managed (Vk.SwapchainKHR, Vk.Extent2D, V.Vector (Vk.Image, Vk.ImageView, Vk.CommandBuffer))
+  Managed (Vk.SwapchainKHR, Vk.Extent2D, V.Vector (Vk.Image, Vk.ImageView))
 createSwapchain
   gpu
   dev
@@ -884,8 +884,7 @@ createSwapchain
   gfx
   present
   width
-  height
-  pool =
+  height =
     do
       surcafeCaps <- Vk.getPhysicalDeviceSurfaceCapabilitiesKHR gpu surface
       let minImageCount = VkSurfaceCaps.minImageCount surcafeCaps
@@ -920,9 +919,8 @@ createSwapchain
               }
       swapchain <- managed $ Vk.withSwapchainKHR dev info Nothing bracket
       (_, images) <- Vk.getSwapchainImagesKHR dev swapchain
-      cmds <- createCommandBuffers dev pool (fromIntegral $ V.length images)
-      imgViewCmd <- for (V.zip images cmds) $ \(image, cmd) -> (image,,cmd) <$> withImageView dev image imageFormat
-      return (swapchain, extent, imgViewCmd)
+      imagesAndViews <- for images $ \image -> (image,) <$> withImageView dev image imageFormat
+      return (swapchain, extent, imagesAndViews)
 
 withImageView :: Vk.Device -> Vk.Image -> Vk.Format -> Managed Vk.ImageView
 withImageView dev img format =

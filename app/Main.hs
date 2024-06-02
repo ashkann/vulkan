@@ -21,7 +21,7 @@ import Codec.Picture qualified as JP
 import Control.Applicative ((<|>))
 import Control.Concurrent (threadDelay)
 import Control.Exception (bracket, bracket_)
-import Control.Monad (replicateM, when)
+import Control.Monad (when)
 import Control.Monad.Except (ExceptT (ExceptT), runExceptT)
 import Control.Monad.Managed (Managed, MonadIO (liftIO), managed, managed_, runManaged)
 import Data.Bits ((.&.), (.|.))
@@ -198,10 +198,9 @@ main = runManaged $ do
       present
       windowWidth
       windowHeight
-  frameCount <- fromIntegral $ V.length imagesAndViews
-  cmds <- createCommandBuffers device commandPool frameCount
-  imageAvailable2 <- V.replicateM (fromIntegral frameCount) $ managed $ Vk.withSemaphore device Vk.zero Nothing bracket
-  renderFinished2 <- V.replicateM (fromIntegral frameCount) $ managed $ Vk.withSemaphore device Vk.zero Nothing bracket
+  let frameCount = V.length imagesAndViews
+  cmds <- createCommandBuffers device commandPool (fromIntegral frameCount)
+  semaphores <- V.replicateM (frameCount * 2) $ managed $ Vk.withSemaphore device Vk.zero Nothing bracket
 
   pipelineLayout <-
     let info = Vk.zero {VkPipelineLayoutCreateInfo.setLayouts = [descSetLayout]}
@@ -218,12 +217,11 @@ main = runManaged $ do
         Vk.deviceWaitIdle device
 
       frame frameNumber w0 = do
-        let n = fromIntegral (frameNumber `mod` frameCount) :: Int
-        say "Engine" $ "n=" ++ show n
+        let n = frameNumber `mod` frameCount
         let verts = vertices $ sprites w0
         copyBuffer device commandPool gfxQueue vertexBuffer (vertextStagingBuffer, vertextStagingBufferPointer) verts
-        let imageAvailable = imageAvailable2 ! n
-        let renderFinished = renderFinished2 ! n
+        let imageAvailable = semaphores ! n
+        let renderFinished = semaphores ! (n + frameCount)
         let cmd = cmds ! n
         (r, index) <- Vk.acquireNextImageKHR device swapchain maxBound imageAvailable Vk.zero
         when (r == Vk.SUBOPTIMAL_KHR || r == Vk.ERROR_OUT_OF_DATE_KHR) $ say "Engine" $ "acquireNextFrame = " ++ show r
@@ -257,7 +255,7 @@ main = runManaged $ do
         say "Engine" "Entering the main loop"
           *> mainLoop shutdown world0 (\n dt t es w0 -> let w1 = world dt t es w0 in frame n w0 *> w1)
 
-mainLoop :: (MonadIO io) => io () -> s -> (Word32 -> Word32 -> Word32 -> [SDL.Event] -> s -> io s) -> io ()
+mainLoop :: (MonadIO io) => io () -> s -> (Int -> Word32 -> Word32 -> [SDL.Event] -> s -> io s) -> io ()
 mainLoop shutdown s0 draw = SDL.ticks >>= \t0 -> go 0 t0 s0
   where
     lockFrameRate fps t1 =
@@ -909,7 +907,7 @@ createSwapchain
           info =
             Vk.zero
               { VkSwapchainCreateInfo.surface = surface,
-                VkSwapchainCreateInfo.minImageCount = minImageCount,
+                VkSwapchainCreateInfo.minImageCount = minImageCount + 1,
                 VkSwapchainCreateInfo.imageFormat = imageFormat,
                 VkSwapchainCreateInfo.imageColorSpace = colorSpace,
                 VkSwapchainCreateInfo.imageExtent = extent,

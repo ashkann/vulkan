@@ -905,7 +905,7 @@ createSwapchain
           info =
             Vk.zero
               { VkSwapchainCreateInfo.surface = surface,
-                VkSwapchainCreateInfo.minImageCount = minImageCount + 1,
+                VkSwapchainCreateInfo.minImageCount = minImageCount,
                 VkSwapchainCreateInfo.imageFormat = imageFormat,
                 VkSwapchainCreateInfo.imageColorSpace = colorSpace,
                 VkSwapchainCreateInfo.imageExtent = extent,

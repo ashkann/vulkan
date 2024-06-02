@@ -147,7 +147,7 @@ main = runManaged $ do
   say "Vulkan" "Creating device"
   device <- withDevice gpu present gfx portable <* say "Vulkan" "Device created"
   say "Vulkan" "Creating swap chain"
-  (swapchain, images, extent) <-
+  (swapchain, swapchainImagesAndViews, extent) <-
     withSwapchain
       gpu
       device
@@ -195,7 +195,7 @@ main = runManaged $ do
   (SDL.cursorVisible SDL.$= False) <* say "SDL" "Dsiable cursor"
   say "Engine" "Entering the main loop"
   -- withImGui vulkan gpu device window gfxQueue commandPool gfxQueue
-  commandBuffers <- createCommandBuffers device commandPool (fromIntegral $ V.length images)
+  commandBuffers <- createCommandBuffers device commandPool (fromIntegral $ V.length swapchainImagesAndViews)
   let p0 = G.vec2 (-0.5) (-0.5)
       one = G.vec2 1 1
       half = G.vec2 0.5 0.5
@@ -217,16 +217,15 @@ main = runManaged $ do
   let waitForPrevDrawCallToFinish = Vk.waitForFences device [inFlight] True maxBound *> Vk.resetFences device [inFlight]
       frame w0 = do
         let verts = vertices $ sprites w0
-            vertextCount = fromIntegral $ SV.length verts
         copyBuffer device commandPool gfxQueue vertexBuffer (vertextStagingBuffer, vertextStagingBufferPointer) verts
         waitForPrevDrawCallToFinish
         index <- acquireNextFrame device swapchain imageAvailable
-        let (img, view) = images ! fromIntegral index
+        let (image, view) = swapchainImagesAndViews ! fromIntegral index
             cmd = commandBuffers ! fromIntegral index
             transitToPresentLayout =
               transitImageLayout
                 cmd
-                img
+                image
                 Vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT
                 (Vk.AccessFlagBits 0)
                 Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
@@ -236,7 +235,7 @@ main = runManaged $ do
             transitToRenderLayout =
               transitImageLayout
                 cmd
-                img
+                image
                 (Vk.AccessFlagBits 0)
                 Vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT
                 Vk.IMAGE_LAYOUT_UNDEFINED
@@ -255,7 +254,7 @@ main = runManaged $ do
           Vk.cmdBindVertexBuffers cmd 0 [vertexBuffer] [0]
           Vk.cmdBindDescriptorSets cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipelineLayout 0 [descSet] []
           transitToRenderLayout
-          renderScene extent vertextCount view cmd
+          let vc = fromIntegral $ SV.length verts in renderScene extent vc view cmd
           -- say "Engine" "Rendering ImGUI BEGIN"
           -- renderImgui cmd view extent imguiData
           transitToPresentLayout

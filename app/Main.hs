@@ -21,7 +21,7 @@ import Codec.Picture qualified as JP
 import Control.Applicative ((<|>))
 import Control.Concurrent (threadDelay)
 import Control.Exception (bracket, bracket_)
-import Control.Monad (when)
+import Control.Monad (replicateM, when)
 import Control.Monad.Except (ExceptT (ExceptT), runExceptT)
 import Control.Monad.Managed (Managed, MonadIO (liftIO), managed, managed_, runManaged)
 import Data.Bits ((.&.), (.|.))
@@ -198,16 +198,17 @@ main = runManaged $ do
       present
       windowWidth
       windowHeight
-
-  cmds <- createCommandBuffers device commandPool (fromIntegral $ V.length imagesAndViews)
+  frameCount <- fromIntegral $ V.length imagesAndViews
+  cmds <- createCommandBuffers device commandPool frameCount
+  imageAvailable2 <- V.replicateM (fromIntegral frameCount) $ managed $ Vk.withSemaphore device Vk.zero Nothing bracket
+  renderFinished2 <- V.replicateM (fromIntegral frameCount) $ managed $ Vk.withSemaphore device Vk.zero Nothing bracket
 
   pipelineLayout <-
     let info = Vk.zero {VkPipelineLayoutCreateInfo.setLayouts = [descSetLayout]}
      in managed $ Vk.withPipelineLayout device info Nothing bracket
   pipeline <- createPipeline device swapchainExtent pipelineLayout
   presentQueue <- Vk.getDeviceQueue device present 0 <* say "Vulkan" "Got present queue"
-  imageAvailable <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
-  renderFinished <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
+
   inFlight <-
     let info = Vk.zero {VkFenceCreateInfo.flags = Vk.FENCE_CREATE_SIGNALED_BIT}
      in managed $ Vk.withFence device info Nothing bracket
@@ -216,13 +217,17 @@ main = runManaged $ do
         liftIO $ say "Engine" "Shutting down ..."
         Vk.deviceWaitIdle device
 
-      frame w0 = do
+      frame frameNumber w0 = do
+        let n = fromIntegral (frameNumber `mod` frameCount) :: Int
+        say "Engine" $ "n=" ++ show n
         let verts = vertices $ sprites w0
         copyBuffer device commandPool gfxQueue vertexBuffer (vertextStagingBuffer, vertextStagingBufferPointer) verts
+        let imageAvailable = imageAvailable2 ! n
+        let renderFinished = renderFinished2 ! n
+        let cmd = cmds ! n
         (r, index) <- Vk.acquireNextImageKHR device swapchain maxBound imageAvailable Vk.zero
         when (r == Vk.SUBOPTIMAL_KHR || r == Vk.ERROR_OUT_OF_DATE_KHR) $ say "Engine" $ "acquireNextFrame = " ++ show r
         let (image, view) = imagesAndViews ! fromIntegral index
-        let cmd = cmds ! fromIntegral index
         Vk.useCommandBuffer cmd Vk.zero $ do
           Vk.cmdBindPipeline cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
           Vk.cmdBindVertexBuffers cmd 0 [vertexBuffer] [0]
@@ -250,10 +255,10 @@ main = runManaged $ do
         when (r2 == Vk.SUBOPTIMAL_KHR || r2 == Vk.ERROR_OUT_OF_DATE_KHR) (say "Engine" $ "presentFrame" ++ show r)
    in liftIO $
         say "Engine" "Entering the main loop"
-          *> mainLoop shutdown world0 (\dt t es w0 -> let w1 = world dt t es w0 in frame w0 *> w1)
+          *> mainLoop shutdown world0 (\n dt t es w0 -> let w1 = world dt t es w0 in frame n w0 *> w1)
 
-mainLoop :: (MonadIO io) => io () -> s -> (Word32 -> Word32 -> [SDL.Event] -> s -> io s) -> io ()
-mainLoop shutdown s0 draw = SDL.ticks >>= \t0 -> go t0 s0
+mainLoop :: (MonadIO io) => io () -> s -> (Word32 -> Word32 -> Word32 -> [SDL.Event] -> s -> io s) -> io ()
+mainLoop shutdown s0 draw = SDL.ticks >>= \t0 -> go 0 t0 s0
   where
     lockFrameRate fps t1 =
       do
@@ -261,14 +266,14 @@ mainLoop shutdown s0 draw = SDL.ticks >>= \t0 -> go t0 s0
         let dt = t - t1
             minIdle = 1000 `div` fps
         if dt < minIdle then (liftIO . threadDelay $ 1000 * fromIntegral (minIdle - dt)) *> SDL.ticks else pure t
-    go t1 s = do
+    go frameNumber t1 s = do
       -- es <- ImGui.pollEventsWithImGui
       es <- SDL.pollEvents
       if any isQuitEvent es
         then shutdown
         else do
           t <- lockFrameRate 60 t1
-          draw (t - t1) t es s >>= go t
+          draw frameNumber (t - t1) t es s >>= go (frameNumber + 1) t
 
 world :: (Monad io) => Word32 -> Word32 -> [SDL.Event] -> World -> io World
 world 0 _ _ w = return w

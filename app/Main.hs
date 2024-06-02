@@ -237,7 +237,15 @@ main = runManaged $ do
                   VkSubmitInfo.signalSemaphores = [renderFinished]
                 }
          in Vk.queueSubmit gfxQueue [Vk.SomeStruct info] inFlight
-        presentFrame swapchain presentQueue index renderFinished
+        r2 <-
+          let info =
+                Vk.zero
+                  { VkPresentInfoKHR.waitSemaphores = [renderFinished],
+                    VkPresentInfoKHR.swapchains = [swapchain],
+                    VkPresentInfoKHR.imageIndices = [index]
+                  }
+           in Vk.queuePresentKHR presentQueue info
+        when (r2 == Vk.SUBOPTIMAL_KHR || r2 == Vk.ERROR_OUT_OF_DATE_KHR) (say "Engine" $ "presentFrame" ++ show r)
    in liftIO $
         say "Engine" "Entering the main loop"
           *> mainLoop shutdown world0 (\dt t es w0 -> let w1 = world dt t es w0 in frame w0 *> w1)
@@ -345,18 +353,6 @@ normalPos x y =
   let x' = (2.0 * fromIntegral x / fromIntegral windowWidth) - 1.0
       y' = (2.0 * fromIntegral y / fromIntegral windowHeight) - 1.0
    in G.vec2 x' y'
-
-presentFrame :: (MonadIO io) => Vk.SwapchainKHR -> Vk.Queue -> Word32 -> Vk.Semaphore -> io ()
-presentFrame swapchain present index renderFinished = do
-  r <-
-    let info =
-          Vk.zero
-            { VkPresentInfoKHR.waitSemaphores = [renderFinished],
-              VkPresentInfoKHR.swapchains = [swapchain],
-              VkPresentInfoKHR.imageIndices = [index]
-            }
-     in Vk.queuePresentKHR present info
-  when (r == Vk.SUBOPTIMAL_KHR || r == Vk.ERROR_OUT_OF_DATE_KHR) (say "Engine" $ "presentFrame" ++ show r)
 
 sprites :: World -> [Sprite]
 sprites (World background pointer Thingie {sprite = s1} Thingie {sprite = s2} Thingie {sprite = s3}) =

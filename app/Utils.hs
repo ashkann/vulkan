@@ -14,7 +14,10 @@ module Utils
     withWindow,
     vulkanVersion,
     isQuitEvent,
-    withDebug
+    withDebug,
+    transitImageLayout,
+    transitToPresentLayout,
+    transitToRenderLayout,
   )
 where
 
@@ -38,6 +41,9 @@ import Vulkan qualified as VkInstanceCreateInfo (InstanceCreateInfo (..))
 import Vulkan.CStruct.Extends (pattern (:&), pattern (::&))
 import Vulkan.Utils.Debug qualified as Vk
 import Vulkan.Zero qualified as Vk
+import Vulkan qualified as VkImageSubresourceRange (ImageSubresourceRange (..))
+import Vulkan qualified as VkImageMemoryBarrier (ImageMemoryBarrier (..))
+import Vulkan.CStruct.Extends qualified as Vk
 
 say :: (MonadIO io) => String -> String -> io ()
 say prefix msg = liftIO . putStrLn $ prefix ++ ": " ++ msg
@@ -145,3 +151,60 @@ isQuitEvent = \case
     | code == SDL.KeycodeQ || code == SDL.KeycodeEscape ->
         True
   _ -> False
+
+transitToPresentLayout :: MonadIO io => Vk.CommandBuffer -> Vk.Image -> io ()
+transitToPresentLayout cmd image =
+  transitImageLayout
+    cmd
+    image
+    Vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+    (Vk.AccessFlagBits 0)
+    Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+    Vk.IMAGE_LAYOUT_PRESENT_SRC_KHR
+    Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+    Vk.PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT
+    
+transitToRenderLayout :: MonadIO io => Vk.CommandBuffer -> Vk.Image -> io ()
+transitToRenderLayout cmd image =
+  transitImageLayout
+    cmd
+    image
+    (Vk.AccessFlagBits 0)
+    Vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+    Vk.IMAGE_LAYOUT_UNDEFINED
+    Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+    Vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT
+    Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+
+transitImageLayout ::
+  (MonadIO io) =>
+  Vk.CommandBuffer ->
+  Vk.Image ->
+  Vk.AccessFlagBits ->
+  Vk.AccessFlagBits ->
+  Vk.ImageLayout ->
+  Vk.ImageLayout ->
+  Vk.PipelineStageFlags ->
+  Vk.PipelineStageFlags ->
+  io ()
+transitImageLayout cmd img srcMask dstMask oldLayout newLayout srcStage dstStage =
+  let range =
+        Vk.zero
+          { VkImageSubresourceRange.aspectMask = Vk.IMAGE_ASPECT_COLOR_BIT,
+            VkImageSubresourceRange.baseMipLevel = 0,
+            VkImageSubresourceRange.levelCount = 1,
+            VkImageSubresourceRange.baseArrayLayer = 0,
+            VkImageSubresourceRange.layerCount = 1
+          }
+      barrier =
+        Vk.zero
+          { VkImageMemoryBarrier.srcAccessMask = srcMask,
+            VkImageMemoryBarrier.dstAccessMask = dstMask,
+            VkImageMemoryBarrier.oldLayout = oldLayout,
+            VkImageMemoryBarrier.newLayout = newLayout,
+            VkImageMemoryBarrier.image = img,
+            VkImageMemoryBarrier.srcQueueFamilyIndex = Vk.QUEUE_FAMILY_IGNORED,
+            VkImageMemoryBarrier.dstQueueFamilyIndex = Vk.QUEUE_FAMILY_IGNORED,
+            VkImageMemoryBarrier.subresourceRange = range
+          }
+   in Vk.cmdPipelineBarrier cmd srcStage dstStage (Vk.DependencyFlagBits 0) [] [] [Vk.SomeStruct barrier]

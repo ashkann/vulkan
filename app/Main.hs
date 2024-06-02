@@ -35,7 +35,6 @@ import Data.Vector.Storable qualified as SV
 import DearImGui qualified as ImGui
 import DearImGui.SDL.Vulkan qualified as ImGui
 import DearImGui.Vulkan qualified as ImGui
-import Debug.Trace (trace)
 import Foreign (Bits (zeroBits), Ptr, Storable, Word32, castPtr, copyArray, withForeignPtr)
 import Foreign.Ptr (castFunPtr)
 import Foreign.Storable (Storable (..), sizeOf)
@@ -65,7 +64,6 @@ import Vulkan qualified as VkExtent3D (Extent3D (..))
 import Vulkan qualified as VkFenceCreateInfo (FenceCreateInfo (..))
 import Vulkan qualified as VkGraphicsPipelineCreateInfo (GraphicsPipelineCreateInfo (..))
 import Vulkan qualified as VkImageCreateInfo (ImageCreateInfo (..))
-import Vulkan qualified as VkImageMemoryBarrier (ImageMemoryBarrier (..))
 import Vulkan qualified as VkImageSubresourceLayers (ImageSubresourceLayers (..))
 import Vulkan qualified as VkImageSubresourceRange (ImageSubresourceRange (..))
 import Vulkan qualified as VkImageViewCreateInfo (ImageViewCreateInfo (..))
@@ -147,16 +145,6 @@ main = runManaged $ do
   say "Vulkan" "Creating device"
   device <- withDevice gpu present gfx portable <* say "Vulkan" "Device created"
   say "Vulkan" "Creating swap chain"
-  (swapchain, swapchainImagesAndViews, extent) <-
-    withSwapchain
-      gpu
-      device
-      surface
-      gfx
-      present
-      windowWidth
-      windowHeight
-      <* say "Vulkan" "Creating vertex buffer"
   commandPool <-
     let info =
           Vk.zero
@@ -184,18 +172,10 @@ main = runManaged $ do
     let textures = ["checkerboard", "pointer", "image3", "image", "image4"] :: [String]
      in traverse (\tex -> let file = "textures/" ++ tex ++ ".png" in readTexture allocator device commandPool gfxQueue file) textures
   [background, pointer, texture1, texture2, texture3] <- bindTextures device descSet textures sampler
-  say "Vulkan" "Recorded command buffers"
-  imageAvailable <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
-  renderFinished <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
-  inFlight <-
-    let info = Vk.zero {VkFenceCreateInfo.flags = Vk.FENCE_CREATE_SIGNALED_BIT}
-     in managed $ Vk.withFence device info Nothing bracket
   SDL.showWindow window <* say "SDL" "Show window"
   SDL.raiseWindow window <* say "SDL" "Raise window"
   (SDL.cursorVisible SDL.$= False) <* say "SDL" "Dsiable cursor"
-  say "Engine" "Entering the main loop"
   -- withImGui vulkan gpu device window gfxQueue commandPool gfxQueue
-  commandBuffers <- createCommandBuffers device commandPool (fromIntegral $ V.length swapchainImagesAndViews)
   let p0 = G.vec2 (-0.5) (-0.5)
       one = G.vec2 1 1
       half = G.vec2 0.5 0.5
@@ -209,39 +189,32 @@ main = runManaged $ do
             c = Thingie {sprite = Sprite {pos = p0, scale = third, texture = texture3}, vel = G.vec2 0.001 0.002}
           }
 
+  (swapchain, swapchainImagesAndViews, swapchainExtent) <-
+    createSwapchain
+      gpu
+      device
+      surface
+      gfx
+      present
+      windowWidth
+      windowHeight
   pipelineLayout <-
     let info = Vk.zero {VkPipelineLayoutCreateInfo.setLayouts = [descSetLayout]}
      in managed $ Vk.withPipelineLayout device info Nothing bracket
-  pipeline <- createPipeline device extent pipelineLayout
+  pipeline <- createPipeline device swapchainExtent pipelineLayout
+  cmds <- createCommandBuffers device commandPool (fromIntegral $ V.length swapchainImagesAndViews)
   presentQueue <- Vk.getDeviceQueue device present 0 <* say "Vulkan" "Got present queue"
+  imageAvailable <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
+  renderFinished <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
+  inFlight <-
+    let info = Vk.zero {VkFenceCreateInfo.flags = Vk.FENCE_CREATE_SIGNALED_BIT}
+     in managed $ Vk.withFence device info Nothing bracket
   let waitForPrevDrawCallToFinish = Vk.waitForFences device [inFlight] True maxBound *> Vk.resetFences device [inFlight]
       frame w0 = do
         let verts = vertices $ sprites w0
         copyBuffer device commandPool gfxQueue vertexBuffer (vertextStagingBuffer, vertextStagingBufferPointer) verts
         waitForPrevDrawCallToFinish
-        index <- acquireNextFrame device swapchain imageAvailable
-        let (image, view) = swapchainImagesAndViews ! fromIntegral index
-            cmd = commandBuffers ! fromIntegral index
-            transitToPresentLayout =
-              transitImageLayout
-                cmd
-                image
-                Vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT
-                (Vk.AccessFlagBits 0)
-                Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
-                Vk.IMAGE_LAYOUT_PRESENT_SRC_KHR
-                Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
-                Vk.PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT
-            transitToRenderLayout =
-              transitImageLayout
-                cmd
-                image
-                (Vk.AccessFlagBits 0)
-                Vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT
-                Vk.IMAGE_LAYOUT_UNDEFINED
-                Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
-                Vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT
-                Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+        (index, image, view, cmd) <- swapChainNext device swapchain imageAvailable swapchainImagesAndViews cmds
         -- ImGui.vulkanNewFrame
         -- ImGui.sdl2NewFrame
         -- ImGui.newFrame
@@ -253,15 +226,24 @@ main = runManaged $ do
           Vk.cmdBindPipeline cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
           Vk.cmdBindVertexBuffers cmd 0 [vertexBuffer] [0]
           Vk.cmdBindDescriptorSets cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipelineLayout 0 [descSet] []
-          transitToRenderLayout
-          let vc = fromIntegral $ SV.length verts in renderScene extent vc view cmd
+          transitToRenderLayout cmd image
+          let vc = fromIntegral $ SV.length verts in renderScene swapchainExtent vc view cmd
           -- say "Engine" "Rendering ImGUI BEGIN"
           -- renderImgui cmd view extent imguiData
-          transitToPresentLayout
+          transitToPresentLayout cmd image
         -- say "Engine" "Rendering frame END"
         renderFrame cmd gfxQueue imageAvailable renderFinished inFlight
         presentFrame swapchain presentQueue index renderFinished
-   in liftIO $ mainLoop world0 (\dt t es w0 -> let w1 = world dt t es w0 in frame w0 *> w1)
+   in liftIO $
+        say "Engine" "Entering the main loop"
+          *> mainLoop world0 (\dt t es w0 -> let w1 = world dt t es w0 in frame w0 *> w1)
+
+swapChainNext :: (MonadIO m) => Vk.Device -> Vk.SwapchainKHR -> Vk.Semaphore -> V.Vector (Vk.Image, Vk.ImageView) -> V.Vector Vk.CommandBuffer -> m (Word32, Vk.Image, Vk.ImageView, Vk.CommandBuffer)
+swapChainNext device swapchain imageAvailable swapchainImagesAndViews commandBuffers = do
+  index <- acquireNextFrame device swapchain imageAvailable
+  let (image, view) = swapchainImagesAndViews ! fromIntegral index
+  let cmd = commandBuffers ! fromIntegral index
+  return (index, image, view, cmd)
 
 mainLoop :: (MonadIO io) => s -> (Word32 -> Word32 -> [SDL.Event] -> s -> io s) -> io ()
 mainLoop s0 draw = SDL.ticks >>= \t0 -> go t0 s0
@@ -670,39 +652,6 @@ renderImgui cmd view extent imguiData =
           }
    in Vk.cmdUseRendering cmd info $ ImGui.vulkanRenderDrawData imguiData cmd Nothing
 
-transitImageLayout ::
-  (MonadIO io) =>
-  Vk.CommandBuffer ->
-  Vk.Image ->
-  Vk.AccessFlagBits ->
-  Vk.AccessFlagBits ->
-  Vk.ImageLayout ->
-  Vk.ImageLayout ->
-  Vk.PipelineStageFlags ->
-  Vk.PipelineStageFlags ->
-  io ()
-transitImageLayout cmd img srcMask dstMask old new srcStage dstStage =
-  let range =
-        Vk.zero
-          { VkImageSubresourceRange.aspectMask = Vk.IMAGE_ASPECT_COLOR_BIT,
-            VkImageSubresourceRange.baseMipLevel = 0,
-            VkImageSubresourceRange.levelCount = 1,
-            VkImageSubresourceRange.baseArrayLayer = 0,
-            VkImageSubresourceRange.layerCount = 1
-          }
-      barrier =
-        Vk.zero
-          { VkImageMemoryBarrier.srcAccessMask = srcMask,
-            VkImageMemoryBarrier.dstAccessMask = dstMask,
-            VkImageMemoryBarrier.oldLayout = old,
-            VkImageMemoryBarrier.newLayout = new,
-            VkImageMemoryBarrier.image = img,
-            VkImageMemoryBarrier.srcQueueFamilyIndex = Vk.QUEUE_FAMILY_IGNORED,
-            VkImageMemoryBarrier.dstQueueFamilyIndex = Vk.QUEUE_FAMILY_IGNORED,
-            VkImageMemoryBarrier.subresourceRange = range
-          }
-   in Vk.cmdPipelineBarrier cmd srcStage dstStage (Vk.DependencyFlagBits 0) [] [] [Vk.SomeStruct barrier]
-
 createCommandBuffers ::
   Vk.Device ->
   Vk.CommandPool ->
@@ -948,7 +897,7 @@ imageFormat = Vk.FORMAT_B8G8R8A8_SRGB
 colorSpace :: Vk.ColorSpaceKHR
 colorSpace = Vk.COLOR_SPACE_SRGB_NONLINEAR_KHR
 
-withSwapchain ::
+createSwapchain ::
   Vk.PhysicalDevice ->
   Vk.Device ->
   Vk.SurfaceKHR ->
@@ -957,7 +906,7 @@ withSwapchain ::
   Int ->
   Int ->
   Managed (Vk.SwapchainKHR, V.Vector (Vk.Image, Vk.ImageView), Vk.Extent2D)
-withSwapchain
+createSwapchain
   gpu
   dev
   surface
@@ -999,10 +948,8 @@ withSwapchain
               }
       swapchain <- managed $ Vk.withSwapchainKHR dev info Nothing bracket
       (_, images) <- Vk.getSwapchainImagesKHR dev swapchain
-      viewImages <-
-        let f img = withImageView dev img imageFormat
-         in for images $ \img -> (img,) <$> f img
-      return (swapchain, viewImages, extent)
+      imagesAndViews <- for images $ \image -> (image,) <$> withImageView dev image imageFormat
+      return (swapchain, imagesAndViews, extent)
 
 withImageView :: Vk.Device -> Vk.Image -> Vk.Format -> Managed Vk.ImageView
 withImageView dev img format =

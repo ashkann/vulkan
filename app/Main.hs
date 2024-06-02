@@ -228,7 +228,15 @@ main = runManaged $ do
           transitToRenderLayout cmd image
           let vc = fromIntegral $ SV.length verts in renderScene cmd swapchainExtent vc view
           transitToPresentLayout cmd image
-        waitForPrevDrawCallToFinish *> renderFrame cmd gfxQueue imageAvailable renderFinished inFlight
+        waitForPrevDrawCallToFinish
+        let info =
+              Vk.zero
+                { VkSubmitInfo.waitSemaphores = [imageAvailable],
+                  VkSubmitInfo.waitDstStageMask = [Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT],
+                  VkSubmitInfo.commandBuffers = [Vk.commandBufferHandle cmd],
+                  VkSubmitInfo.signalSemaphores = [renderFinished]
+                }
+         in Vk.queueSubmit gfxQueue [Vk.SomeStruct info] inFlight
         presentFrame swapchain presentQueue index renderFinished
    in liftIO $
         say "Engine" "Entering the main loop"
@@ -337,17 +345,6 @@ normalPos x y =
   let x' = (2.0 * fromIntegral x / fromIntegral windowWidth) - 1.0
       y' = (2.0 * fromIntegral y / fromIntegral windowHeight) - 1.0
    in G.vec2 x' y'
-
-renderFrame :: (MonadIO io) => Vk.CommandBuffer -> Vk.Queue -> Vk.Semaphore -> Vk.Semaphore -> Vk.Fence -> io ()
-renderFrame cmd gfx imageAvailable renderFinished inFlight =
-  let info =
-        Vk.zero
-          { VkSubmitInfo.waitSemaphores = [imageAvailable],
-            VkSubmitInfo.waitDstStageMask = [Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT],
-            VkSubmitInfo.commandBuffers = [Vk.commandBufferHandle cmd],
-            VkSubmitInfo.signalSemaphores = [renderFinished]
-          }
-   in Vk.queueSubmit gfx [Vk.SomeStruct info] inFlight
 
 presentFrame :: (MonadIO io) => Vk.SwapchainKHR -> Vk.Queue -> Word32 -> Vk.Semaphore -> io ()
 presentFrame swapchain present index renderFinished = do

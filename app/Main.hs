@@ -213,49 +213,26 @@ main = runManaged $ do
   let waitForPrevDrawCallToFinish = Vk.waitForFences device [inFlight] True maxBound *> Vk.resetFences device [inFlight]
       shutdown = do
         liftIO $ say "Engine" "Shutting down ..."
-        -- Vk.queueWaitIdle gfxQueue
-        -- Vk.queueWaitIdle presentQueue
         Vk.deviceWaitIdle device
 
       frame w0 = do
         let verts = vertices $ sprites w0
         copyBuffer device commandPool gfxQueue vertexBuffer (vertextStagingBuffer, vertextStagingBufferPointer) verts
-        (index, image, view, cmd) <- swapChainNext device swapchain imageAvailable swapchainImgViewCmd
-        -- ImGui.vulkanNewFrame
-        -- ImGui.sdl2NewFrame
-        -- ImGui.newFrame
-        -- ImGui.showDemoWindow
-        -- ImGui.render
-        -- imguiData <- ImGui.getDrawData
-        -- say "Engine" "Rendering frame BEGIN"
+        (r, index) <- Vk.acquireNextImageKHR device swapchain maxBound imageAvailable Vk.zero
+        when (r == Vk.SUBOPTIMAL_KHR || r == Vk.ERROR_OUT_OF_DATE_KHR) $ say "Engine" $ "acquireNextFrame = " ++ show r
+        let (image, view, cmd) = swapchainImgViewCmd ! fromIntegral index
         Vk.useCommandBuffer cmd Vk.zero $ do
           Vk.cmdBindPipeline cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
           Vk.cmdBindVertexBuffers cmd 0 [vertexBuffer] [0]
           Vk.cmdBindDescriptorSets cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipelineLayout 0 [descSet] []
           transitToRenderLayout cmd image
           let vc = fromIntegral $ SV.length verts in renderScene cmd swapchainExtent vc view
-          -- say "Engine" "Rendering ImGUI BEGIN"
-          -- renderImgui cmd view extent imguiData
           transitToPresentLayout cmd image
-        -- say "Engine" "Rendering frame END"
         waitForPrevDrawCallToFinish *> renderFrame cmd gfxQueue imageAvailable renderFinished inFlight
         presentFrame swapchain presentQueue index renderFinished
    in liftIO $
         say "Engine" "Entering the main loop"
           *> mainLoop shutdown world0 (\dt t es w0 -> let w1 = world dt t es w0 in frame w0 *> w1)
-
-swapChainNext ::
-  (MonadIO m) =>
-  Vk.Device ->
-  Vk.SwapchainKHR ->
-  Vk.Semaphore ->
-  V.Vector (Vk.Image, Vk.ImageView, Vk.CommandBuffer) ->
-  m (Word32, Vk.Image, Vk.ImageView, Vk.CommandBuffer)
-swapChainNext device swapchain imageAvailable imgViewCmds = do
-  (r, index) <- Vk.acquireNextImageKHR device swapchain maxBound imageAvailable Vk.zero
-  when (r == Vk.SUBOPTIMAL_KHR || r == Vk.ERROR_OUT_OF_DATE_KHR) $ say "Engine" $ "acquireNextFrame = " ++ show r
-  let (image, view, cmd) = imgViewCmds ! fromIntegral index
-  return (index, image, view, cmd)
 
 mainLoop :: (MonadIO io) => io () -> s -> (Word32 -> Word32 -> [SDL.Event] -> s -> io s) -> io ()
 mainLoop shutdown s0 draw = SDL.ticks >>= \t0 -> go t0 s0

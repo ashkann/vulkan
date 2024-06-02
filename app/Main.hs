@@ -227,7 +227,7 @@ main = runManaged $ do
           Vk.cmdBindVertexBuffers cmd 0 [vertexBuffer] [0]
           Vk.cmdBindDescriptorSets cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipelineLayout 0 [descSet] []
           transitToRenderLayout cmd image
-          let vc = fromIntegral $ SV.length verts in renderScene swapchainExtent vc view cmd
+          let vc = fromIntegral $ SV.length verts in renderScene cmd swapchainExtent vc view
           -- say "Engine" "Rendering ImGUI BEGIN"
           -- renderImgui cmd view extent imguiData
           transitToPresentLayout cmd image
@@ -609,12 +609,12 @@ withGPUBuffer allocator size flags = do
 
 renderScene ::
   (MonadIO io) =>
+  Vk.CommandBuffer ->
   Vk.Extent2D ->
   Word32 ->
   Vk.ImageView ->
-  Vk.CommandBuffer ->
   io ()
-renderScene extent vertextCount target cmd = do
+renderScene cmd extent vertextCount target = do
   let clear = Vk.Color (Vk.Float32 1.0 0.0 1.0 0)
       attachment =
         Vk.zero
@@ -632,7 +632,7 @@ renderScene extent vertextCount target cmd = do
             VkRenderingInfo.colorAttachments = [attachment]
           }
       -- drawScene = Vk.cmdDrawIndexed cmd indexCount 1 0 0 0
-      drawScene = Vk.cmdDraw cmd (vertextCount + 12) 1 0 0
+      drawScene = Vk.cmdDraw cmd vertextCount 1 0 0
    in Vk.cmdUseRendering cmd info drawScene
 
 renderImgui cmd view extent imguiData =

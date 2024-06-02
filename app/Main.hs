@@ -211,6 +211,12 @@ main = runManaged $ do
     let info = Vk.zero {VkFenceCreateInfo.flags = Vk.FENCE_CREATE_SIGNALED_BIT}
      in managed $ Vk.withFence device info Nothing bracket
   let waitForPrevDrawCallToFinish = Vk.waitForFences device [inFlight] True maxBound *> Vk.resetFences device [inFlight]
+      shutdown = do
+        liftIO $ say "Engine" "Shutting down ..."
+        -- Vk.queueWaitIdle gfxQueue
+        -- Vk.queueWaitIdle presentQueue
+        Vk.deviceWaitIdle device
+
       frame w0 = do
         let verts = vertices $ sprites w0
         copyBuffer device commandPool gfxQueue vertexBuffer (vertextStagingBuffer, vertextStagingBufferPointer) verts
@@ -236,7 +242,7 @@ main = runManaged $ do
         presentFrame swapchain presentQueue index renderFinished
    in liftIO $
         say "Engine" "Entering the main loop"
-          *> mainLoop world0 (\dt t es w0 -> let w1 = world dt t es w0 in frame w0 *> w1)
+          *> mainLoop shutdown world0 (\dt t es w0 -> let w1 = world dt t es w0 in frame w0 *> w1)
 
 swapChainNext ::
   (MonadIO m) =>
@@ -251,8 +257,8 @@ swapChainNext device swapchain imageAvailable imgViewCmds = do
   let (image, view, cmd) = imgViewCmds ! fromIntegral index
   return (index, image, view, cmd)
 
-mainLoop :: (MonadIO io) => s -> (Word32 -> Word32 -> [SDL.Event] -> s -> io s) -> io ()
-mainLoop s0 draw = SDL.ticks >>= \t0 -> go t0 s0
+mainLoop :: (MonadIO io) => io () -> s -> (Word32 -> Word32 -> [SDL.Event] -> s -> io s) -> io ()
+mainLoop shutdown s0 draw = SDL.ticks >>= \t0 -> go t0 s0
   where
     lockFrameRate fps t1 =
       do
@@ -264,7 +270,7 @@ mainLoop s0 draw = SDL.ticks >>= \t0 -> go t0 s0
       -- es <- ImGui.pollEventsWithImGui
       es <- SDL.pollEvents
       if any isQuitEvent es
-        then pure ()
+        then shutdown
         else do
           t <- lockFrameRate 60 t1
           draw (t - t1) t es s >>= go t

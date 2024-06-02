@@ -4,7 +4,9 @@ Trying to learn vulkan and Haskell hand in hand by doing a 2D engine.
 ./run.sh
 ```
 ## TODO (doubling as a roadmap)
-- [ ] Allocate both index and vertex buffers in one buffer
+- [ ] Separate vertex buffer and sempaphores per frame
+- [ ] Copying vertex data to the vertex buffer should not block (use a semaphore?)
+- [ ] Use inflight frame with proper flow
 - [ ] Maybe images from the same buffer as well
 - [ ] More than one in-flight frame
 - [ ] Proper synchronization between frames

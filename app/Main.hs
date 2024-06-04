@@ -248,14 +248,13 @@ main = runManaged $ do
           Vk.cmdBindDescriptorSets cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipelineLayout 0 [descSet] []
           transitToRenderLayout cmd image
           let vertexCount = fromIntegral $ SV.length verts
-              clear = Vk.Color (Vk.Float32 1.0 0.0 1.0 0)
               attachment =
                 Vk.zero
                   { VkRenderingAttachmentInfo.imageView = view,
                     VkRenderingAttachmentInfo.imageLayout = Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                     VkRenderingAttachmentInfo.loadOp = Vk.ATTACHMENT_LOAD_OP_CLEAR,
                     VkRenderingAttachmentInfo.storeOp = Vk.ATTACHMENT_STORE_OP_STORE,
-                    VkRenderingAttachmentInfo.clearValue = clear
+                    VkRenderingAttachmentInfo.clearValue = clearColor
                   }
               scissor = Vk.Rect2D {VkRect2D.offset = Vk.Offset2D 0 0, VkRect2D.extent = swapchainExtent}
               info =
@@ -859,6 +858,9 @@ imageFormat = Vk.FORMAT_B8G8R8A8_SRGB
 
 colorSpace :: Vk.ColorSpaceKHR
 colorSpace = Vk.COLOR_SPACE_SRGB_NONLINEAR_KHR
+
+clearColor :: Vk.ClearValue
+clearColor = Vk.Color (Vk.Float32 1.0 0.0 1.0 0)
 
 createSwapchain ::
   Vk.PhysicalDevice ->

@@ -206,7 +206,7 @@ main = runManaged $ do
               Vk.level = Vk.COMMAND_BUFFER_LEVEL_PRIMARY,
               Vk.commandBufferCount = fromIntegral frameCount
             }
-     in managed $ Vk.withCommandBuffers device info bracket     
+     in managed $ Vk.withCommandBuffers device info bracket
   say "Vulkan" $ "Creaded " ++ show frameCount ++ " command buffers"
 
   vertextStagingBuffers <- V.replicateM frameCount $ withHostBuffer allocator size
@@ -230,15 +230,16 @@ main = runManaged $ do
         liftIO $ say "Engine" "Shutting down ..."
         Vk.deviceWaitIdle device
 
-      frame frameNumber w0 = do
+      frame frameNumber world = do
         let n = frameNumber `mod` frameCount
-        let verts = vertices $ sprites w0
-        let vertexBuffer = vertexBuffers ! n
-        let (vertextStagingBuffer, vertextStagingBufferPointer) = vertextStagingBuffers ! n
-        copyBuffer device commandPool gfxQueue vertexBuffer (vertextStagingBuffer, vertextStagingBufferPointer) verts
+            verts = vertices $ sprites world
+            vertexBuffer = vertexBuffers ! n
+
+        let staging = vertextStagingBuffers ! n in copyToGpu device commandPool gfxQueue vertexBuffer staging verts
+
         let imageAvailable = semaphores ! n
-        let renderFinished = semaphores ! (n + frameCount)
-        let cmd = cmds ! n
+            renderFinished = semaphores ! (n + frameCount)
+            cmd = cmds ! n
         (r, index) <- Vk.acquireNextImageKHR device swapchain maxBound imageAvailable Vk.zero
         when (r == Vk.SUBOPTIMAL_KHR || r == Vk.ERROR_OUT_OF_DATE_KHR) $ say "Engine" $ "acquireNextFrame = " ++ show r
         let (image, view) = imagesAndViews ! fromIntegral index
@@ -264,7 +265,7 @@ main = runManaged $ do
                     VkRenderingInfo.colorAttachments = [attachment]
                   }
               draw = Vk.cmdDraw cmd vertexCount 1 0 0
-           in Vk.cmdUseRendering cmd info draw             
+           in Vk.cmdUseRendering cmd info draw
           transitToPresentLayout cmd image
         waitForPrevDrawCallToFinish
         let info =
@@ -286,10 +287,21 @@ main = runManaged $ do
         when (r2 == Vk.SUBOPTIMAL_KHR || r2 == Vk.ERROR_OUT_OF_DATE_KHR) (say "Engine" $ "presentFrame" ++ show r)
    in liftIO $
         say "Engine" "Entering the main loop"
-          *> mainLoop shutdown world0 (\n dt t es w0 -> let w1 = world dt t es w0 in frame n w0 *> w1)          
+          *> mainLoop
+            shutdown
+            ( \n dt es w -> do
+                w2 <- world dt es w
+                frame n w2
+                return w2
+            )
+            world0
 
-mainLoop :: (MonadIO io) => io () -> s -> (Int -> Word32 -> Word32 -> [SDL.Event] -> s -> io s) -> io ()
-mainLoop shutdown s0 draw = SDL.ticks >>= \t0 -> go 0 t0 s0
+mainLoop ::
+  IO () ->
+  (Int -> Word32 -> [SDL.Event] -> s -> IO s) ->
+  s ->
+  IO ()
+mainLoop shutdown doFrame = go 1 0
   where
     lockFrameRate fps t1 =
       do
@@ -304,11 +316,11 @@ mainLoop shutdown s0 draw = SDL.ticks >>= \t0 -> go 0 t0 s0
         then shutdown
         else do
           t <- lockFrameRate 60 t1
-          draw frameNumber (t - t1) t es s >>= go (frameNumber + 1) t
+          doFrame frameNumber (t - t1) es s >>= go (frameNumber + 1) t
 
-world :: (Monad io) => Word32 -> Word32 -> [SDL.Event] -> World -> io World
-world 0 _ _ w = return w
-world dt _ es w@(World {pointer = pointer@Sprite {pos = p}, a = a, b = b, c = c}) = return w {pointer = pointer {pos = foldl f p es}, a = update a, b = update b, c = update c}
+world :: (Monad io) => Word32 -> [SDL.Event] -> World -> io World
+world 0 _ w = return w
+world dt es w@(World {pointer = pointer@Sprite {pos = p}, a = a, b = b, c = c}) = return w {pointer = pointer {pos = foldl f p es}, a = update a, b = update b, c = update c}
   where
     f _ (SDL.Event _ (SDL.MouseMotionEvent (SDL.MouseMotionEventData {mouseMotionEventPos = SDL.P (SDL.V2 x y)}))) = normalPos x y
     f p _ = p
@@ -432,7 +444,7 @@ vertices ss =
               [topLeft, topRight, bottomRight, bottomRight, bottomLeft, topLeft]
    in mconcat $ toQuad <$> ss
 
-copyBuffer ::
+copyToGpu ::
   forall a.
   (Storable a) =>
   Vk.Device ->
@@ -442,7 +454,7 @@ copyBuffer ::
   (Vk.Buffer, Ptr ()) ->
   SV.Vector a ->
   IO ()
-copyBuffer device pool queue gpuBuffer (hostBuffer, hostBufferPtr) v = do
+copyToGpu device pool queue gpuBuffer (hostBuffer, hostBufferPtr) v = do
   let (src, len) = SV.unsafeToForeignPtr0 v
       size = fromIntegral $ sizeOf (undefined :: a) * len
   liftIO . withForeignPtr src $ \s -> copyArray (castPtr hostBufferPtr) s len

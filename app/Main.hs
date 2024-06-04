@@ -160,7 +160,6 @@ main = runManaged $ do
   -- say "Vulkan" "Created vertex buffer"
 
   let size = 1048576
-  (vertextStagingBuffer, vertextStagingBufferPointer) <- withHostBuffer allocator size
   say "Vulkan" "Created staging vertex buffer"
   descSetLayout <- descriptorSetLayout device 5
   descPool <- descriptorPool device 1000
@@ -207,8 +206,11 @@ main = runManaged $ do
               Vk.level = Vk.COMMAND_BUFFER_LEVEL_PRIMARY,
               Vk.commandBufferCount = fromIntegral frameCount
             }
-     in managed $ Vk.withCommandBuffers device info bracket
+     in managed $ Vk.withCommandBuffers device info bracket     
   say "Vulkan" $ "Creaded " ++ show frameCount ++ " command buffers"
+
+  vertextStagingBuffers <- V.replicateM frameCount $ withHostBuffer allocator size
+  say "Vulkan" $ "Creaded " ++ show frameCount ++ " staging buffers"
   semaphores <- V.replicateM (frameCount * 2) $ managed $ Vk.withSemaphore device Vk.zero Nothing bracket
   say "Vulkan" $ "Creaded " ++ show (frameCount * 2) ++ " semaphores"
   vertexBuffers <- V.replicateM frameCount $ withGPUBuffer allocator vertexBufferSize Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
@@ -232,6 +234,7 @@ main = runManaged $ do
         let n = frameNumber `mod` frameCount
         let verts = vertices $ sprites w0
         let vertexBuffer = vertexBuffers ! n
+        let (vertextStagingBuffer, vertextStagingBufferPointer) = vertextStagingBuffers ! n
         copyBuffer device commandPool gfxQueue vertexBuffer (vertextStagingBuffer, vertextStagingBufferPointer) verts
         let imageAvailable = semaphores ! n
         let renderFinished = semaphores ! (n + frameCount)

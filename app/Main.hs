@@ -160,7 +160,6 @@ main = runManaged $ do
   -- say "Vulkan" "Created vertex buffer"
 
   let size = 1048576
-  vertexBuffer <- withGPUBuffer allocator size Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT <* say "Vulkan" "Created vertex buffer"
   (vertextStagingBuffer, vertextStagingBufferPointer) <- withHostBuffer allocator size
   say "Vulkan" "Created staging vertex buffer"
   descSetLayout <- descriptorSetLayout device 5
@@ -199,8 +198,21 @@ main = runManaged $ do
       windowWidth
       windowHeight
   let frameCount = V.length imagesAndViews
-  cmds <- createCommandBuffers device commandPool (fromIntegral frameCount)
+      vertexBufferSize = 4 * 1024
+  say "Engin" $ "Frame count is " ++ show frameCount
+  cmds <-
+    let info =
+          Vk.zero
+            { Vk.commandPool = commandPool,
+              Vk.level = Vk.COMMAND_BUFFER_LEVEL_PRIMARY,
+              Vk.commandBufferCount = fromIntegral frameCount
+            }
+     in managed $ Vk.withCommandBuffers device info bracket
+  say "Vulkan" $ "Creaded " ++ show frameCount ++ " command buffers"
   semaphores <- V.replicateM (frameCount * 2) $ managed $ Vk.withSemaphore device Vk.zero Nothing bracket
+  say "Vulkan" $ "Creaded " ++ show (frameCount * 2) ++ " semaphores"
+  vertexBuffers <- V.replicateM frameCount $ withGPUBuffer allocator vertexBufferSize Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
+  say "Vulkan" $ "Created " ++ show frameCount ++ " vertex buffers"
 
   pipelineLayout <-
     let info = Vk.zero {VkPipelineLayoutCreateInfo.setLayouts = [descSetLayout]}
@@ -219,6 +231,7 @@ main = runManaged $ do
       frame frameNumber w0 = do
         let n = frameNumber `mod` frameCount
         let verts = vertices $ sprites w0
+        let vertexBuffer = vertexBuffers ! n
         copyBuffer device commandPool gfxQueue vertexBuffer (vertextStagingBuffer, vertextStagingBufferPointer) verts
         let imageAvailable = semaphores ! n
         let renderFinished = semaphores ! (n + frameCount)
@@ -298,48 +311,48 @@ repeatingSampler device =
           }
    in managed $ Vk.withSampler device info Nothing bracket
 
-withImGui :: Vk.Instance -> Vk.PhysicalDevice -> Vk.Device -> SDL.Window -> Vk.Queue -> Vk.CommandPool -> Vk.Queue -> Managed ()
-withImGui vulkan gpu device window queue cmdPool gfx =
-  do
-    pool <-
-      let poolSizes = poolSize <$> types
-          info =
-            Vk.zero
-              { VkDescriptorPoolCreateInfo.poolSizes = poolSizes,
-                VkDescriptorPoolCreateInfo.maxSets = 1000,
-                VkDescriptorPoolCreateInfo.flags = Vk.DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT
-              }
-       in managed $ Vk.withDescriptorPool device info Nothing bracket
-    managed_ $ bracket_ (init pool) Ashkan2.vulkanShutdown
-  where
-    types =
-      [ Vk.DESCRIPTOR_TYPE_SAMPLER,
-        Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        Vk.DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-        Vk.DESCRIPTOR_TYPE_STORAGE_IMAGE,
-        Vk.DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER,
-        Vk.DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER,
-        Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-        Vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
-        Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
-        Vk.DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC,
-        Vk.DESCRIPTOR_TYPE_INPUT_ATTACHMENT
-      ]
-    poolSize typ =
-      Vk.zero
-        { VkDescriptorPoolSize.descriptorCount = 1000,
-          VkDescriptorPoolSize.type' = typ
-        }
-    init pool = do
-      _ <- ImGui.createContext
-      say "ImGui" "Created context"
-      _ <- ImGui.sdl2InitForVulkan window
-      say "ImGui" "Initialized for SDL2 Vulkan"
-      Ashkan2.vulkanInit vulkan gpu device gfx pool
-      _ <- submitNow device cmdPool queue (\cmd -> ImGui.vulkanCreateFontsTexture cmd $> ())
-      say "ImGui" "Created fonts texture"
-      ImGui.vulkanDestroyFontUploadObjects
-      say "ImGui" "Destroyed font upload objects"
+-- withImGui :: Vk.Instance -> Vk.PhysicalDevice -> Vk.Device -> SDL.Window -> Vk.Queue -> Vk.CommandPool -> Vk.Queue -> Managed ()
+-- withImGui vulkan gpu device window queue cmdPool gfx =
+--   do
+--     pool <-
+--       let poolSizes = poolSize <$> types
+--           info =
+--             Vk.zero
+--               { VkDescriptorPoolCreateInfo.poolSizes = poolSizes,
+--                 VkDescriptorPoolCreateInfo.maxSets = 1000,
+--                 VkDescriptorPoolCreateInfo.flags = Vk.DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT
+--               }
+--        in managed $ Vk.withDescriptorPool device info Nothing bracket
+--     managed_ $ bracket_ (init pool) Ashkan2.vulkanShutdown
+--   where
+--     types =
+--       [ Vk.DESCRIPTOR_TYPE_SAMPLER,
+--         Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+--         Vk.DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+--         Vk.DESCRIPTOR_TYPE_STORAGE_IMAGE,
+--         Vk.DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER,
+--         Vk.DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER,
+--         Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+--         Vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+--         Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
+--         Vk.DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC,
+--         Vk.DESCRIPTOR_TYPE_INPUT_ATTACHMENT
+--       ]
+--     poolSize typ =
+--       Vk.zero
+--         { VkDescriptorPoolSize.descriptorCount = 1000,
+--           VkDescriptorPoolSize.type' = typ
+--         }
+--     init pool = do
+--       _ <- ImGui.createContext
+--       say "ImGui" "Created context"
+--       _ <- ImGui.sdl2InitForVulkan window
+--       say "ImGui" "Initialized for SDL2 Vulkan"
+--       Ashkan2.vulkanInit vulkan gpu device gfx pool
+--       _ <- submitNow device cmdPool queue (\cmd -> ImGui.vulkanCreateFontsTexture cmd $> ())
+--       say "ImGui" "Created fonts texture"
+--       ImGui.vulkanDestroyFontUploadObjects
+--       say "ImGui" "Destroyed font upload objects"
 
 windowWidth :: Int
 windowWidth = 500
@@ -625,24 +638,6 @@ renderScene cmd extent vertextCount target = do
 --             VkRenderingInfo.colorAttachments = [attachment]
 --           }
 --    in Vk.cmdUseRendering cmd info $ ImGui.vulkanRenderDrawData imguiData cmd Nothing
-
-createCommandBuffers ::
-  Vk.Device ->
-  Vk.CommandPool ->
-  Word32 ->
-  Managed (V.Vector Vk.CommandBuffer)
-createCommandBuffers device pool count = do
-  say "Vulkan" "Created pipeline"
-  commandBuffers <-
-    let info =
-          Vk.zero
-            { Vk.commandPool = pool,
-              Vk.level = Vk.COMMAND_BUFFER_LEVEL_PRIMARY,
-              Vk.commandBufferCount = count
-            }
-     in managed $ Vk.withCommandBuffers device info bracket
-  say "Vulkan" "Created comamand buffers"
-  return commandBuffers
 
 descriptorSetLayout :: Vk.Device -> Word32 -> Managed Vk.DescriptorSetLayout
 descriptorSetLayout dev count = do

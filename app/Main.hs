@@ -230,9 +230,8 @@ main = runManaged $ do
         liftIO $ say "Engine" "Shutting down ..."
         Vk.deviceWaitIdle device
 
-      frame frameNumber world = do
-        let n = frameNumber `mod` frameCount
-            verts = vertices $ sprites world
+      frame n world = do
+        let verts = vertices $ sprites world
             vertexBuffer = vertexBuffers ! n
 
         let staging = vertextStagingBuffers ! n in copyToGpu device commandPool gfxQueue vertexBuffer staging verts
@@ -289,7 +288,8 @@ main = runManaged $ do
         say "Engine" "Entering the main loop"
           *> mainLoop
             shutdown
-            ( \n dt es w -> do
+            ( \frameNumber dt es w -> do
+                let n = frameNumber `mod` frameCount
                 w2 <- world dt es w
                 frame n w2
                 return w2

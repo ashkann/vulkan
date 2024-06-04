@@ -247,7 +247,25 @@ main = runManaged $ do
           Vk.cmdBindVertexBuffers cmd 0 [vertexBuffer] [0]
           Vk.cmdBindDescriptorSets cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipelineLayout 0 [descSet] []
           transitToRenderLayout cmd image
-          let vc = fromIntegral $ SV.length verts in renderScene cmd swapchainExtent vc view
+          let vertexCount = fromIntegral $ SV.length verts
+              clear = Vk.Color (Vk.Float32 1.0 0.0 1.0 0)
+              attachment =
+                Vk.zero
+                  { VkRenderingAttachmentInfo.imageView = view,
+                    VkRenderingAttachmentInfo.imageLayout = Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                    VkRenderingAttachmentInfo.loadOp = Vk.ATTACHMENT_LOAD_OP_CLEAR,
+                    VkRenderingAttachmentInfo.storeOp = Vk.ATTACHMENT_STORE_OP_STORE,
+                    VkRenderingAttachmentInfo.clearValue = clear
+                  }
+              scissor = Vk.Rect2D {VkRect2D.offset = Vk.Offset2D 0 0, VkRect2D.extent = swapchainExtent}
+              info =
+                Vk.zero
+                  { VkRenderingInfo.renderArea = scissor,
+                    VkRenderingInfo.layerCount = 1,
+                    VkRenderingInfo.colorAttachments = [attachment]
+                  }
+              draw = Vk.cmdDraw cmd vertexCount 1 0 0
+           in Vk.cmdUseRendering cmd info draw             
           transitToPresentLayout cmd image
         waitForPrevDrawCallToFinish
         let info =
@@ -269,7 +287,7 @@ main = runManaged $ do
         when (r2 == Vk.SUBOPTIMAL_KHR || r2 == Vk.ERROR_OUT_OF_DATE_KHR) (say "Engine" $ "presentFrame" ++ show r)
    in liftIO $
         say "Engine" "Entering the main loop"
-          *> mainLoop shutdown world0 (\n dt t es w0 -> let w1 = world dt t es w0 in frame n w0 *> w1)
+          *> mainLoop shutdown world0 (\n dt t es w0 -> let w1 = world dt t es w0 in frame n w0 *> w1)          
 
 mainLoop :: (MonadIO io) => io () -> s -> (Int -> Word32 -> Word32 -> [SDL.Event] -> s -> io s) -> io ()
 mainLoop shutdown s0 draw = SDL.ticks >>= \t0 -> go 0 t0 s0
@@ -597,33 +615,6 @@ withGPUBuffer allocator size flags = do
      in managed $ Vma.withBuffer allocator bufferInfo vmaInfo bracket
   say "Vulkan" $ "Created GPU buffer (" ++ show size ++ " bytes)"
   return buffer
-
-renderScene ::
-  (MonadIO io) =>
-  Vk.CommandBuffer ->
-  Vk.Extent2D ->
-  Word32 ->
-  Vk.ImageView ->
-  io ()
-renderScene cmd extent vertextCount target = do
-  let clear = Vk.Color (Vk.Float32 1.0 0.0 1.0 0)
-      attachment =
-        Vk.zero
-          { VkRenderingAttachmentInfo.imageView = target,
-            VkRenderingAttachmentInfo.imageLayout = Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            VkRenderingAttachmentInfo.loadOp = Vk.ATTACHMENT_LOAD_OP_CLEAR,
-            VkRenderingAttachmentInfo.storeOp = Vk.ATTACHMENT_STORE_OP_STORE,
-            VkRenderingAttachmentInfo.clearValue = clear
-          }
-      scissor = Vk.Rect2D {VkRect2D.offset = Vk.Offset2D 0 0, VkRect2D.extent = extent}
-      info =
-        Vk.zero
-          { VkRenderingInfo.renderArea = scissor,
-            VkRenderingInfo.layerCount = 1,
-            VkRenderingInfo.colorAttachments = [attachment]
-          }
-      draw = Vk.cmdDraw cmd vertextCount 1 0 0
-   in Vk.cmdUseRendering cmd info draw
 
 -- renderImgui cmd view extent imguiData =
 --   let attachment =

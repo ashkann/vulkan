@@ -314,8 +314,7 @@ mainLoop shutdown doFrame = go 1 0
       if any isQuitEvent es
         then shutdown
         else do
-          -- t <- lockFrameRate 60 t1
-          t <- SDL.ticks
+          t <- lockFrameRate 60 t1
           doFrame frameNumber (t - t1) es s >>= go (frameNumber + 1) t
 
 world :: (Monad io) => Word32 -> [SDL.Event] -> World -> io World

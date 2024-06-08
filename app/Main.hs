@@ -219,7 +219,7 @@ main = runManaged $ do
   -- vertexBuffers <- V.replicateM frameCount $ withGPUBuffer allocator vertexBufferSize Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
   -- say "Vulkan" $ "Created " ++ show frameCount ++ " vertex buffers"
 
-  fs <- frames device commandPool allocator stagingSize vertexBufferSize frameCount
+  frames <- withFrames device commandPool allocator stagingSize vertexBufferSize frameCount
 
   pipelineLayout <-
     let info = Vk.zero {VkPipelineLayoutCreateInfo.setLayouts = [descSetLayout]}
@@ -231,10 +231,9 @@ main = runManaged $ do
           say "Engine" "Shutting down ..."
           Vk.deviceWaitIdle device
 
-      frame :: Frame -> World -> Managed ()
-      frame (Frame {cmd, fence, imageAvailable, renderFinished, staging, vertex}) world = do
-        _ <- let second = 1000000000 in Vk.waitForFences device [fence] True second *> Vk.resetFences device [fence]
-        let verts = vertices $ sprites world -- 1
+      frame :: Frame -> SV.Vector Vertex -> Managed ()
+      frame f@(Frame {cmd, fence, imageAvailable, renderFinished, staging, vertex}) verts = do
+        waitForFrame device f
         liftIO $ copyToGpu device commandPool gfxQueue vertex staging verts
 
         (r, index) <- Vk.acquireNextImageKHR device swapchain maxBound imageAvailable Vk.zero
@@ -289,13 +288,14 @@ main = runManaged $ do
           ( \frameNumber dt es w -> do
               w2 <- world dt es w
               let n = frameNumber `mod` frameCount
-                  f = fs ! n
-               in frame f w2
+                  f = frames ! n
+                  verts = vertices $ sprites w2
+               in frame f verts
               return w2
           )
           world0
 
-frames ::
+withFrames ::
   VkDevice.Device ->
   Vk.CommandPool ->
   Vma.Allocator ->
@@ -303,7 +303,7 @@ frames ::
   Vk.DeviceSize ->
   Int ->
   Managed (V.Vector Frame)
-frames device commandPool allocator stagingSize vertexBufferSize frameCount =
+withFrames device commandPool allocator stagingSize vertexBufferSize frameCount =
   do
     cmds <-
       let info =
@@ -327,6 +327,10 @@ frames device commandPool allocator stagingSize vertexBufferSize frameCount =
     vertexBuffers <- V.replicateM frameCount $ withGPUBuffer allocator vertexBufferSize Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
     say "Vulkan" $ "Created " ++ show frameCount ++ " vertex buffers"
     return . V.fromList $ [Frame {cmd = cmds ! n, fence = fences ! n, imageAvailable = semaphores ! n, renderFinished = semaphores ! (n + frameCount), staging = vertextStagingBuffers ! n, vertex = vertexBuffers ! n} | n <- [0 .. frameCount - 1]]
+
+waitForFrame :: (MonadIO io) => Vk.Device -> Frame -> io ()
+waitForFrame device (Frame {fence})  =
+  let second = 1000000000 in Vk.waitForFences device [fence] True second *> Vk.resetFences device [fence]
 
 mainLoop ::
   (MonadIO io) =>

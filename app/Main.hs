@@ -21,7 +21,7 @@ import Codec.Picture qualified as JP
 import Control.Applicative ((<|>))
 import Control.Concurrent (threadDelay)
 import Control.Exception (bracket, bracket_)
-import Control.Monad (when)
+import Control.Monad (forM, replicateM, when)
 import Control.Monad.Except (ExceptT (ExceptT), runExceptT)
 import Control.Monad.Managed (Managed, MonadIO (liftIO), managed, managed_, runManaged)
 import Data.Bits ((.&.), (.|.))
@@ -132,7 +132,14 @@ data LoadedTexture = LoadedTexture {resolution :: G.UVec2, size :: G.Vec2, image
 
 data Texture = Texture {index :: Word32, texture :: LoadedTexture}
 
-data Frame = Frame {cmd :: Vk.CommandBuffer, fence :: Vk.Fence, imageAvailable :: Vk.Semaphore, renderFinished :: Vk.Semaphore, staging :: (Vk.Buffer, Ptr ()), vertex :: Vk.Buffer}
+data Frame = Frame
+  { cmd :: Vk.CommandBuffer,
+    fence :: Vk.Fence,
+    imageAvailable :: Vk.Semaphore,
+    renderFinished :: Vk.Semaphore,
+    staging :: (Vk.Buffer, Ptr ()),
+    vertex :: Vk.Buffer
+  }
 
 main :: IO ()
 main = runManaged $ do
@@ -156,7 +163,6 @@ main = runManaged $ do
      in managed $ Vk.withCommandPool device info Nothing bracket
   say "Vulkan" "Created command pool"
   allocator <- withMemoryAllocator vulkan gpu device <* say "VMA" "Created allocator"
-  let stagingSize = 1048576
   say "Vulkan" "Created staging vertex buffer"
   descSetLayout <- descriptorSetLayout device 5
   descPool <- descriptorPool device 1000
@@ -184,7 +190,7 @@ main = runManaged $ do
             c = Thingie {sprite = Sprite {pos = p0, scale = third, texture = texture3}, vel = G.vec2 0.001 0.002}
           }
 
-  (swapchain, swapchainExtent, imagesAndViews) <-
+  swapchain@(_, swapchainExtent, swapchainImagesAndViews) <-
     createSwapchain
       gpu
       device
@@ -193,39 +199,18 @@ main = runManaged $ do
       present
       windowWidth
       windowHeight
-  let frameCount = V.length imagesAndViews
-      vertexBufferSize = 4 * 1024
+  let frameCount = V.length swapchainImagesAndViews
   say "Engin" $ "Frame count is " ++ show frameCount
-  -- cmds <-
-  --   let info =
-  --         Vk.zero
-  --           { Vk.commandPool = commandPool,
-  --             Vk.level = Vk.COMMAND_BUFFER_LEVEL_PRIMARY,
-  --             Vk.commandBufferCount = fromIntegral frameCount
-  --           }
-  --    in managed $ Vk.withCommandBuffers device info bracket
-  -- say "Vulkan" $ "Creaded " ++ show frameCount ++ " command buffers"
-
-  -- vertextStagingBuffers <- V.replicateM frameCount $ withHostBuffer allocator stagingSize
-  -- say "Vulkan" $ "Creaded " ++ show frameCount ++ " staging buffers"
-  -- semaphores <- V.replicateM (frameCount * 2) $ managed $ Vk.withSemaphore device Vk.zero Nothing bracket
-  -- say "Vulkan" $ "Creaded " ++ show (frameCount * 2) ++ " semaphores"
-  -- fences <-
-  --   V.replicateM
-  --     frameCount
-  --     let info = Vk.zero {VkFenceCreateInfo.flags = Vk.FENCE_CREATE_SIGNALED_BIT}
-  --      in managed $ Vk.withFence device info Nothing bracket
-  -- say "Vulkan" $ "Created " ++ show frameCount ++ " fences"
-  -- vertexBuffers <- V.replicateM frameCount $ withGPUBuffer allocator vertexBufferSize Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
-  -- say "Vulkan" $ "Created " ++ show frameCount ++ " vertex buffers"
-
+  
   pipelineLayout <-
     let info = Vk.zero {VkPipelineLayoutCreateInfo.setLayouts = [descSetLayout]}
      in managed $ Vk.withPipelineLayout device info Nothing bracket
   pipeline <- createPipeline device swapchainExtent pipelineLayout
   presentQueue <- Vk.getDeviceQueue device present 0 <* say "Vulkan" "Got present queue"
 
-  frames <- withFrames device commandPool allocator stagingSize vertexBufferSize frameCount
+  let stagingBufferSize = 1048576
+      vertexBufferSize = 4 * 1024
+  frames <- withFrames device commandPool allocator stagingBufferSize vertexBufferSize frameCount
   let shutdown =
         do
           say "Engine" "Shutting down ..."
@@ -238,7 +223,7 @@ main = runManaged $ do
               let n = frameNumber `mod` frameCount
                   f = frames ! n
                   verts = vertices $ sprites w2
-               in frame device commandPool gfxQueue presentQueue pipeline pipelineLayout imagesAndViews descSet swapchain swapchainExtent f verts
+               in frame device commandPool gfxQueue presentQueue pipeline pipelineLayout swapchain descSet f verts
               return w2
           )
           world0
@@ -251,14 +236,12 @@ frame ::
   Vk.Queue ->
   Vk.Pipeline ->
   Vk.PipelineLayout ->
-  V.Vector (Vk.Image, Vk.ImageView) ->
+  (Vk.SwapchainKHR, VkExtent2D.Extent2D, V.Vector (Vk.Image, Vk.ImageView)) ->
   Vk.DescriptorSet ->
-  Vk.SwapchainKHR ->
-  VkExtent2D.Extent2D ->
   Frame ->
   SV.Vector a ->
   m ()
-frame device commandPool gfxQueue presentQueue pipeline pipelineLayout imagesAndViews descSet swapchain swapchainExtent f@(Frame {cmd, fence, imageAvailable, renderFinished, staging, vertex}) verts = do
+frame device commandPool gfxQueue presentQueue pipeline pipelineLayout (swapchain, swapchainExtent, imagesAndViews) descSet f@(Frame {cmd, fence, imageAvailable, renderFinished, staging, vertex}) verts = do
   waitForFrame device f
   liftIO $ copyToGpu device commandPool gfxQueue vertex staging verts
 
@@ -317,7 +300,7 @@ withFrames ::
   Vk.DeviceSize ->
   Int ->
   Managed (V.Vector Frame)
-withFrames device commandPool allocator stagingSize vertexBufferSize frameCount =
+withFrames device commandPool allocator stagingBufferSize vertexBufferSize frameCount =
   do
     cmds <-
       let info =
@@ -327,20 +310,26 @@ withFrames device commandPool allocator stagingSize vertexBufferSize frameCount 
                 Vk.commandBufferCount = fromIntegral frameCount
               }
        in managed $ Vk.withCommandBuffers device info bracket
-    say "Vulkan" $ "Creaded " ++ show frameCount ++ " command buffers"
-    vertextStagingBuffers <- V.replicateM frameCount $ withHostBuffer allocator stagingSize
-    say "Vulkan" $ "Creaded " ++ show frameCount ++ " staging buffers"
-    semaphores <- V.replicateM (frameCount * 2) $ managed $ Vk.withSemaphore device Vk.zero Nothing bracket
-    say "Vulkan" $ "Creaded " ++ show (frameCount * 2) ++ " semaphores"
-    fences <-
-      V.replicateM
-        frameCount
-        let info = Vk.zero {VkFenceCreateInfo.flags = Vk.FENCE_CREATE_SIGNALED_BIT}
-         in managed $ Vk.withFence device info Nothing bracket
-    say "Vulkan" $ "Created " ++ show frameCount ++ " fences"
-    vertexBuffers <- V.replicateM frameCount $ withGPUBuffer allocator vertexBufferSize Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
-    say "Vulkan" $ "Created " ++ show frameCount ++ " vertex buffers"
-    return . V.fromList $ [Frame {cmd = cmds ! n, fence = fences ! n, imageAvailable = semaphores ! n, renderFinished = semaphores ! (n + frameCount), staging = vertextStagingBuffers ! n, vertex = vertexBuffers ! n} | n <- [0 .. frameCount - 1]]
+    forM cmds singleFrame
+  where
+    singleFrame cmd =
+      do
+        vertextStagingBuffer <- withHostBuffer allocator stagingBufferSize
+        imageAvailable <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
+        renderFinished <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
+        fence <-
+          let info = Vk.zero {VkFenceCreateInfo.flags = Vk.FENCE_CREATE_SIGNALED_BIT}
+           in managed $ Vk.withFence device info Nothing bracket
+        vertexBuffer <- withGPUBuffer allocator vertexBufferSize Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
+        return
+          Frame
+            { cmd = cmd,
+              fence = fence,
+              imageAvailable = imageAvailable,
+              renderFinished = renderFinished,
+              staging = vertextStagingBuffer,
+              vertex = vertexBuffer
+            }
 
 waitForFrame :: (MonadIO io) => Vk.Device -> Frame -> io ()
 waitForFrame device (Frame {fence}) =
@@ -885,9 +874,6 @@ createPipeline dev extent layout = do
             ::& dynamicRendering :& ()
      in managed $ Vk.withGraphicsPipelines dev Vk.zero [Vk.SomeStruct pipelineCreateInfo] Nothing bracket
   return $ V.head res
-
-framesInFlight :: Word32
-framesInFlight = 1
 
 -- TODO break into two functions
 createShaders ::

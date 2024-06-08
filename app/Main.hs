@@ -219,69 +219,17 @@ main = runManaged $ do
   -- vertexBuffers <- V.replicateM frameCount $ withGPUBuffer allocator vertexBufferSize Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
   -- say "Vulkan" $ "Created " ++ show frameCount ++ " vertex buffers"
 
-  frames <- withFrames device commandPool allocator stagingSize vertexBufferSize frameCount
-
   pipelineLayout <-
     let info = Vk.zero {VkPipelineLayoutCreateInfo.setLayouts = [descSetLayout]}
      in managed $ Vk.withPipelineLayout device info Nothing bracket
   pipeline <- createPipeline device swapchainExtent pipelineLayout
   presentQueue <- Vk.getDeviceQueue device present 0 <* say "Vulkan" "Got present queue"
+
+  frames <- withFrames device commandPool allocator stagingSize vertexBufferSize frameCount
   let shutdown =
         do
           say "Engine" "Shutting down ..."
           Vk.deviceWaitIdle device
-
-      frame :: Frame -> SV.Vector Vertex -> Managed ()
-      frame f@(Frame {cmd, fence, imageAvailable, renderFinished, staging, vertex}) verts = do
-        waitForFrame device f
-        liftIO $ copyToGpu device commandPool gfxQueue vertex staging verts
-
-        (r, index) <- Vk.acquireNextImageKHR device swapchain maxBound imageAvailable Vk.zero
-        when (r == Vk.SUBOPTIMAL_KHR || r == Vk.ERROR_OUT_OF_DATE_KHR) $ say "Engine" $ "acquireNextFrame = " ++ show r
-        let (image, view) = imagesAndViews ! fromIntegral index
-        Vk.useCommandBuffer cmd Vk.zero $ do
-          Vk.cmdBindPipeline cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
-          Vk.cmdBindVertexBuffers cmd 0 [vertex] [0]
-          Vk.cmdBindDescriptorSets cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipelineLayout 0 [descSet] []
-          transitToRenderLayout cmd image
-          let vertexCount = fromIntegral $ SV.length verts
-              attachment =
-                Vk.zero
-                  { VkRenderingAttachmentInfo.imageView = view,
-                    VkRenderingAttachmentInfo.imageLayout = Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                    VkRenderingAttachmentInfo.loadOp = Vk.ATTACHMENT_LOAD_OP_CLEAR,
-                    VkRenderingAttachmentInfo.storeOp = Vk.ATTACHMENT_STORE_OP_STORE,
-                    VkRenderingAttachmentInfo.clearValue = clearColor
-                  }
-              scissor = Vk.Rect2D {VkRect2D.offset = Vk.Offset2D 0 0, VkRect2D.extent = swapchainExtent}
-              info =
-                Vk.zero
-                  { VkRenderingInfo.renderArea = scissor,
-                    VkRenderingInfo.layerCount = 1,
-                    VkRenderingInfo.colorAttachments = [attachment]
-                  }
-              draw = Vk.cmdDraw cmd vertexCount 1 0 0
-           in Vk.cmdUseRendering cmd info draw
-          transitToPresentLayout cmd image
-        let info =
-              [ Vk.SomeStruct
-                  Vk.zero
-                    { VkSubmitInfo.waitSemaphores = [imageAvailable],
-                      VkSubmitInfo.waitDstStageMask = [Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT],
-                      VkSubmitInfo.commandBuffers = [Vk.commandBufferHandle cmd],
-                      VkSubmitInfo.signalSemaphores = [renderFinished]
-                    }
-              ]
-         in Vk.queueSubmit gfxQueue info fence
-        r2 <-
-          let info =
-                Vk.zero
-                  { VkPresentInfoKHR.waitSemaphores = [renderFinished],
-                    VkPresentInfoKHR.swapchains = [swapchain],
-                    VkPresentInfoKHR.imageIndices = [index]
-                  }
-           in Vk.queuePresentKHR presentQueue info
-        when (r2 == Vk.SUBOPTIMAL_KHR || r2 == Vk.ERROR_OUT_OF_DATE_KHR) (say "Engine" $ "presentFrame" ++ show r)
    in say "Engine" "Entering the main loop"
         *> mainLoop
           shutdown
@@ -290,10 +238,76 @@ main = runManaged $ do
               let n = frameNumber `mod` frameCount
                   f = frames ! n
                   verts = vertices $ sprites w2
-               in frame f verts
+               in frame device commandPool gfxQueue presentQueue pipeline pipelineLayout imagesAndViews descSet swapchain swapchainExtent f verts
               return w2
           )
           world0
+
+frame ::
+  (Storable a, MonadIO m) =>
+  Vk.Device ->
+  Vk.CommandPool ->
+  Vk.Queue ->
+  Vk.Queue ->
+  Vk.Pipeline ->
+  Vk.PipelineLayout ->
+  V.Vector (Vk.Image, Vk.ImageView) ->
+  Vk.DescriptorSet ->
+  Vk.SwapchainKHR ->
+  VkExtent2D.Extent2D ->
+  Frame ->
+  SV.Vector a ->
+  m ()
+frame device commandPool gfxQueue presentQueue pipeline pipelineLayout imagesAndViews descSet swapchain swapchainExtent f@(Frame {cmd, fence, imageAvailable, renderFinished, staging, vertex}) verts = do
+  waitForFrame device f
+  liftIO $ copyToGpu device commandPool gfxQueue vertex staging verts
+
+  (r, index) <- Vk.acquireNextImageKHR device swapchain maxBound imageAvailable Vk.zero
+  when (r == Vk.SUBOPTIMAL_KHR || r == Vk.ERROR_OUT_OF_DATE_KHR) $ say "Engine" $ "acquireNextFrame = " ++ show r
+  let (image, view) = imagesAndViews ! fromIntegral index
+  Vk.useCommandBuffer cmd Vk.zero $ do
+    Vk.cmdBindPipeline cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
+    Vk.cmdBindVertexBuffers cmd 0 [vertex] [0]
+    Vk.cmdBindDescriptorSets cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipelineLayout 0 [descSet] []
+    transitToRenderLayout cmd image
+    let vertexCount = fromIntegral $ SV.length verts
+        attachment =
+          Vk.zero
+            { VkRenderingAttachmentInfo.imageView = view,
+              VkRenderingAttachmentInfo.imageLayout = Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+              VkRenderingAttachmentInfo.loadOp = Vk.ATTACHMENT_LOAD_OP_CLEAR,
+              VkRenderingAttachmentInfo.storeOp = Vk.ATTACHMENT_STORE_OP_STORE,
+              VkRenderingAttachmentInfo.clearValue = clearColor
+            }
+        scissor = Vk.Rect2D {VkRect2D.offset = Vk.Offset2D 0 0, VkRect2D.extent = swapchainExtent}
+        info =
+          Vk.zero
+            { VkRenderingInfo.renderArea = scissor,
+              VkRenderingInfo.layerCount = 1,
+              VkRenderingInfo.colorAttachments = [attachment]
+            }
+        draw = Vk.cmdDraw cmd vertexCount 1 0 0
+     in Vk.cmdUseRendering cmd info draw
+    transitToPresentLayout cmd image
+  let info =
+        [ Vk.SomeStruct
+            Vk.zero
+              { VkSubmitInfo.waitSemaphores = [imageAvailable],
+                VkSubmitInfo.waitDstStageMask = [Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT],
+                VkSubmitInfo.commandBuffers = [Vk.commandBufferHandle cmd],
+                VkSubmitInfo.signalSemaphores = [renderFinished]
+              }
+        ]
+   in Vk.queueSubmit gfxQueue info fence
+  r2 <-
+    let info =
+          Vk.zero
+            { VkPresentInfoKHR.waitSemaphores = [renderFinished],
+              VkPresentInfoKHR.swapchains = [swapchain],
+              VkPresentInfoKHR.imageIndices = [index]
+            }
+     in Vk.queuePresentKHR presentQueue info
+  when (r2 == Vk.SUBOPTIMAL_KHR || r2 == Vk.ERROR_OUT_OF_DATE_KHR) (say "Engine" $ "presentFrame" ++ show r)
 
 withFrames ::
   VkDevice.Device ->
@@ -329,7 +343,7 @@ withFrames device commandPool allocator stagingSize vertexBufferSize frameCount 
     return . V.fromList $ [Frame {cmd = cmds ! n, fence = fences ! n, imageAvailable = semaphores ! n, renderFinished = semaphores ! (n + frameCount), staging = vertextStagingBuffers ! n, vertex = vertexBuffers ! n} | n <- [0 .. frameCount - 1]]
 
 waitForFrame :: (MonadIO io) => Vk.Device -> Frame -> io ()
-waitForFrame device (Frame {fence})  =
+waitForFrame device (Frame {fence}) =
   let second = 1000000000 in Vk.waitForFences device [fence] True second *> Vk.resetFences device [fence]
 
 mainLoop ::

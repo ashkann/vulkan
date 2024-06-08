@@ -4,13 +4,11 @@ Trying to learn vulkan and Haskell hand in hand by doing a 2D engine.
 ./run.sh
 ```
 ## TODO (doubling as a roadmap)
-- [ ] Separate vertex buffer
+- [x] Separate vertex buffer
 - [x] Sepaerate sempaphores per frame
-- [ ] Copying vertex data to the vertex buffer should not block (use a semaphore?)
-- [ ] Use inflight frame with proper flow
-- [ ] Maybe images from the same buffer as well
-- [ ] More than one in-flight frame
-- [ ] Proper synchronization between frames
+- [x] Use inflight frame with proper flow
+- [x] More than one in-flight frame
+- [x] Proper synchronization between frames
 - [x] Some memory is not properly freed before vulkan instance is destroyed
 - [x] Just use VMA
 - [x] Basic texture support
@@ -21,8 +19,9 @@ Trying to learn vulkan and Haskell hand in hand by doing a 2D engine.
 - [x] Sprite back-to-front sorting
 - [x] Alpha blending?
 - [x] Generate Vertex and Index buffers per frame
-- [ ] Basic static (no animation) sprite
-- [ ] Sprite bacthing
+- [ ] Maybe images from the same buffer as well
+- [x] Basic static (no animation) sprite
+- [x] Sprite bacthing
 - [x] Bindless textures
 - [ ] Buffer device addresses
 - [ ] GPU driven rendering (DrawIndirect, etc)

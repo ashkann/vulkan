@@ -154,11 +154,6 @@ main = runManaged $ do
      in managed $ Vk.withCommandPool device info Nothing bracket
   say "Vulkan" "Created command pool"
   allocator <- withMemoryAllocator vulkan gpu device <* say "VMA" "Created allocator"
-
-  -- let bigBufferSize = 1048576
-  -- bigBuffer <- withGPUBuffer allocator bigBufferSize Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
-  -- say "Vulkan" "Created vertex buffer"
-
   let size = 1048576
   say "Vulkan" "Created staging vertex buffer"
   descSetLayout <- descriptorSetLayout device 5
@@ -213,6 +208,12 @@ main = runManaged $ do
   say "Vulkan" $ "Creaded " ++ show frameCount ++ " staging buffers"
   semaphores <- V.replicateM (frameCount * 2) $ managed $ Vk.withSemaphore device Vk.zero Nothing bracket
   say "Vulkan" $ "Creaded " ++ show (frameCount * 2) ++ " semaphores"
+  fences <-
+    V.replicateM
+      frameCount
+      let info = Vk.zero {VkFenceCreateInfo.flags = Vk.FENCE_CREATE_SIGNALED_BIT}
+       in managed $ Vk.withFence device info Nothing bracket
+  say "Vulkan" $ "Created " ++ show frameCount ++ " fences"
   vertexBuffers <- V.replicateM frameCount $ withGPUBuffer allocator vertexBufferSize Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
   say "Vulkan" $ "Created " ++ show frameCount ++ " vertex buffers"
 
@@ -221,18 +222,16 @@ main = runManaged $ do
      in managed $ Vk.withPipelineLayout device info Nothing bracket
   pipeline <- createPipeline device swapchainExtent pipelineLayout
   presentQueue <- Vk.getDeviceQueue device present 0 <* say "Vulkan" "Got present queue"
-
-  inFlight <-
-    let info = Vk.zero {VkFenceCreateInfo.flags = Vk.FENCE_CREATE_SIGNALED_BIT}
-     in managed $ Vk.withFence device info Nothing bracket
-  let waitForPrevDrawCallToFinish = Vk.waitForFences device [inFlight] True maxBound *> Vk.resetFences device [inFlight]
-      shutdown = do
-        liftIO $ say "Engine" "Shutting down ..."
-        Vk.deviceWaitIdle device
+  let shutdown =
+        do
+          liftIO $ say "Engine" "Shutting down ..."
+          Vk.deviceWaitIdle device
 
       frame n world = do
-        let verts = vertices $ sprites world
-            vertexBuffer = vertexBuffers ! n
+        let fence = fences ! n
+        _ <- let second = 1000000000 in Vk.waitForFences device [fence] True second *> Vk.resetFences device [fence]
+        let verts = vertices $ sprites world -- 1
+        let vertexBuffer = vertexBuffers ! n
 
         let staging = vertextStagingBuffers ! n in copyToGpu device commandPool gfxQueue vertexBuffer staging verts
 
@@ -266,15 +265,16 @@ main = runManaged $ do
               draw = Vk.cmdDraw cmd vertexCount 1 0 0
            in Vk.cmdUseRendering cmd info draw
           transitToPresentLayout cmd image
-        waitForPrevDrawCallToFinish
         let info =
-              Vk.zero
-                { VkSubmitInfo.waitSemaphores = [imageAvailable],
-                  VkSubmitInfo.waitDstStageMask = [Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT],
-                  VkSubmitInfo.commandBuffers = [Vk.commandBufferHandle cmd],
-                  VkSubmitInfo.signalSemaphores = [renderFinished]
-                }
-         in Vk.queueSubmit gfxQueue [Vk.SomeStruct info] inFlight
+              [ Vk.SomeStruct
+                  Vk.zero
+                    { VkSubmitInfo.waitSemaphores = [imageAvailable],
+                      VkSubmitInfo.waitDstStageMask = [Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT],
+                      VkSubmitInfo.commandBuffers = [Vk.commandBufferHandle cmd],
+                      VkSubmitInfo.signalSemaphores = [renderFinished]
+                    }
+              ]
+         in Vk.queueSubmit gfxQueue info fence
         r2 <-
           let info =
                 Vk.zero
@@ -289,9 +289,8 @@ main = runManaged $ do
           *> mainLoop
             shutdown
             ( \frameNumber dt es w -> do
-                let n = frameNumber `mod` frameCount
                 w2 <- world dt es w
-                frame n w2
+                let n = frameNumber `mod` frameCount in frame n w2
                 return w2
             )
             world0
@@ -315,7 +314,8 @@ mainLoop shutdown doFrame = go 1 0
       if any isQuitEvent es
         then shutdown
         else do
-          t <- lockFrameRate 60 t1
+          -- t <- lockFrameRate 60 t1
+          t <- SDL.ticks
           doFrame frameNumber (t - t1) es s >>= go (frameNumber + 1) t
 
 world :: (Monad io) => Word32 -> [SDL.Event] -> World -> io World
@@ -459,7 +459,7 @@ copyToGpu device pool queue gpuBuffer (hostBuffer, hostBufferPtr) v = do
       size = fromIntegral $ sizeOf (undefined :: a) * len
   liftIO . withForeignPtr src $ \s -> copyArray (castPtr hostBufferPtr) s len
   let copy cmd = Vk.cmdCopyBuffer cmd hostBuffer gpuBuffer [Vk.zero {VkBufferCopy.size = size}]
-   in submitNow device pool queue copy
+   in submitWait device pool queue copy
 
 withImage :: Vma.Allocator -> Int -> Int -> Managed Vk.Image
 withImage allocator width height = do
@@ -510,8 +510,8 @@ readTexture allocator device pool queue path = do
           dst = castPtr mem
        in withForeignPtr src $ \from -> copyArray dst from size
 
-submitNow :: Vk.Device -> Vk.CommandPool -> Vk.Queue -> (Vk.CommandBuffer -> IO ()) -> IO ()
-submitNow device pool queue f = buffer $ \buffs ->
+submitWait :: Vk.Device -> Vk.CommandPool -> Vk.Queue -> (Vk.CommandBuffer -> IO ()) -> IO ()
+submitWait device pool queue f = buffer $ \buffs ->
   do
     let buff = V.head buffs
     let info = Vk.zero {VkCommandBufferBeginInfo.flags = Vk.COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT}
@@ -561,7 +561,7 @@ copyBufferToImage device pool queue src dst width height = liftIO $ do
             VkBufferImageCopy.imageSubresource = subresource,
             VkBufferImageCopy.imageExtent = dims
           }
-  submitNow device pool queue $ \cmd -> do
+  submitWait device pool queue $ \cmd -> do
     tranistToDstOptimal cmd dst
     Vk.cmdCopyBufferToImage cmd src dst Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL [region]
     tranistDstOptimalToShaderReadOnlyOptimal cmd dst

@@ -132,6 +132,8 @@ data LoadedTexture = LoadedTexture {resolution :: G.UVec2, size :: G.Vec2, image
 
 data Texture = Texture {index :: Word32, texture :: LoadedTexture}
 
+data Frame = Frame {cmd :: Vk.CommandBuffer, fence :: Vk.Fence, imageAvailable :: Vk.Semaphore, renderFinished :: Vk.Semaphore, staging :: (Vk.Buffer, Ptr ()), vertex :: Vk.Buffer}
+
 main :: IO ()
 main = runManaged $ do
   withSDL
@@ -154,7 +156,7 @@ main = runManaged $ do
      in managed $ Vk.withCommandPool device info Nothing bracket
   say "Vulkan" "Created command pool"
   allocator <- withMemoryAllocator vulkan gpu device <* say "VMA" "Created allocator"
-  let size = 1048576
+  let stagingSize = 1048576
   say "Vulkan" "Created staging vertex buffer"
   descSetLayout <- descriptorSetLayout device 5
   descPool <- descriptorPool device 1000
@@ -194,28 +196,30 @@ main = runManaged $ do
   let frameCount = V.length imagesAndViews
       vertexBufferSize = 4 * 1024
   say "Engin" $ "Frame count is " ++ show frameCount
-  cmds <-
-    let info =
-          Vk.zero
-            { Vk.commandPool = commandPool,
-              Vk.level = Vk.COMMAND_BUFFER_LEVEL_PRIMARY,
-              Vk.commandBufferCount = fromIntegral frameCount
-            }
-     in managed $ Vk.withCommandBuffers device info bracket
-  say "Vulkan" $ "Creaded " ++ show frameCount ++ " command buffers"
+  -- cmds <-
+  --   let info =
+  --         Vk.zero
+  --           { Vk.commandPool = commandPool,
+  --             Vk.level = Vk.COMMAND_BUFFER_LEVEL_PRIMARY,
+  --             Vk.commandBufferCount = fromIntegral frameCount
+  --           }
+  --    in managed $ Vk.withCommandBuffers device info bracket
+  -- say "Vulkan" $ "Creaded " ++ show frameCount ++ " command buffers"
 
-  vertextStagingBuffers <- V.replicateM frameCount $ withHostBuffer allocator size
-  say "Vulkan" $ "Creaded " ++ show frameCount ++ " staging buffers"
-  semaphores <- V.replicateM (frameCount * 2) $ managed $ Vk.withSemaphore device Vk.zero Nothing bracket
-  say "Vulkan" $ "Creaded " ++ show (frameCount * 2) ++ " semaphores"
-  fences <-
-    V.replicateM
-      frameCount
-      let info = Vk.zero {VkFenceCreateInfo.flags = Vk.FENCE_CREATE_SIGNALED_BIT}
-       in managed $ Vk.withFence device info Nothing bracket
-  say "Vulkan" $ "Created " ++ show frameCount ++ " fences"
-  vertexBuffers <- V.replicateM frameCount $ withGPUBuffer allocator vertexBufferSize Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
-  say "Vulkan" $ "Created " ++ show frameCount ++ " vertex buffers"
+  -- vertextStagingBuffers <- V.replicateM frameCount $ withHostBuffer allocator stagingSize
+  -- say "Vulkan" $ "Creaded " ++ show frameCount ++ " staging buffers"
+  -- semaphores <- V.replicateM (frameCount * 2) $ managed $ Vk.withSemaphore device Vk.zero Nothing bracket
+  -- say "Vulkan" $ "Creaded " ++ show (frameCount * 2) ++ " semaphores"
+  -- fences <-
+  --   V.replicateM
+  --     frameCount
+  --     let info = Vk.zero {VkFenceCreateInfo.flags = Vk.FENCE_CREATE_SIGNALED_BIT}
+  --      in managed $ Vk.withFence device info Nothing bracket
+  -- say "Vulkan" $ "Created " ++ show frameCount ++ " fences"
+  -- vertexBuffers <- V.replicateM frameCount $ withGPUBuffer allocator vertexBufferSize Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
+  -- say "Vulkan" $ "Created " ++ show frameCount ++ " vertex buffers"
+
+  fs <- frames device commandPool allocator stagingSize vertexBufferSize frameCount
 
   pipelineLayout <-
     let info = Vk.zero {VkPipelineLayoutCreateInfo.setLayouts = [descSetLayout]}
@@ -224,26 +228,21 @@ main = runManaged $ do
   presentQueue <- Vk.getDeviceQueue device present 0 <* say "Vulkan" "Got present queue"
   let shutdown =
         do
-          liftIO $ say "Engine" "Shutting down ..."
+          say "Engine" "Shutting down ..."
           Vk.deviceWaitIdle device
 
-      frame n world = do
-        let fence = fences ! n
+      frame :: Frame -> World -> Managed ()
+      frame (Frame {cmd, fence, imageAvailable, renderFinished, staging, vertex}) world = do
         _ <- let second = 1000000000 in Vk.waitForFences device [fence] True second *> Vk.resetFences device [fence]
         let verts = vertices $ sprites world -- 1
-        let vertexBuffer = vertexBuffers ! n
+        liftIO $ copyToGpu device commandPool gfxQueue vertex staging verts
 
-        let staging = vertextStagingBuffers ! n in copyToGpu device commandPool gfxQueue vertexBuffer staging verts
-
-        let imageAvailable = semaphores ! n
-            renderFinished = semaphores ! (n + frameCount)
-            cmd = cmds ! n
         (r, index) <- Vk.acquireNextImageKHR device swapchain maxBound imageAvailable Vk.zero
         when (r == Vk.SUBOPTIMAL_KHR || r == Vk.ERROR_OUT_OF_DATE_KHR) $ say "Engine" $ "acquireNextFrame = " ++ show r
         let (image, view) = imagesAndViews ! fromIntegral index
         Vk.useCommandBuffer cmd Vk.zero $ do
           Vk.cmdBindPipeline cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
-          Vk.cmdBindVertexBuffers cmd 0 [vertexBuffer] [0]
+          Vk.cmdBindVertexBuffers cmd 0 [vertex] [0]
           Vk.cmdBindDescriptorSets cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipelineLayout 0 [descSet] []
           transitToRenderLayout cmd image
           let vertexCount = fromIntegral $ SV.length verts
@@ -284,22 +283,57 @@ main = runManaged $ do
                   }
            in Vk.queuePresentKHR presentQueue info
         when (r2 == Vk.SUBOPTIMAL_KHR || r2 == Vk.ERROR_OUT_OF_DATE_KHR) (say "Engine" $ "presentFrame" ++ show r)
-   in liftIO $
-        say "Engine" "Entering the main loop"
-          *> mainLoop
-            shutdown
-            ( \frameNumber dt es w -> do
-                w2 <- world dt es w
-                let n = frameNumber `mod` frameCount in frame n w2
-                return w2
-            )
-            world0
+   in say "Engine" "Entering the main loop"
+        *> mainLoop
+          shutdown
+          ( \frameNumber dt es w -> do
+              w2 <- world dt es w
+              let n = frameNumber `mod` frameCount
+                  f = fs ! n
+               in frame f w2
+              return w2
+          )
+          world0
+
+frames ::
+  VkDevice.Device ->
+  Vk.CommandPool ->
+  Vma.Allocator ->
+  Vk.DeviceSize ->
+  Vk.DeviceSize ->
+  Int ->
+  Managed (V.Vector Frame)
+frames device commandPool allocator stagingSize vertexBufferSize frameCount =
+  do
+    cmds <-
+      let info =
+            Vk.zero
+              { Vk.commandPool = commandPool,
+                Vk.level = Vk.COMMAND_BUFFER_LEVEL_PRIMARY,
+                Vk.commandBufferCount = fromIntegral frameCount
+              }
+       in managed $ Vk.withCommandBuffers device info bracket
+    say "Vulkan" $ "Creaded " ++ show frameCount ++ " command buffers"
+    vertextStagingBuffers <- V.replicateM frameCount $ withHostBuffer allocator stagingSize
+    say "Vulkan" $ "Creaded " ++ show frameCount ++ " staging buffers"
+    semaphores <- V.replicateM (frameCount * 2) $ managed $ Vk.withSemaphore device Vk.zero Nothing bracket
+    say "Vulkan" $ "Creaded " ++ show (frameCount * 2) ++ " semaphores"
+    fences <-
+      V.replicateM
+        frameCount
+        let info = Vk.zero {VkFenceCreateInfo.flags = Vk.FENCE_CREATE_SIGNALED_BIT}
+         in managed $ Vk.withFence device info Nothing bracket
+    say "Vulkan" $ "Created " ++ show frameCount ++ " fences"
+    vertexBuffers <- V.replicateM frameCount $ withGPUBuffer allocator vertexBufferSize Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
+    say "Vulkan" $ "Created " ++ show frameCount ++ " vertex buffers"
+    return . V.fromList $ [Frame {cmd = cmds ! n, fence = fences ! n, imageAvailable = semaphores ! n, renderFinished = semaphores ! (n + frameCount), staging = vertextStagingBuffers ! n, vertex = vertexBuffers ! n} | n <- [0 .. frameCount - 1]]
 
 mainLoop ::
-  IO () ->
-  (Int -> Word32 -> [SDL.Event] -> s -> IO s) ->
+  (MonadIO io) =>
+  io () ->
+  (Int -> Word32 -> [SDL.Event] -> s -> io s) ->
   s ->
-  IO ()
+  io ()
 mainLoop shutdown doFrame = go 1 0
   where
     lockFrameRate fps t1 =
@@ -456,7 +490,7 @@ copyToGpu ::
 copyToGpu device pool queue gpuBuffer (hostBuffer, hostBufferPtr) v = do
   let (src, len) = SV.unsafeToForeignPtr0 v
       size = fromIntegral $ sizeOf (undefined :: a) * len
-  liftIO . withForeignPtr src $ \s -> copyArray (castPtr hostBufferPtr) s len
+  withForeignPtr src $ \s -> copyArray (castPtr hostBufferPtr) s len
   let copy cmd = Vk.cmdCopyBuffer cmd hostBuffer gpuBuffer [Vk.zero {VkBufferCopy.size = size}]
    in submitWait device pool queue copy
 

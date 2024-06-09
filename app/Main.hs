@@ -218,14 +218,14 @@ main = runManaged $ do
    in say "Engine" "Entering the main loop"
         *> mainLoop
           shutdown
-          ( \frameNumber dt es w -> do
-              w2 <- world dt es w
-              let n = frameNumber `mod` frameCount
-                  f = frames ! n
-                  verts = vertices $ sprites w2
-               in frame device commandPool gfxQueue presentQueue pipeline pipelineLayout swapchain descSet f verts
-              return w2
+          (vertices . sprites)
+          ( \frameNumber verts ->
+              do
+                let n = frameNumber `mod` frameCount
+                    f = frames ! n
+                 in frame device commandPool gfxQueue presentQueue pipeline pipelineLayout swapchain descSet f verts
           )
+          world
           world0
 
 frame ::
@@ -338,10 +338,12 @@ waitForFrame device (Frame {fence}) =
 mainLoop ::
   (MonadIO io) =>
   io () ->
-  (Int -> Word32 -> [SDL.Event] -> s -> io s) ->
+  (s -> SV.Vector Vertex) ->
+  (Int -> SV.Vector Vertex -> io ()) ->
+  (Word32 -> [SDL.Event] -> s -> io s) ->
   s ->
   io ()
-mainLoop shutdown frame s0 =
+mainLoop shutdown vertices frame world s0 =
   do
     t0 <- SDL.ticks
     go 0 t0 s0
@@ -352,14 +354,16 @@ mainLoop shutdown frame s0 =
         let dt = t - t1
             minIdle = 1000 `div` fps
         if dt < minIdle then (liftIO . threadDelay $ 1000 * fromIntegral (minIdle - dt)) *> SDL.ticks else pure t
-    go frameNumber t1 s = do
+    go frameNumber t s = do
       -- es <- ImGui.pollEventsWithImGui
       es <- SDL.pollEvents
       if any isQuitEvent es
         then shutdown
         else do
-          t2 <- lockFrameRate 60 t1
-          frame frameNumber (t2 - t1) es s >>= go (frameNumber + 1) t2
+          frame frameNumber $ vertices s
+          t2 <- lockFrameRate 60 t
+          s2 <- world (t2 - t) es s
+          go (frameNumber + 1) t2 s2
 
 world :: (Monad io) => Word32 -> [SDL.Event] -> World -> io World
 world 0 _ w = return w

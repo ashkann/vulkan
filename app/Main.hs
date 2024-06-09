@@ -341,7 +341,7 @@ mainLoop ::
   (Int -> Word32 -> [SDL.Event] -> s -> io s) ->
   s ->
   io ()
-mainLoop shutdown doFrame = go 1 0
+mainLoop shutdown doFrame = go 0 0
   where
     lockFrameRate fps t1 =
       do

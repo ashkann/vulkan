@@ -225,7 +225,8 @@ main = runManaged $ do
                     f = frames ! n
                  in frame device commandPool gfxQueue presentQueue pipeline pipelineLayout swapchain descSet f verts
           )
-          world
+          worldTime
+          worldEvent
           world0
 
 frame ::
@@ -338,15 +339,16 @@ waitForFrame device (Frame {fence}) =
 mainLoop ::
   (MonadIO io) =>
   io () ->
-  (s -> SV.Vector Vertex) ->
+  (w -> SV.Vector Vertex) ->
   (Int -> SV.Vector Vertex -> io ()) ->
-  (Word32 -> [SDL.Event] -> s -> io s) ->
-  s ->
+  (Word32 -> w -> io w) ->
+  (SDL.Event -> w -> io w) ->
+  w ->
   io ()
-mainLoop shutdown vertices frame world s0 =
+mainLoop shutdown vertices frame worldTime worldEvent world0 =
   do
     t0 <- SDL.ticks
-    go 0 t0 s0
+    go 0 t0 world0
   where
     lockFrameRate fps t1 =
       do
@@ -354,26 +356,31 @@ mainLoop shutdown vertices frame world s0 =
         let dt = t - t1
             minIdle = 1000 `div` fps
         if dt < minIdle then (liftIO . threadDelay $ 1000 * fromIntegral (minIdle - dt)) *> SDL.ticks else pure t
-    go frameNumber t s = do
+    go frameNumber t w = do
       -- es <- ImGui.pollEventsWithImGui
       es <- SDL.pollEvents
       if any isQuitEvent es
         then shutdown
         else do
-          frame frameNumber $ vertices s
+          frame frameNumber $ vertices w
+          w2 <- foldlM (flip worldEvent) w es
           t2 <- lockFrameRate 60 t
-          s2 <- world (t2 - t) es s
-          go (frameNumber + 1) t2 s2
+          w3 <- worldTime (t2 - t) w2
+          go (frameNumber + 1) t2 w3
 
-world :: (Monad io) => Word32 -> [SDL.Event] -> World -> io World
-world 0 _ w = return w
-world dt es w@(World {pointer = pointer@Sprite {pos = p}, a = a, b = b, c = c}) = return w {pointer = pointer {pos = foldl f p es}, a = update a, b = update b, c = update c}
+worldEvent :: (Monad io) => SDL.Event -> World -> io World
+worldEvent e w@(World {pointer = pointer@Sprite {pos = pos}}) = return w {pointer = pointer {pos = f pos e}}
   where
     f _ (SDL.Event _ (SDL.MouseMotionEvent (SDL.MouseMotionEventData {mouseMotionEventPos = SDL.P (SDL.V2 x y)}))) = normalPos x y
     f p _ = p
+
+worldTime :: (Monad io) => Word32 -> World -> io World
+worldTime 0 w = return w
+worldTime dt w@(World {a = a, b = b, c = c}) = return w {a = update a, b = update b, c = update c}
+  where
     update Thingie {sprite = sprite@Sprite {pos = p0}, vel = v0} =
       let p1 = p0 + (v0 G.^* fromIntegral dt)
-          v1 = G.emap2 (\vi pi -> if pi >= 1.0 || pi <= -1.0 then -vi else vi) v0 p1
+          v1 = G.emap2 (\vi pos -> if pos >= 1.0 || pos <= -1.0 then -vi else vi) v0 p1
        in Thingie {sprite = sprite {pos = p1}, vel = v1}
 
 repeatingSampler :: Vk.Device -> Managed Vk.Sampler

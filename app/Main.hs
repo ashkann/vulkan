@@ -201,7 +201,7 @@ main = runManaged $ do
       windowHeight
   let frameCount = V.length swapchainImagesAndViews
   say "Engin" $ "Frame count is " ++ show frameCount
-  
+
   pipelineLayout <-
     let info = Vk.zero {VkPipelineLayoutCreateInfo.setLayouts = [descSetLayout]}
      in managed $ Vk.withPipelineLayout device info Nothing bracket
@@ -341,7 +341,10 @@ mainLoop ::
   (Int -> Word32 -> [SDL.Event] -> s -> io s) ->
   s ->
   io ()
-mainLoop shutdown doFrame = go 0 0
+mainLoop shutdown frame s0 =
+  do
+    t0 <- SDL.ticks
+    go 0 t0 s0
   where
     lockFrameRate fps t1 =
       do
@@ -355,8 +358,8 @@ mainLoop shutdown doFrame = go 0 0
       if any isQuitEvent es
         then shutdown
         else do
-          t <- lockFrameRate 60 t1
-          doFrame frameNumber (t - t1) es s >>= go (frameNumber + 1) t
+          t2 <- lockFrameRate 60 t1
+          frame frameNumber (t2 - t1) es s >>= go (frameNumber + 1) t2
 
 world :: (Monad io) => Word32 -> [SDL.Event] -> World -> io World
 world 0 _ w = return w

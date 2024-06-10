@@ -16,25 +16,20 @@
 
 module Main (main) where
 
-import Ashkan2 qualified
 import Codec.Picture qualified as JP
 import Control.Applicative ((<|>))
 import Control.Concurrent (threadDelay)
-import Control.Exception (bracket, bracket_)
-import Control.Monad (forM, replicateM, when)
+import Control.Exception (bracket)
+import Control.Monad (when)
 import Control.Monad.Except (ExceptT (ExceptT), runExceptT)
-import Control.Monad.Managed (Managed, MonadIO (liftIO), managed, managed_, runManaged)
+import Control.Monad.Managed (Managed, MonadIO (liftIO), managed, runManaged)
 import Data.Bits ((.&.), (.|.))
 import Data.ByteString qualified as BS (readFile)
 import Data.Foldable (foldlM)
 import Data.Functor (($>), (<&>))
-import Data.Traversable (for)
 import Data.Vector ((!))
 import Data.Vector qualified as V
 import Data.Vector.Storable qualified as SV
-import DearImGui qualified as ImGui
-import DearImGui.SDL.Vulkan qualified as ImGui
-import DearImGui.Vulkan qualified as ImGui
 import Foreign (Bits (zeroBits), Ptr, Storable, Word32, castPtr, copyArray, withForeignPtr)
 import Foreign.Ptr (castFunPtr)
 import Foreign.Storable (Storable (..), sizeOf)
@@ -43,11 +38,7 @@ import Geomancy qualified as G
 import SDL qualified
 import Utils
 import Vulkan qualified as Vk
-import Vulkan qualified as VkBufferCopy (BufferCopy (..))
 import Vulkan qualified as VkBufferCreateInfo (BufferCreateInfo (..))
-import Vulkan qualified as VkBufferImageCopy (BufferImageCopy (..))
-import Vulkan qualified as VkCommandBufferAllocateInfo (CommandBufferAllocateInfo (..))
-import Vulkan qualified as VkCommandBufferBeginInfo (CommandBufferBeginInfo (..))
 import Vulkan qualified as VkCommandPoolCreateInfo (CommandPoolCreateInfo (..))
 import Vulkan qualified as VkDescriptorImageInfo (DescriptorImageInfo (..))
 import Vulkan qualified as VkDescriptorPoolCreateInfo (DescriptorPoolCreateInfo (..))
@@ -64,7 +55,6 @@ import Vulkan qualified as VkExtent3D (Extent3D (..))
 import Vulkan qualified as VkFenceCreateInfo (FenceCreateInfo (..))
 import Vulkan qualified as VkGraphicsPipelineCreateInfo (GraphicsPipelineCreateInfo (..))
 import Vulkan qualified as VkImageCreateInfo (ImageCreateInfo (..))
-import Vulkan qualified as VkImageSubresourceLayers (ImageSubresourceLayers (..))
 import Vulkan qualified as VkImageSubresourceRange (ImageSubresourceRange (..))
 import Vulkan qualified as VkImageViewCreateInfo (ImageViewCreateInfo (..))
 import Vulkan qualified as VkInstance (Instance (..))
@@ -133,12 +123,17 @@ data LoadedTexture = LoadedTexture {resolution :: G.UVec2, size :: G.Vec2, image
 data Texture = Texture {index :: Word32, texture :: LoadedTexture}
 
 data Frame = Frame
-  { cmd :: Vk.CommandBuffer,
+  { pool :: Vk.CommandPool,
+    renderCmd :: Vk.CommandBuffer,
+    copyCmd :: Vk.CommandBuffer,
     fence :: Vk.Fence,
     imageAvailable :: Vk.Semaphore,
     renderFinished :: Vk.Semaphore,
+    copyFinished :: Vk.Semaphore,
     staging :: (Vk.Buffer, Ptr ()),
-    vertex :: Vk.Buffer
+    vertex :: Vk.Buffer,
+    targetImage :: Vk.Image,
+    targetView :: Vk.ImageView
   }
 
 main :: IO ()
@@ -190,7 +185,7 @@ main = runManaged $ do
             c = Thingie {sprite = Sprite {pos = p0, scale = third, texture = texture3}, vel = G.vec2 0.001 0.002}
           }
 
-  swapchain@(_, swapchainExtent, swapchainImagesAndViews) <-
+  swapchain@(_, swapchainExtent, swapchainImages) <-
     createSwapchain
       gpu
       device
@@ -199,7 +194,7 @@ main = runManaged $ do
       present
       windowWidth
       windowHeight
-  let frameCount = V.length swapchainImagesAndViews
+  let frameCount = V.length swapchainImages
   say "Engin" $ "Frame count is " ++ show frameCount
 
   pipelineLayout <-
@@ -210,7 +205,7 @@ main = runManaged $ do
 
   let stagingBufferSize = 1048576
       vertexBufferSize = 4 * 1024
-  frames <- withFrames device commandPool allocator stagingBufferSize vertexBufferSize frameCount
+  frames <- withFrames device gfx allocator stagingBufferSize vertexBufferSize frameCount
   let shutdown =
         do
           say "Engine" "Shutting down ..."
@@ -223,7 +218,7 @@ main = runManaged $ do
               do
                 let n = frameNumber `mod` frameCount
                     f = frames ! n
-                 in frame device commandPool gfxQueue presentQueue pipeline pipelineLayout swapchain descSet f verts
+                 in frame device gfxQueue presentQueue pipeline pipelineLayout swapchain descSet f verts
           )
           worldTime
           worldEvent
@@ -232,104 +227,143 @@ main = runManaged $ do
 frame ::
   (Storable a, MonadIO m) =>
   Vk.Device ->
-  Vk.CommandPool ->
   Vk.Queue ->
   Vk.Queue ->
   Vk.Pipeline ->
   Vk.PipelineLayout ->
-  (Vk.SwapchainKHR, VkExtent2D.Extent2D, V.Vector (Vk.Image, Vk.ImageView)) ->
+  (Vk.SwapchainKHR, VkExtent2D.Extent2D, V.Vector Vk.Image) ->
   Vk.DescriptorSet ->
   Frame ->
   SV.Vector a ->
   m ()
-frame device commandPool gfxQueue presentQueue pipeline pipelineLayout (swapchain, swapchainExtent, imagesAndViews) descSet f@(Frame {cmd, fence, imageAvailable, renderFinished, staging, vertex}) verts = do
+frame device gfxQueue presentQueue pipeline pipelineLayout swp descSet f verts = do
+  let Frame
+        { pool,
+          renderCmd,
+          copyCmd,
+          fence,
+          imageAvailable,
+          renderFinished,
+          copyFinished,
+          staging,
+          vertex,
+          targetImage,
+          targetView
+        } = f
+      (swapchain, swapchainExtent, swapchainImages) = swp
   waitForFrame device f
-  liftIO $ copyToGpu device commandPool gfxQueue vertex staging verts
+  liftIO $ copyToGpu device pool gfxQueue vertex staging verts
 
-  (r, index) <- Vk.acquireNextImageKHR device swapchain maxBound imageAvailable Vk.zero
-  when (r == Vk.SUBOPTIMAL_KHR || r == Vk.ERROR_OUT_OF_DATE_KHR) $ say "Engine" $ "acquireNextFrame = " ++ show r
-  let (image, view) = imagesAndViews ! fromIntegral index
-  Vk.useCommandBuffer cmd Vk.zero $ do
-    Vk.cmdBindPipeline cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
-    Vk.cmdBindVertexBuffers cmd 0 [vertex] [0]
-    Vk.cmdBindDescriptorSets cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipelineLayout 0 [descSet] []
-    transitToRenderLayout cmd image
-    let vertexCount = fromIntegral $ SV.length verts
-        attachment =
+  recordRender renderCmd vertex (targetImage, targetView) swapchainExtent
+  index <- Vk.acquireNextImageKHR device swapchain maxBound imageAvailable Vk.zero >>= \(r, index) -> checkSwapchainIsOld r $> index
+  let swapchainImage = swapchainImages ! fromIntegral index
+   in recordCopyToSwapchain copyCmd targetImage swapchainImage swapchainExtent
+
+  let render =
+        Vk.SomeStruct
           Vk.zero
-            { VkRenderingAttachmentInfo.imageView = view,
-              VkRenderingAttachmentInfo.imageLayout = Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-              VkRenderingAttachmentInfo.loadOp = Vk.ATTACHMENT_LOAD_OP_CLEAR,
-              VkRenderingAttachmentInfo.storeOp = Vk.ATTACHMENT_STORE_OP_STORE,
-              VkRenderingAttachmentInfo.clearValue = clearColor
+            { VkSubmitInfo.commandBuffers = [Vk.commandBufferHandle renderCmd],
+              VkSubmitInfo.signalSemaphores = [renderFinished]
             }
-        scissor = Vk.Rect2D {VkRect2D.offset = Vk.Offset2D 0 0, VkRect2D.extent = swapchainExtent}
-        info =
+      copy =
+        Vk.SomeStruct
           Vk.zero
-            { VkRenderingInfo.renderArea = scissor,
-              VkRenderingInfo.layerCount = 1,
-              VkRenderingInfo.colorAttachments = [attachment]
+            { VkSubmitInfo.waitSemaphores = [imageAvailable, renderFinished],
+              VkSubmitInfo.waitDstStageMask = [Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, Vk.PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT],
+              VkSubmitInfo.commandBuffers = [Vk.commandBufferHandle copyCmd],
+              VkSubmitInfo.signalSemaphores = [copyFinished]
             }
-        draw = Vk.cmdDraw cmd vertexCount 1 0 0
-     in Vk.cmdUseRendering cmd info draw
-    transitToPresentLayout cmd image
+   in Vk.queueSubmit gfxQueue [render, copy] fence
   let info =
-        [ Vk.SomeStruct
-            Vk.zero
-              { VkSubmitInfo.waitSemaphores = [imageAvailable],
-                VkSubmitInfo.waitDstStageMask = [Vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT],
-                VkSubmitInfo.commandBuffers = [Vk.commandBufferHandle cmd],
-                VkSubmitInfo.signalSemaphores = [renderFinished]
-              }
-        ]
-   in Vk.queueSubmit gfxQueue info fence
-  r2 <-
-    let info =
-          Vk.zero
-            { VkPresentInfoKHR.waitSemaphores = [renderFinished],
-              VkPresentInfoKHR.swapchains = [swapchain],
-              VkPresentInfoKHR.imageIndices = [index]
-            }
-     in Vk.queuePresentKHR presentQueue info
-  when (r2 == Vk.SUBOPTIMAL_KHR || r2 == Vk.ERROR_OUT_OF_DATE_KHR) (say "Engine" $ "presentFrame" ++ show r)
+        Vk.zero
+          { VkPresentInfoKHR.waitSemaphores = [copyFinished],
+            VkPresentInfoKHR.swapchains = [swapchain],
+            VkPresentInfoKHR.imageIndices = [index]
+          }
+   in Vk.queuePresentKHR presentQueue info >>= checkSwapchainIsOld
+  where
+    checkSwapchainIsOld r = when (r == Vk.SUBOPTIMAL_KHR || r == Vk.ERROR_OUT_OF_DATE_KHR) (say "Engine" $ "presentFrame" ++ show r)
+    recordCopyToSwapchain cmd offscreenImage swapchainImage extent =
+      Vk.useCommandBuffer cmd Vk.zero $ do
+        transitRenderTargetToCopySrc cmd offscreenImage
+        transitToCopyDst cmd swapchainImage
+        copyImageToImage cmd offscreenImage swapchainImage extent
+        transitToPresent cmd swapchainImage
+    recordRender cmd vertBuff target extent =
+      Vk.useCommandBuffer cmd Vk.zero $ do
+        let (image, view) = target
+        Vk.cmdBindPipeline cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
+        Vk.cmdBindVertexBuffers cmd 0 [vertBuff] [0]
+        Vk.cmdBindDescriptorSets cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipelineLayout 0 [descSet] []
+        transitToRenderTarget cmd image
+        let vertexCount = fromIntegral $ SV.length verts
+            attachment =
+              Vk.zero
+                { VkRenderingAttachmentInfo.imageView = view,
+                  VkRenderingAttachmentInfo.imageLayout = Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                  VkRenderingAttachmentInfo.loadOp = Vk.ATTACHMENT_LOAD_OP_CLEAR,
+                  VkRenderingAttachmentInfo.storeOp = Vk.ATTACHMENT_STORE_OP_STORE,
+                  VkRenderingAttachmentInfo.clearValue = clearColor
+                }
+            scissor = Vk.Rect2D {VkRect2D.offset = Vk.Offset2D 0 0, VkRect2D.extent = extent}
+            info =
+              Vk.zero
+                { VkRenderingInfo.renderArea = scissor,
+                  VkRenderingInfo.layerCount = 1,
+                  VkRenderingInfo.colorAttachments = [attachment]
+                }
+            draw = Vk.cmdDraw cmd vertexCount 1 0 0
+         in Vk.cmdUseRendering cmd info draw
 
 withFrames ::
   VkDevice.Device ->
-  Vk.CommandPool ->
+  Word32 ->
   Vma.Allocator ->
   Vk.DeviceSize ->
   Vk.DeviceSize ->
   Int ->
   Managed (V.Vector Frame)
-withFrames device commandPool allocator stagingBufferSize vertexBufferSize frameCount =
-  do
-    cmds <-
-      let info =
-            Vk.zero
-              { Vk.commandPool = commandPool,
-                Vk.level = Vk.COMMAND_BUFFER_LEVEL_PRIMARY,
-                Vk.commandBufferCount = fromIntegral frameCount
-              }
-       in managed $ Vk.withCommandBuffers device info bracket
-    forM cmds singleFrame
+withFrames device gfx allocator stagingBufferSize vertexBufferSize frameCount = V.replicateM frameCount singleFrame
   where
-    singleFrame cmd =
+    singleFrame =
       do
+        pool <-
+          let info =
+                Vk.zero
+                  { VkCommandPoolCreateInfo.queueFamilyIndex = gfx,
+                    VkCommandPoolCreateInfo.flags = Vk.COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT
+                  }
+           in managed $ Vk.withCommandPool device info Nothing bracket
+        cmds <-
+          let info =
+                Vk.zero
+                  { Vk.commandPool = pool,
+                    Vk.level = Vk.COMMAND_BUFFER_LEVEL_PRIMARY,
+                    Vk.commandBufferCount = 2
+                  }
+           in managed (Vk.withCommandBuffers device info bracket)
         vertextStagingBuffer <- withHostBuffer allocator stagingBufferSize
         imageAvailable <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
         renderFinished <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
+        copyFinished <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
         fence <-
           let info = Vk.zero {VkFenceCreateInfo.flags = Vk.FENCE_CREATE_SIGNALED_BIT}
            in managed $ Vk.withFence device info Nothing bracket
         vertexBuffer <- withGPUBuffer allocator vertexBufferSize Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
+        (image, view) <- withImageAndView allocator device windowWidth windowHeight imageFormat
         return
           Frame
-            { cmd = cmd,
+            { pool = pool,
+              renderCmd = cmds ! 0,
+              copyCmd = cmds ! 1,
               fence = fence,
               imageAvailable = imageAvailable,
               renderFinished = renderFinished,
+              copyFinished = copyFinished,
               staging = vertextStagingBuffer,
-              vertex = vertexBuffer
+              vertex = vertexBuffer,
+              targetImage = image,
+              targetView = view
             }
 
 waitForFrame :: (MonadIO io) => Vk.Device -> Frame -> io ()
@@ -397,49 +431,6 @@ repeatingSampler device =
           }
    in managed $ Vk.withSampler device info Nothing bracket
 
--- withImGui :: Vk.Instance -> Vk.PhysicalDevice -> Vk.Device -> SDL.Window -> Vk.Queue -> Vk.CommandPool -> Vk.Queue -> Managed ()
--- withImGui vulkan gpu device window queue cmdPool gfx =
---   do
---     pool <-
---       let poolSizes = poolSize <$> types
---           info =
---             Vk.zero
---               { VkDescriptorPoolCreateInfo.poolSizes = poolSizes,
---                 VkDescriptorPoolCreateInfo.maxSets = 1000,
---                 VkDescriptorPoolCreateInfo.flags = Vk.DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT
---               }
---        in managed $ Vk.withDescriptorPool device info Nothing bracket
---     managed_ $ bracket_ (init pool) Ashkan2.vulkanShutdown
---   where
---     types =
---       [ Vk.DESCRIPTOR_TYPE_SAMPLER,
---         Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
---         Vk.DESCRIPTOR_TYPE_SAMPLED_IMAGE,
---         Vk.DESCRIPTOR_TYPE_STORAGE_IMAGE,
---         Vk.DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER,
---         Vk.DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER,
---         Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
---         Vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
---         Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
---         Vk.DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC,
---         Vk.DESCRIPTOR_TYPE_INPUT_ATTACHMENT
---       ]
---     poolSize typ =
---       Vk.zero
---         { VkDescriptorPoolSize.descriptorCount = 1000,
---           VkDescriptorPoolSize.type' = typ
---         }
---     init pool = do
---       _ <- ImGui.createContext
---       say "ImGui" "Created context"
---       _ <- ImGui.sdl2InitForVulkan window
---       say "ImGui" "Initialized for SDL2 Vulkan"
---       Ashkan2.vulkanInit vulkan gpu device gfx pool
---       _ <- submitNow device cmdPool queue (\cmd -> ImGui.vulkanCreateFontsTexture cmd $> ())
---       say "ImGui" "Created fonts texture"
---       ImGui.vulkanDestroyFontUploadObjects
---       say "ImGui" "Destroyed font upload objects"
-
 windowWidth :: Int
 windowWidth = 500
 
@@ -498,25 +489,8 @@ vertices ss =
               [topLeft, topRight, bottomRight, bottomRight, bottomLeft, topLeft]
    in mconcat $ toQuad <$> ss
 
-copyToGpu ::
-  forall a.
-  (Storable a) =>
-  Vk.Device ->
-  Vk.CommandPool ->
-  Vk.Queue ->
-  Vk.Buffer ->
-  (Vk.Buffer, Ptr ()) ->
-  SV.Vector a ->
-  IO ()
-copyToGpu device pool queue gpuBuffer (hostBuffer, hostBufferPtr) v = do
-  let (src, len) = SV.unsafeToForeignPtr0 v
-      size = fromIntegral $ sizeOf (undefined :: a) * len
-  withForeignPtr src $ \s -> copyArray (castPtr hostBufferPtr) s len
-  let copy cmd = Vk.cmdCopyBuffer cmd hostBuffer gpuBuffer [Vk.zero {VkBufferCopy.size = size}]
-   in submitWait device pool queue copy
-
-withImage :: Vma.Allocator -> Int -> Int -> Managed Vk.Image
-withImage allocator width height = do
+withImage :: Vma.Allocator -> Int -> Int -> Vk.Format -> Managed Vk.Image
+withImage allocator width height format = do
   (image, _, _) <-
     let dims =
           Vk.Extent3D
@@ -524,14 +498,14 @@ withImage allocator width height = do
               VkExtent3D.height = fromIntegral height,
               VkExtent3D.depth = 1
             }
-        usage = Vk.IMAGE_USAGE_TRANSFER_DST_BIT .|. Vk.IMAGE_USAGE_SAMPLED_BIT .|. Vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+        usage = Vk.IMAGE_USAGE_TRANSFER_SRC_BIT .|. Vk.IMAGE_USAGE_TRANSFER_DST_BIT .|. Vk.IMAGE_USAGE_SAMPLED_BIT .|. Vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT -- Put only what we actually need
         imgInfo =
           Vk.zero
             { VkImageCreateInfo.imageType = Vk.IMAGE_TYPE_2D,
               VkImageCreateInfo.extent = dims,
               VkImageCreateInfo.mipLevels = 1,
               VkImageCreateInfo.arrayLayers = 1,
-              VkImageCreateInfo.format = Vk.FORMAT_R8G8B8A8_SRGB,
+              VkImageCreateInfo.format = format,
               VkImageCreateInfo.tiling = Vk.IMAGE_TILING_OPTIMAL,
               VkImageCreateInfo.initialLayout = Vk.IMAGE_LAYOUT_UNDEFINED,
               VkImageCreateInfo.usage = usage,
@@ -546,103 +520,29 @@ withImage allocator width height = do
      in managed $ Vma.withImage allocator imgInfo allocInfo bracket
   return image
 
+withImageAndView :: Vma.Allocator -> Vk.Device -> Int -> Int -> Vk.Format -> Managed (Vk.Image, Vk.ImageView)
+withImageAndView allocator device width height format = do
+  image <- withImage allocator width height format
+  view <- withImageView device image format
+  return (image, view)
+
 readTexture :: Vma.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> FilePath -> Managed LoadedTexture
 readTexture allocator device pool queue path = do
   JP.ImageRGBA8 (JP.Image width height pixels) <- liftIO $ JP.readPng path >>= either (sayErr "Texture" . show) return
   let size = width * height * 4
-  image <- withImage allocator width height
+      format = Vk.FORMAT_R8G8B8A8_SRGB
+  (image, view) <- withImageAndView allocator device width height format
   do
     (staging, mem) <- withHostBuffer allocator (fromIntegral size)
     liftIO $ copy pixels mem size
     copyBufferToImage device pool queue staging image width height
-  let res = G.uvec2 (fromIntegral width) (fromIntegral height)
-      tex v = LoadedTexture {resolution = res, size = normalSize res, image = image, view = v}
-   in tex <$> withImageView device image Vk.FORMAT_R8G8B8A8_SRGB
+    let res = G.uvec2 (fromIntegral width) (fromIntegral height)
+    return LoadedTexture {resolution = res, size = normalSize res, image = image, view = view}
   where
     copy pixels mem size =
       let (src, _) = SV.unsafeToForeignPtr0 pixels
           dst = castPtr mem
        in withForeignPtr src $ \from -> copyArray dst from size
-
-submitWait :: Vk.Device -> Vk.CommandPool -> Vk.Queue -> (Vk.CommandBuffer -> IO ()) -> IO ()
-submitWait device pool queue f = buffer $ \buffs ->
-  do
-    let buff = V.head buffs
-    let info = Vk.zero {VkCommandBufferBeginInfo.flags = Vk.COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT}
-     in Vk.useCommandBuffer buff info $ f buff
-    let work = Vk.SomeStruct $ Vk.zero {VkSubmitInfo.commandBuffers = [Vk.commandBufferHandle buff]}
-     in Vk.queueSubmit queue [work] Vk.NULL_HANDLE
-    Vk.queueWaitIdle queue
-  where
-    buffer =
-      let info =
-            Vk.zero
-              { VkCommandBufferAllocateInfo.level = Vk.COMMAND_BUFFER_LEVEL_PRIMARY,
-                VkCommandBufferAllocateInfo.commandPool = pool,
-                VkCommandBufferAllocateInfo.commandBufferCount = 1
-              }
-       in Vk.withCommandBuffers device info bracket
-
-copyBufferToImage ::
-  (MonadIO io) =>
-  VkDevice.Device ->
-  Vk.CommandPool ->
-  Vk.Queue ->
-  Vk.Buffer ->
-  Vk.Image ->
-  Int ->
-  Int ->
-  io ()
-copyBufferToImage device pool queue src dst width height = liftIO $ do
-  let subresource =
-        Vk.zero
-          { VkImageSubresourceLayers.aspectMask = Vk.IMAGE_ASPECT_COLOR_BIT,
-            VkImageSubresourceLayers.layerCount = 1,
-            VkImageSubresourceLayers.mipLevel = 0,
-            VkImageSubresourceLayers.baseArrayLayer = 0
-          }
-      dims =
-        Vk.Extent3D
-          { VkExtent3D.width = fromIntegral width,
-            VkExtent3D.height = fromIntegral height,
-            VkExtent3D.depth = 1
-          }
-      region =
-        Vk.zero
-          { VkBufferImageCopy.bufferOffset = 0,
-            VkBufferImageCopy.bufferRowLength = 0,
-            VkBufferImageCopy.bufferImageHeight = 0,
-            VkBufferImageCopy.imageSubresource = subresource,
-            VkBufferImageCopy.imageExtent = dims
-          }
-  submitWait device pool queue $ \cmd -> do
-    tranistToDstOptimal cmd dst
-    Vk.cmdCopyBufferToImage cmd src dst Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL [region]
-    tranistDstOptimalToShaderReadOnlyOptimal cmd dst
-
-tranistToDstOptimal :: (MonadIO io) => Vk.CommandBuffer -> Vk.Image -> io ()
-tranistToDstOptimal cmd img =
-  transitImageLayout
-    cmd
-    img
-    (Vk.AccessFlagBits 0)
-    Vk.ACCESS_TRANSFER_WRITE_BIT
-    Vk.IMAGE_LAYOUT_UNDEFINED
-    Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
-    Vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT
-    Vk.PIPELINE_STAGE_TRANSFER_BIT
-
-tranistDstOptimalToShaderReadOnlyOptimal :: (MonadIO io) => Vk.CommandBuffer -> Vk.Image -> io ()
-tranistDstOptimalToShaderReadOnlyOptimal cmd img =
-  transitImageLayout
-    cmd
-    img
-    Vk.ACCESS_TRANSFER_WRITE_BIT
-    Vk.ACCESS_SHADER_READ_BIT
-    Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
-    Vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-    Vk.PIPELINE_STAGE_TRANSFER_BIT
-    Vk.PIPELINE_STAGE_FRAGMENT_SHADER_BIT
 
 withHostBuffer :: Vma.Allocator -> Vk.DeviceSize -> Managed (Vk.Buffer, Ptr ())
 withHostBuffer allocator size = do
@@ -680,23 +580,6 @@ withGPUBuffer allocator size flags = do
      in managed $ Vma.withBuffer allocator bufferInfo vmaInfo bracket
   say "Vulkan" $ "Created GPU buffer (" ++ show size ++ " bytes)"
   return buffer
-
--- renderImgui cmd view extent imguiData =
---   let attachment =
---         Vk.zero
---           { VkRenderingAttachmentInfo.imageView = view,
---             VkRenderingAttachmentInfo.imageLayout = Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
---             VkRenderingAttachmentInfo.loadOp = Vk.ATTACHMENT_LOAD_OP_LOAD,
---             VkRenderingAttachmentInfo.storeOp = Vk.ATTACHMENT_STORE_OP_STORE
---           }
---       scissor = Vk.Rect2D {VkRect2D.offset = Vk.Offset2D 0 0, VkRect2D.extent = extent}
---       info =
---         Vk.zero
---           { VkRenderingInfo.renderArea = scissor,
---             VkRenderingInfo.layerCount = 1,
---             VkRenderingInfo.colorAttachments = [attachment]
---           }
---    in Vk.cmdUseRendering cmd info $ ImGui.vulkanRenderDrawData imguiData cmd Nothing
 
 descriptorSetLayout :: Vk.Device -> Word32 -> Managed Vk.DescriptorSetLayout
 descriptorSetLayout dev count = do
@@ -933,7 +816,7 @@ createSwapchain ::
   Word32 ->
   Int ->
   Int ->
-  Managed (Vk.SwapchainKHR, Vk.Extent2D, V.Vector (Vk.Image, Vk.ImageView))
+  Managed (Vk.SwapchainKHR, Vk.Extent2D, V.Vector Vk.Image)
 createSwapchain
   gpu
   dev
@@ -966,7 +849,7 @@ createSwapchain
                 VkSwapchainCreateInfo.imageColorSpace = colorSpace,
                 VkSwapchainCreateInfo.imageExtent = extent,
                 VkSwapchainCreateInfo.imageArrayLayers = 1,
-                VkSwapchainCreateInfo.imageUsage = Vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+                VkSwapchainCreateInfo.imageUsage = Vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT .|. Vk.IMAGE_USAGE_TRANSFER_DST_BIT,
                 VkSwapchainCreateInfo.imageSharingMode = sharingMode,
                 VkSwapchainCreateInfo.queueFamilyIndices = queues,
                 VkSwapchainCreateInfo.preTransform = transform,
@@ -976,8 +859,7 @@ createSwapchain
               }
       swapchain <- managed $ Vk.withSwapchainKHR dev info Nothing bracket
       (_, images) <- Vk.getSwapchainImagesKHR dev swapchain
-      imagesAndViews <- for images $ \image -> (image,) <$> withImageView dev image imageFormat
-      return (swapchain, extent, imagesAndViews)
+      return (swapchain, extent, images)
 
 withImageView :: Vk.Device -> Vk.Image -> Vk.Format -> Managed Vk.ImageView
 withImageView dev img format =

@@ -165,7 +165,7 @@ main = runManaged $ do
   sampler <- repeatingSampler device
   gfxQueue <- Vk.getDeviceQueue device gfx 0 <* say "Vulkan" "Got graphics queue"
   textures <-
-    let textures = ["checkerboard", "pointer", "image3", "image", "image4"] :: [String]
+    let textures = ["checkerboard", "crosshair", "basketball", "image", "blue_ball"] :: [String]
      in traverse (\tex -> let file = "textures/" ++ tex ++ ".png" in readTexture allocator device commandPool gfxQueue file) textures
   [background, pointer, texture1, texture2, texture3] <- bindTextures device descSet textures sampler
   SDL.showWindow window <* say "SDL" "Show window"
@@ -180,9 +180,9 @@ main = runManaged $ do
         World
           { background = Sprite {pos = G.vec2 (-1.0) (-1.0), scale = G.vec2 0.2 0.2, texture = background},
             pointer = Sprite {pos = G.vec2 0.0 0.0, texture = pointer, scale = half},
-            a = Thingie {sprite = Sprite {pos = p0, scale = third, texture = texture1}, vel = G.vec2 0.002 0.001},
+            a = Thingie {sprite = Sprite {pos = p0, scale = one, texture = texture1}, vel = G.vec2 0.002 0.001},
             b = Thingie {sprite = Sprite {pos = p0, scale = third, texture = texture2}, vel = G.vec2 0.0 0.0},
-            c = Thingie {sprite = Sprite {pos = p0, scale = third, texture = texture3}, vel = G.vec2 0.001 0.002}
+            c = Thingie {sprite = Sprite {pos = p0, scale = one, texture = texture3}, vel = G.vec2 0.001 0.002}
           }
 
   swapchain@(_, swapchainExtent, swapchainImages) <-

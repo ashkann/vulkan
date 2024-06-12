@@ -117,12 +117,27 @@ data Sprite = Sprite
   { pos :: G.Vec2,
     scale :: G.Vec2,
     texture :: Texture,
-    view :: G.Vec4
+    frame :: G.Vec4
   }
 
 data Thingie = Thingie {sprite :: Sprite, vel :: G.Vec2}
 
-data World = World {background :: Sprite, pointer :: Sprite, a :: Thingie, b :: Thingie, c :: Thingie}
+data Sheet = Sheet {texture :: Texture, frames :: V.Vector G.Vec4}
+
+sheetFrame :: Sheet -> Int -> G.Vec4
+sheetFrame Sheet {frames} n = frames ! n
+
+newtype FramesPerSecond = FramesPerSecond Float
+
+data Animation = Animation {sheet :: Sheet, speed :: FramesPerSecond}
+
+data World = World
+  { background :: Sprite,
+    pointer :: Sprite,
+    a :: Thingie,
+    b :: (Thingie, Animation, Float),
+    c :: Thingie
+  }
 
 data LoadedTexture = LoadedTexture {resolution :: G.UVec2, size :: G.Vec2, image :: Vk.Image, view :: Vk.ImageView}
 
@@ -183,13 +198,31 @@ main = runManaged $ do
       half = G.vec2 0.5 0.5
       third = G.vec2 0.33 0.33
       viewFull = G.vec4 0 0 1 1
+      viewFrame = G.vec4 0.0 0.0 0.143 0.25
+      sheet =
+        Sheet
+          { texture = texture2,
+            frames =
+              V.fromList
+                [ let width = 0.143
+                      height = 0.25
+                      row = frameNumber `mod` 7
+                      col = frameNumber `mod` 4
+                      x = fromIntegral col * 0.143
+                      y = fromIntegral row * 0.25
+                   in G.vec4 x y (x + width) (y + height)
+                  | frameNumber <- [0 .. 27 :: Int]
+                ]
+          }
+      b = Thingie {sprite = Sprite {pos = p0, scale = one, texture = texture2, frame = viewFrame}, vel = G.vec2 0.0 0.0}
+      animation = Animation {sheet = sheet, speed = FramesPerSecond 10.0}
       world0 =
         World
-          { background = Sprite {pos = G.vec2 (-1.0) (-1.0), scale = G.vec2 0.2 0.2, texture = background, view = viewFull},
-            pointer = Sprite {pos = G.vec2 0.0 0.0, texture = pointer, scale = half, view = viewFull},
-            a = Thingie {sprite = Sprite {pos = p0, scale = one, texture = texture1, view = viewFull}, vel = G.vec2 0.002 0.001},
-            b = Thingie {sprite = Sprite {pos = p0, scale = one, texture = texture2, view = viewFull}, vel = G.vec2 0.0 0.0},
-            c = Thingie {sprite = Sprite {pos = p0, scale = one, texture = texture3, view = viewFull}, vel = G.vec2 0.001 0.002}
+          { background = Sprite {pos = G.vec2 (-1.0) (-1.0), scale = G.vec2 0.2 0.2, texture = background, frame = viewFull},
+            pointer = Sprite {pos = G.vec2 0.0 0.0, texture = pointer, scale = half, frame = viewFull},
+            a = Thingie {sprite = Sprite {pos = p0, scale = one, texture = texture1, frame = viewFull}, vel = G.vec2 0.002 0.001},
+            b = (b, animation, 0.0),
+            c = Thingie {sprite = Sprite {pos = p0, scale = one, texture = texture3, frame = viewFull}, vel = G.vec2 0.001 0.002}
           }
 
   swapchain@(_, swapchainExtent, swapchainImages) <-
@@ -417,8 +450,10 @@ worldEvent e w@(World {pointer = pointer@Sprite {pos = pos}}) = return w {pointe
 
 worldTime :: (Monad io) => Word32 -> World -> io World
 worldTime 0 w = return w
-worldTime dt w@(World {a = a, b = b, c = c}) = return w {a = update a, b = update b, c = update c}
+worldTime dt w@(World {a = a, b = (b, ani@(Animation {sheet, speed = FramesPerSecond speed}), frameNumber), c = c}) = return w {a = update a, b = (update z, ani, frameNumber2), c = update c}
   where
+    frameNumber2 = let f = frameNumber + (speed / 1000) * fromIntegral dt in if f >= 27.0 then 0.0 else f
+    z = let Thingie {sprite} = b in b {sprite = sprite {frame = sheetFrame sheet (round frameNumber2)}}
     update Thingie {sprite = sprite@Sprite {pos = p0}, vel = v0} =
       let p1 = p0 + (v0 G.^* fromIntegral dt)
           v1 = G.emap2 (\vi pos -> if pos >= 1.0 || pos <= -1.0 then -vi else vi) v0 p1
@@ -457,7 +492,7 @@ normalPos x y =
    in G.vec2 x' y'
 
 sprites :: World -> [Sprite]
-sprites (World background pointer Thingie {sprite = s1} Thingie {sprite = s2} Thingie {sprite = s3}) =
+sprites (World background pointer Thingie {sprite = s1} (Thingie {sprite = s2}, ani, frame) Thingie {sprite = s3}) =
   [ background,
     s1,
     s2,
@@ -492,12 +527,12 @@ vertices ss =
           { pos = G.WithVec2 x y,
             scale = G.WithVec2 sx sy,
             texture = Texture {index = tex, texture = LoadedTexture {size = G.WithVec2 tw th}},
-            view = (G.WithVec4 vx1 vy1 vx2 vy2)
+            frame = (G.WithVec4 vx1 vy1 vx2 vy2)
           } =
           let vw = vx2 - vx1
               vh = vy2 - vy1
-              w = tw / vw * sx
-              h = th / vh * sy
+              w = tw * vw * sx
+              h = th * vh * sy
               vuTopLeft = G.vec2 vx1 vy1
               vuTopRight = G.vec2 vx2 vy1
               vuBottomRight = G.vec2 vx2 vy2

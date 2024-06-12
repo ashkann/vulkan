@@ -90,7 +90,12 @@ import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCre
 import VulkanMemoryAllocator qualified as VmaAllocatorCreateInfo (AllocatorCreateInfo (..))
 import Prelude hiding (init)
 
-data Vertex = Vertex {xy :: G.Vec2, rgb :: G.Vec3, uv :: G.Vec2, texture :: Word32}
+data Vertex = Vertex
+  { xy :: G.Vec2,
+    rgb :: G.Vec3,
+    uv :: G.Vec2,
+    texture :: Word32
+  }
   deriving (Show, Eq)
 
 store :: Store.Dictionary Vertex
@@ -111,7 +116,8 @@ instance Storable Vertex where
 data Sprite = Sprite
   { pos :: G.Vec2,
     scale :: G.Vec2,
-    texture :: Texture
+    texture :: Texture,
+    view :: G.Vec4
   }
 
 data Thingie = Thingie {sprite :: Sprite, vel :: G.Vec2}
@@ -165,7 +171,7 @@ main = runManaged $ do
   sampler <- repeatingSampler device
   gfxQueue <- Vk.getDeviceQueue device gfx 0 <* say "Vulkan" "Got graphics queue"
   textures <-
-    let textures = ["checkerboard", "crosshair", "basketball", "image", "blue_ball"] :: [String]
+    let textures = ["checkerboard", "crosshair", "basketball", "animation", "blue_ball"] :: [String]
      in traverse (\tex -> let file = "textures/" ++ tex ++ ".png" in readTexture allocator device commandPool gfxQueue file) textures
   [background, pointer, texture1, texture2, texture3] <- bindTextures device descSet textures sampler
   SDL.showWindow window <* say "SDL" "Show window"
@@ -176,13 +182,14 @@ main = runManaged $ do
       one = G.vec2 1 1
       half = G.vec2 0.5 0.5
       third = G.vec2 0.33 0.33
+      viewFull = G.vec4 0 0 1 1
       world0 =
         World
-          { background = Sprite {pos = G.vec2 (-1.0) (-1.0), scale = G.vec2 0.2 0.2, texture = background},
-            pointer = Sprite {pos = G.vec2 0.0 0.0, texture = pointer, scale = half},
-            a = Thingie {sprite = Sprite {pos = p0, scale = one, texture = texture1}, vel = G.vec2 0.002 0.001},
-            b = Thingie {sprite = Sprite {pos = p0, scale = third, texture = texture2}, vel = G.vec2 0.0 0.0},
-            c = Thingie {sprite = Sprite {pos = p0, scale = one, texture = texture3}, vel = G.vec2 0.001 0.002}
+          { background = Sprite {pos = G.vec2 (-1.0) (-1.0), scale = G.vec2 0.2 0.2, texture = background, view = viewFull},
+            pointer = Sprite {pos = G.vec2 0.0 0.0, texture = pointer, scale = half, view = viewFull},
+            a = Thingie {sprite = Sprite {pos = p0, scale = one, texture = texture1, view = viewFull}, vel = G.vec2 0.002 0.001},
+            b = Thingie {sprite = Sprite {pos = p0, scale = one, texture = texture2, view = viewFull}, vel = G.vec2 0.0 0.0},
+            c = Thingie {sprite = Sprite {pos = p0, scale = one, texture = texture3, view = viewFull}, vel = G.vec2 0.001 0.002}
           }
 
   swapchain@(_, swapchainExtent, swapchainImages) <-
@@ -480,13 +487,27 @@ withMemoryAllocator vulkan gpu device =
 vertices :: [Sprite] -> SV.Vector Vertex
 vertices ss =
   let rgb = G.vec3 1.0 0.0 0.0
-      toQuad Sprite {pos = G.WithVec2 x y, scale = G.WithVec2 sx sy, texture = Texture {index = tex, texture = LoadedTexture {size = G.WithVec2 w h}}} =
-        let topLeft = Vertex {xy = G.vec2 x y, rgb = rgb, uv = G.vec2 0.0 0.0, texture = tex}
-            topRight = Vertex {xy = G.vec2 (x + w * sx) y, rgb = rgb, uv = G.vec2 1.0 0.0, texture = tex}
-            bottomRight = Vertex {xy = G.vec2 (x + w * sx) (y + h * sy), rgb = rgb, uv = G.vec2 1.0 1.0, texture = tex}
-            bottomLeft = Vertex {xy = G.vec2 x (y + h * sy), rgb = rgb, uv = G.vec2 0.0 1.0, texture = tex}
-         in SV.fromList
-              [topLeft, topRight, bottomRight, bottomRight, bottomLeft, topLeft]
+      toQuad
+        Sprite
+          { pos = G.WithVec2 x y,
+            scale = G.WithVec2 sx sy,
+            texture = Texture {index = tex, texture = LoadedTexture {size = G.WithVec2 tw th}},
+            view = (G.WithVec4 vx1 vy1 vx2 vy2)
+          } =
+          let vw = vx2 - vx1
+              vh = vy2 - vy1
+              w = tw / vw * sx
+              h = th / vh * sy
+              vuTopLeft = G.vec2 vx1 vy1
+              vuTopRight = G.vec2 vx2 vy1
+              vuBottomRight = G.vec2 vx2 vy2
+              vuBottomLeft = G.vec2 vx1 vy2
+              topLeft = Vertex {xy = G.vec2 x y, rgb = rgb, uv = vuTopLeft, texture = tex}
+              topRight = Vertex {xy = G.vec2 (x + w) y, rgb = rgb, uv = vuTopRight, texture = tex}
+              bottomRight = Vertex {xy = G.vec2 (x + w) (y + h), rgb = rgb, uv = vuBottomRight, texture = tex}
+              bottomLeft = Vertex {xy = G.vec2 x (y + h), rgb = rgb, uv = vuBottomLeft, texture = tex}
+           in SV.fromList
+                [topLeft, topRight, bottomRight, bottomRight, bottomLeft, topLeft]
    in mconcat $ toQuad <$> ss
 
 withImage :: Vma.Allocator -> Int -> Int -> Vk.Format -> Managed Vk.Image

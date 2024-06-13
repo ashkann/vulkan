@@ -120,8 +120,6 @@ data Sprite = Sprite
     frame :: G.Vec4
   }
 
-data Thingie = Thingie {sprite :: Sprite, vel :: G.Vec2}
-
 data Sheet = Sheet {texture :: Texture, frames :: V.Vector G.Vec4}
 
 sheetFrame :: Sheet -> Int -> G.Vec4
@@ -131,12 +129,16 @@ newtype FramesPerSecond = FramesPerSecond Float
 
 data Animation = Animation {sheet :: Sheet, speed :: FramesPerSecond}
 
+data Animated = Animated {animation :: Animation, frameIndex :: Float}
+
+data Object = Object {sprite :: Sprite, vel :: G.Vec2, animation :: Maybe Animated}
+
 data World = World
   { background :: Sprite,
     pointer :: Sprite,
-    a :: Thingie,
-    b :: (Thingie, Animation, Float),
-    c :: Thingie
+    a :: Object,
+    b :: Object,
+    c :: Object
   }
 
 data LoadedTexture = LoadedTexture {resolution :: G.UVec2, size :: G.Vec2, image :: Vk.Image, view :: Vk.ImageView}
@@ -214,15 +216,15 @@ main = runManaged $ do
                   | frameNumber <- [0 .. 27 :: Int]
                 ]
           }
-      b = Thingie {sprite = Sprite {pos = p0, scale = one, texture = texture2, frame = viewFrame}, vel = G.vec2 0.0 0.0}
-      animation = Animation {sheet = sheet, speed = FramesPerSecond 10.0}
+      b = Sprite {pos = p0, scale = one, texture = texture2, frame = viewFrame}
+      animation = Animation {sheet = sheet, speed = FramesPerSecond 15.0}
       world0 =
         World
           { background = Sprite {pos = G.vec2 (-1.0) (-1.0), scale = G.vec2 0.2 0.2, texture = background, frame = viewFull},
             pointer = Sprite {pos = G.vec2 0.0 0.0, texture = pointer, scale = half, frame = viewFull},
-            a = Thingie {sprite = Sprite {pos = p0, scale = one, texture = texture1, frame = viewFull}, vel = G.vec2 0.002 0.001},
-            b = (b, animation, 0.0),
-            c = Thingie {sprite = Sprite {pos = p0, scale = one, texture = texture3, frame = viewFull}, vel = G.vec2 0.001 0.002}
+            a = Object {sprite = Sprite {pos = p0, scale = one, texture = texture1, frame = viewFull}, vel = G.vec2 0.002 0.001, animation = Nothing},
+            b = Object {sprite = b, vel = G.vec2 0.0 0.0, animation = Just $ Animated animation 0.0},
+            c = Object {sprite = Sprite {pos = p0, scale = one, texture = texture3, frame = viewFull}, vel = G.vec2 0.001 0.002, animation = Nothing}
           }
 
   swapchain@(_, swapchainExtent, swapchainImages) <-
@@ -450,14 +452,21 @@ worldEvent e w@(World {pointer = pointer@Sprite {pos = pos}}) = return w {pointe
 
 worldTime :: (Monad io) => Word32 -> World -> io World
 worldTime 0 w = return w
-worldTime dt w@(World {a = a, b = (b, ani@(Animation {sheet, speed = FramesPerSecond speed}), frameNumber), c = c}) = return w {a = update a, b = (update z, ani, frameNumber2), c = update c}
+worldTime dt w@(World {a, b, c}) = return w {a = update a, b = update b, c = update c}
   where
-    frameNumber2 = let f = frameNumber + (speed / 1000) * fromIntegral dt in if f >= 27.0 then 0.0 else f
-    z = let Thingie {sprite} = b in b {sprite = sprite {frame = sheetFrame sheet (round frameNumber2)}}
-    update Thingie {sprite = sprite@Sprite {pos = p0}, vel = v0} =
+    update obj@Object {sprite = sprite@Sprite {pos = p0}, vel = v0, animation = Nothing} =
       let p1 = p0 + (v0 G.^* fromIntegral dt)
           v1 = G.emap2 (\vi pos -> if pos >= 1.0 || pos <= -1.0 then -vi else vi) v0 p1
-       in Thingie {sprite = sprite {pos = p1}, vel = v1}
+       in obj {sprite = sprite {pos = p1}, vel = v1}
+    update obj@Object {sprite, animation = Just ani@(Animated (Animation sheet (FramesPerSecond speed)) frameIndex)} =
+      let fi2 = let f2 = frameIndex + (speed / 1000) * fromIntegral dt in if f2 >= 27.0 then 0.0 else f2
+       in --  in -- sprite = sprite {frame = sheetFrame sheet (round frameNumber2) }
+          obj {sprite = sprite {frame = sheetFrame sheet (round fi2)}, animation = Just $ ani {frameIndex = fi2}}
+
+--  (update z, ani, frameNumber2)
+-- worldTime dt w@(World {a = a, b = (b, ani@(Animation {sheet, speed = FramesPerSecond speed}), frameNumber), c = c}) = return w {a = update a, b = (update z, ani, frameNumber2), c = update c}
+-- frameNumber2 = let f = frameNumber + (speed / 1000) * fromIntegral dt in if f >= 27.0 then 0.0 else f
+-- z = let Thingie {sprite} = b in b {sprite = sprite {frame = sheetFrame sheet (round frameNumber2)}}
 
 repeatingSampler :: Vk.Device -> Managed Vk.Sampler
 repeatingSampler device =
@@ -492,13 +501,15 @@ normalPos x y =
    in G.vec2 x' y'
 
 sprites :: World -> [Sprite]
-sprites (World background pointer Thingie {sprite = s1} (Thingie {sprite = s2}, ani, frame) Thingie {sprite = s3}) =
+sprites (World background pointer a b c) =
   [ background,
-    s1,
-    s2,
-    s3,
+    s a,
+    s b,
+    s c,
     pointer
   ]
+  where
+    s Object {sprite} = sprite
 
 withMemoryAllocator :: Vk.Instance -> Vk.PhysicalDevice -> Vk.Device -> Managed Vma.Allocator
 withMemoryAllocator vulkan gpu device =

@@ -125,6 +125,20 @@ data Sheet = Sheet {texture :: Texture, frames :: V.Vector G.Vec4}
 sheetFrame :: Sheet -> Int -> G.Vec4
 sheetFrame Sheet {frames} n = frames ! n
 
+sheetFrameCount :: Sheet -> Int
+sheetFrameCount Sheet {frames} = V.length frames
+
+sheetClipFrameIndex :: Sheet -> Float -> Float
+sheetClipFrameIndex sheet f = if f >= fromIntegral (sheetFrameCount sheet) then 0.0 else f
+
+animatedProgress :: Word32 -> Animated -> Animated
+animatedProgress dt ani@Animated {animation = Animation {sheet, speed = FramesPerSecond speed}, frameIndex} =
+  let f = frameIndex + (speed * fromIntegral dt) / 1000
+   in ani {frameIndex = sheetClipFrameIndex sheet f}
+
+animaredFrame :: Animated -> G.Vec4
+animaredFrame Animated {animation = Animation {sheet}, frameIndex} = sheetFrame sheet (floor frameIndex)
+
 newtype FramesPerSecond = FramesPerSecond Float
 
 data Animation = Animation {sheet :: Sheet, speed :: FramesPerSecond}
@@ -213,10 +227,10 @@ main = runManaged $ do
                       x = fromIntegral col * 0.143
                       y = fromIntegral row * 0.25
                    in G.vec4 x y (x + width) (y + height)
-                  | frameNumber <- [0 .. 27 :: Int]
+                  | frameNumber <- [0 .. 26 :: Int]
                 ]
           }
-      b = Sprite {pos = p0, scale = one, texture = texture2, frame = viewFrame}
+      b = Sprite {pos = p0, scale = one, texture = texture2, frame = sheetFrame sheet 0}
       animation = Animation {sheet = sheet, speed = FramesPerSecond 15.0}
       world0 =
         World
@@ -458,15 +472,9 @@ worldTime dt w@(World {a, b, c}) = return w {a = update a, b = update b, c = upd
       let p1 = p0 + (v0 G.^* fromIntegral dt)
           v1 = G.emap2 (\vi pos -> if pos >= 1.0 || pos <= -1.0 then -vi else vi) v0 p1
        in obj {sprite = sprite {pos = p1}, vel = v1}
-    update obj@Object {sprite, animation = Just ani@(Animated (Animation sheet (FramesPerSecond speed)) frameIndex)} =
-      let fi2 = let f2 = frameIndex + (speed / 1000) * fromIntegral dt in if f2 >= 27.0 then 0.0 else f2
-       in --  in -- sprite = sprite {frame = sheetFrame sheet (round frameNumber2) }
-          obj {sprite = sprite {frame = sheetFrame sheet (round fi2)}, animation = Just $ ani {frameIndex = fi2}}
-
---  (update z, ani, frameNumber2)
--- worldTime dt w@(World {a = a, b = (b, ani@(Animation {sheet, speed = FramesPerSecond speed}), frameNumber), c = c}) = return w {a = update a, b = (update z, ani, frameNumber2), c = update c}
--- frameNumber2 = let f = frameNumber + (speed / 1000) * fromIntegral dt in if f >= 27.0 then 0.0 else f
--- z = let Thingie {sprite} = b in b {sprite = sprite {frame = sheetFrame sheet (round frameNumber2)}}
+    update obj@Object {sprite, animation = Just ani} =
+      let ani2 = animatedProgress dt ani
+       in obj {sprite = sprite {frame = animaredFrame ani2}, animation = Just ani2}
 
 repeatingSampler :: Vk.Device -> Managed Vk.Sampler
 repeatingSampler device =

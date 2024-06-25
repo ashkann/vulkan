@@ -9,8 +9,11 @@
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StrictData #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE NoFieldSelectors #-}
 
@@ -20,13 +23,15 @@ import Codec.Picture qualified as JP
 import Control.Applicative ((<|>))
 import Control.Concurrent (threadDelay)
 import Control.Exception (bracket)
+import Control.Lens
+-- import Control.Lens.TH
 import Control.Monad (when)
 import Control.Monad.Except (ExceptT (ExceptT), runExceptT)
 import Control.Monad.Managed (Managed, MonadIO (liftIO), managed, runManaged)
 import Data.Bits ((.&.), (.|.))
 import Data.ByteString qualified as BS (readFile)
 import Data.Foldable (foldlM)
-import Data.Functor (($>), (<&>))
+import Data.Functor (($>))
 import Data.Vector ((!))
 import Data.Vector qualified as V
 import Data.Vector.Storable qualified as SV
@@ -113,6 +118,10 @@ instance Storable Vertex where
   peek = Store.peek store
   poke = Store.poke store
 
+data LoadedTexture = LoadedTexture {resolution :: G.UVec2, size :: G.Vec2, image :: Vk.Image, view :: Vk.ImageView}
+
+data Texture = Texture {index :: Word32, texture :: LoadedTexture}
+
 data Sprite = Sprite
   { pos :: G.Vec2,
     scale :: G.Vec2,
@@ -120,30 +129,21 @@ data Sprite = Sprite
     frame :: G.Vec4
   }
 
-data Sheet = Sheet {texture :: Texture, frames :: V.Vector G.Vec4}
+data Sheet = Sheet {_texture :: Texture, _frames :: V.Vector G.Vec4}
 
-sheetFrame :: Sheet -> Int -> G.Vec4
-sheetFrame Sheet {frames} n = frames ! n
+data Animation = Animation {_sheet :: Sheet, _speed :: Float}
 
-sheetFrameCount :: Sheet -> Int
-sheetFrameCount Sheet {frames} = V.length frames
+data Animated = Animated {_animation :: Animation, _frameIndex :: Float}
 
-sheetClipFrameIndex :: Sheet -> Float -> Float
-sheetClipFrameIndex sheet f = if f >= fromIntegral (sheetFrameCount sheet) then 0.0 else f
+makeLenses ''Sheet
+makeLenses ''Animated
+makeLenses ''Animation
 
-animatedProgress :: Word32 -> Animated -> Animated
-animatedProgress dt ani@Animated {animation = Animation {sheet, speed = FramesPerSecond speed}, frameIndex} =
-  let f = frameIndex + (speed * fromIntegral dt) / 1000
-   in ani {frameIndex = sheetClipFrameIndex sheet f}
-
-animaredFrame :: Animated -> G.Vec4
-animaredFrame Animated {animation = Animation {sheet}, frameIndex} = sheetFrame sheet (floor frameIndex)
-
-newtype FramesPerSecond = FramesPerSecond Float
-
-data Animation = Animation {sheet :: Sheet, speed :: FramesPerSecond}
-
-data Animated = Animated {animation :: Animation, frameIndex :: Float}
+loopAnimate :: Animated -> Word32 -> Animated
+loopAnimate ani dt =
+  let new fi = fi + (ani ^. animation . speed * fromIntegral dt) / 1000
+      loop fi = if floor fi >= (ani ^. animation . sheet . frames . to V.length) then 0 else fi
+   in over frameIndex (loop . new) ani
 
 data Object = Object {sprite :: Sprite, vel :: G.Vec2, animation :: Maybe Animated}
 
@@ -154,10 +154,6 @@ data World = World
     b :: Object,
     c :: Object
   }
-
-data LoadedTexture = LoadedTexture {resolution :: G.UVec2, size :: G.Vec2, image :: Vk.Image, view :: Vk.ImageView}
-
-data Texture = Texture {index :: Word32, texture :: LoadedTexture}
 
 data Frame = Frame
   { pool :: Vk.CommandPool,
@@ -217,8 +213,8 @@ main = runManaged $ do
       viewFrame = G.vec4 0.0 0.0 0.143 0.25
       sheet =
         Sheet
-          { texture = texture2,
-            frames =
+          { _texture = texture2,
+            _frames =
               V.fromList
                 [ let width = 0.143
                       height = 0.25
@@ -230,8 +226,8 @@ main = runManaged $ do
                   | frameNumber <- [0 .. 26 :: Int]
                 ]
           }
-      b = Sprite {pos = p0, scale = one, texture = texture2, frame = sheetFrame sheet 0}
-      animation = Animation {sheet = sheet, speed = FramesPerSecond 15.0}
+      b = Sprite {pos = p0, scale = one, texture = texture2, frame = (sheet ^. frames) ! 0}
+      animation = Animation {_sheet = sheet, _speed = 15.0}
       world0 =
         World
           { background = Sprite {pos = G.vec2 (-1.0) (-1.0), scale = G.vec2 0.2 0.2, texture = background, frame = viewFull},
@@ -274,13 +270,13 @@ main = runManaged $ do
               do
                 let n = frameNumber `mod` frameCount
                     f = frames ! n
-                 in frame device gfxQueue presentQueue pipeline pipelineLayout swapchain descSet f verts
+                 in frame' device gfxQueue presentQueue pipeline pipelineLayout swapchain descSet f verts
           )
           worldTime
           worldEvent
           world0
 
-frame ::
+frame' ::
   (Storable a, MonadIO m) =>
   Vk.Device ->
   Vk.Queue ->
@@ -292,7 +288,7 @@ frame ::
   Frame ->
   SV.Vector a ->
   m ()
-frame device gfxQueue presentQueue pipeline pipelineLayout swp descSet f verts = do
+frame' device gfxQueue presentQueue pipeline pipelineLayout swp descSet f verts = do
   let Frame
         { pool,
           renderCmd,
@@ -473,8 +469,14 @@ worldTime dt w@(World {a, b, c}) = return w {a = update a, b = update b, c = upd
           v1 = G.emap2 (\vi pos -> if pos >= 1.0 || pos <= -1.0 then -vi else vi) v0 p1
        in obj {sprite = sprite {pos = p1}, vel = v1}
     update obj@Object {sprite, animation = Just ani} =
-      let ani2 = animatedProgress dt ani
-       in obj {sprite = sprite {frame = animaredFrame ani2}, animation = Just ani2}
+      let ani2 = animatedProgress ani
+       in obj {sprite = sprite {frame = animatedFrame ani2}, animation = Just ani2}
+    animatedFrame :: Animated -> G.Vec4
+    animatedFrame ani = (ani ^. animation . sheet . frames) ! floor (ani ^. frameIndex)
+    animatedProgress ani =
+      let new fi = fi + (ani ^. animation . speed * fromIntegral dt) / 1000
+          loop fi = if floor fi >= (ani ^. animation . sheet . frames . to V.length) then 0 else fi
+       in over frameIndex (loop . new) ani
 
 repeatingSampler :: Vk.Device -> Managed Vk.Sampler
 repeatingSampler device =

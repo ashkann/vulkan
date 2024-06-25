@@ -14,6 +14,7 @@ executable vulkan2dengine
   other-modules:
       Ashkan
       Ashkan2
+      Tut
       Utils
       Paths_Vulkan2DEngine
   hs-source-dirs:
@@ -30,6 +31,8 @@ executable vulkan2dengine
     , geomancy
     , inline-c
     , inline-c-cpp
+    , lens
+    , lens-tutorial
     , managed
     , mtl
     , sdl2

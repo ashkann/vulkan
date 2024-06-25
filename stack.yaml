@@ -79,6 +79,7 @@ extra-deps:
   - geomancy-0.2.6.0
   - gl-block-1.0
   - ptrdiff-0
+  - lens-tutorial-1.0.5
 
 flags:
   dear-imgui:

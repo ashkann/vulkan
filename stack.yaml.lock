@@ -53,6 +53,13 @@ packages:
       size: 272
   original:
     hackage: ptrdiff-0
+- completed:
+    hackage: lens-tutorial-1.0.5@sha256:80b6ccfdcf07f0dafbaef232f538c6bda6c977f270173cc2e1b9208f47414607,1213
+    pantry-tree:
+      sha256: 79d8c0324f6fe76e24d27fe8ae10ad87e29eb5afd2d049f452d4bf4d00d6aa8a
+      size: 279
+  original:
+    hackage: lens-tutorial-1.0.5
 snapshots:
 - completed:
     sha256: a81fb3877c4f9031e1325eb3935122e608d80715dc16b586eb11ddbff8671ecd

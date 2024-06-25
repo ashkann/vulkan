@@ -21,6 +21,8 @@ dependencies:
   - inline-c
   - inline-c-cpp
   - containers
+  - lens
+  - lens-tutorial
 
 ghc-options:
   - -Wall

@@ -42,6 +42,7 @@ import Foreign.Storable.Record qualified as Store
 import Geomancy qualified as G
 import SDL qualified
 import Utils
+import Vulkan qualified as VK
 import Vulkan qualified as Vk
 import Vulkan qualified as VkBufferCreateInfo (BufferCreateInfo (..))
 import Vulkan qualified as VkCommandPoolCreateInfo (CommandPoolCreateInfo (..))
@@ -95,7 +96,6 @@ import VulkanMemoryAllocator qualified as Vma
 import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCreateInfo (..))
 import VulkanMemoryAllocator qualified as VmaAllocatorCreateInfo (AllocatorCreateInfo (..))
 import Prelude hiding (init)
-import qualified Vulkan as VK
 
 data Vertex = Vertex
   { xy :: G.Vec2,
@@ -147,23 +147,40 @@ $(makeLenses ''Animation)
 --       loop fi = if floor fi >= (ani ^. animation . sheet . frames . to V.length) then 0 else fi
 --    in over frameIndex (loop . new) ani
 
-data Light = PointLight {_position :: G.Vec2, _color :: G.Vec3, _intensity :: Float}
+-- TODO reordering the fields apparently breaks the alignment. why?
+data PointLight = PointLight {_intensity :: Float, _position :: G.Vec2, _color :: G.Vec3} deriving (Show)
 
-$(makeLenses ''Light)
+$(makeLenses ''PointLight)
 
-pointLightStore :: Store.Dictionary Light
+pointLightStore :: Store.Dictionary PointLight
 pointLightStore =
   Store.run $
     PointLight
-      <$> Store.element (^. position)
+      <$> Store.element (^. intensity)
+      <*> Store.element (^. position)
       <*> Store.element (^. color)
-      <*> Store.element (^. intensity)
 
-instance Storable Light where
+instance Storable PointLight where
   sizeOf = Store.sizeOf pointLightStore
   alignment = Store.alignment pointLightStore
   peek = Store.peek pointLightStore
   poke = Store.poke pointLightStore
+
+data Viewport = Viewport {_viewportSize :: G.UVec2}
+
+$(makeLenses ''Viewport)
+
+viewportStore :: Store.Dictionary Viewport
+viewportStore =
+  Store.run $
+    Viewport
+      <$> Store.element (^. viewportSize)
+
+instance Storable Viewport where
+  sizeOf = Store.sizeOf viewportStore
+  alignment = Store.alignment viewportStore
+  peek = Store.peek viewportStore
+  poke = Store.poke viewportStore
 
 data Object = Object {sprite :: Sprite, vel :: G.Vec2, animation :: Maybe Animated}
 
@@ -173,12 +190,12 @@ data World = World
     a :: Object,
     b :: Object,
     c :: Object,
-    _lights :: [Light]
+    _lights :: [PointLight]
   }
 
 $(makeLenses ''World)
 
-data Ashkan = Ashkan {_sprites2 :: [Sprite], _lights2 :: [Light]}
+data Ashkan = Ashkan {_sprites2 :: [Sprite], _lights2 :: [PointLight]}
 
 $(makeLenses ''Ashkan)
 
@@ -196,6 +213,7 @@ data Frame = Frame
     staging :: (Vk.Buffer, Ptr ()),
     vertex :: Vk.Buffer,
     light :: Vk.Buffer,
+    viewport :: Vk.Buffer,
     targetImage :: Vk.Image,
     targetView :: Vk.ImageView
   }
@@ -223,7 +241,8 @@ main = runManaged $ do
   say "Vulkan" "Created command pool"
   allocator <- withMemoryAllocator vulkan gpu device <* say "VMA" "Created allocator"
   say "Vulkan" "Created staging vertex buffer"
-  descSetLayout <- descriptorSetLayout device 1000
+  let descriptorCount = 16
+  descSetLayout <- descriptorSetLayout device descriptorCount
   descPool <- descriptorPool device 1000
   descSet <- descriptorSet device descSetLayout descPool
   sampler <- repeatingSampler device
@@ -259,7 +278,7 @@ main = runManaged $ do
           }
       b = Sprite {pos = p0, scale = one, texture = texture2, frame = (sheet ^. frames) ! 0}
       animation = Animation {_sheet = sheet, _speed = 15.0}
-      whiteLight = PointLight {_position = G.vec2 0.0 0.0, _color = G.vec3 1.0 1.0 1.0, _intensity = 0.0}
+      whiteLight = PointLight {_position = G.vec2 0.0 0.0, _color = G.vec3 1.0 1.0 0.7, _intensity = 1.0}
       world0 =
         World
           { background = Sprite {pos = G.vec2 (-1.0) (-1.0), scale = G.vec2 0.2 0.2, texture = background, frame = viewFull},
@@ -311,7 +330,7 @@ main = runManaged $ do
           world0
 
 frame ::
-  (Storable a, MonadIO m) =>
+  (MonadIO m) =>
   Vk.Device ->
   Vk.Queue ->
   Vk.Queue ->
@@ -320,8 +339,8 @@ frame ::
   (Vk.SwapchainKHR, VkExtent2D.Extent2D, V.Vector Vk.Image) ->
   Vk.DescriptorSet ->
   Frame ->
-  SV.Vector a ->
-  SV.Vector Light ->
+  SV.Vector Vertex ->
+  SV.Vector PointLight ->
   m ()
 frame device gfxQueue presentQueue pipeline pipelineLayout swp descSet f verts lights = do
   let Frame
@@ -335,15 +354,19 @@ frame device gfxQueue presentQueue pipeline pipelineLayout swp descSet f verts l
           staging,
           vertex,
           light,
+          viewport,
           targetImage,
           targetView
         } = f
       (swapchain, swapchainExtent, swapchainImages) = swp
+      viewport' = Viewport {_viewportSize = G.uvec2 (fromIntegral windowWidth) (fromIntegral windowHeight)}
   waitForFrame device f
   liftIO $ copyToGpu device pool gfxQueue vertex staging verts
   liftIO $ copyToGpu device pool gfxQueue light staging lights
+  liftIO $ copyToGpu2 device pool gfxQueue viewport staging viewport'
+  -- say "Light" $ show (SV.head lights)
 
-  recordRender renderCmd vertex light (targetImage, targetView) swapchainExtent
+  recordRender renderCmd vertex light viewport (targetImage, targetView) swapchainExtent
   index <- Vk.acquireNextImageKHR device swapchain maxBound imageAvailable Vk.zero >>= \(r, index) -> checkSwapchainIsOld r $> index
   let swapchainImage = swapchainImages ! fromIntegral index
    in recordCopyToSwapchain copyCmd targetImage swapchainImage swapchainExtent
@@ -378,13 +401,14 @@ frame device gfxQueue presentQueue pipeline pipelineLayout swp descSet f verts l
         transitToCopyDst cmd swapchainImage
         copyImageToImage cmd offscreenImage swapchainImage extent
         transitToPresent cmd swapchainImage
-    recordRender cmd vertBuff lightBuff target extent =
+    recordRender cmd vertBuff lightBuff viewportBuff target extent =
       Vk.useCommandBuffer cmd Vk.zero $ do
         let (image, view) = target
         Vk.cmdBindPipeline cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
         Vk.cmdBindVertexBuffers cmd 0 [vertBuff] [0]
         Vk.cmdBindDescriptorSets cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipelineLayout 0 [descSet] []
         bindLights device descSet lightBuff
+        bindViewport device descSet viewportBuff
         transitToRenderTarget cmd image
         let vertexCount = fromIntegral $ SV.length verts
             attachment =
@@ -442,6 +466,7 @@ withFrames device gfx allocator stagingBufferSize vertexBufferSize lightBufferSi
            in managed $ Vk.withFence device info Nothing bracket
         vertexBuffer <- withGPUBuffer allocator vertexBufferSize Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
         lightBuffer <- withGPUBuffer allocator lightBufferSize Vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT
+        viewportBuffer <- withGPUBuffer allocator lightBufferSize Vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT
         (image, view) <- withImageAndView allocator device windowWidth windowHeight imageFormat
         return
           Frame
@@ -455,6 +480,7 @@ withFrames device gfx allocator stagingBufferSize vertexBufferSize lightBufferSi
               staging = vertextStagingBuffer,
               vertex = vertexBuffer,
               light = lightBuffer,
+              viewport = viewportBuffer,
               targetImage = image,
               targetView = view
             }
@@ -467,7 +493,7 @@ mainLoop ::
   (MonadIO io) =>
   io () ->
   (w -> Ashkan) ->
-  (Int -> SV.Vector Vertex -> SV.Vector Light -> io ()) ->
+  (Int -> SV.Vector Vertex -> SV.Vector PointLight -> io ()) ->
   (Word32 -> w -> io w) ->
   (SDL.Event -> w -> io w) ->
   w ->
@@ -498,8 +524,10 @@ mainLoop shutdown ashkan frame worldTime worldEvent world0 =
           w3 <- worldTime (t2 - t) w2
           go (frameNumber + 1) t2 w3
 
+whiteLight pos = PointLight {_position = pos, _color = G.vec3 1.0 1.0 1.0, _intensity = 1.0}
+
 worldEvent :: (Monad io) => SDL.Event -> World -> io World
-worldEvent e w@(World {pointer = pointer@Sprite {pos = pos}}) = return w {pointer = pointer {pos = f pos e}}
+worldEvent e w@(World {pointer = pointer@Sprite {pos = pos}}) = return let p = f pos e; w1 = w {pointer = pointer {pos = p}, _lights = [whiteLight p]} in w1
   where
     f _ (SDL.Event _ (SDL.MouseMotionEvent (SDL.MouseMotionEventData {mouseMotionEventPos = SDL.P (SDL.V2 x y)}))) = normalPos x y
     f p _ = p
@@ -707,25 +735,33 @@ descriptorSetLayout dev count = do
   let flags = Vk.DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT .|. Vk.DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT
       textures =
         Vk.zero
-          { VkDescriptorSetLayoutBinding.binding = 0,
+          { VkDescriptorSetLayoutBinding.binding = 0, -- TODO hardcoded
             VkDescriptorSetLayoutBinding.descriptorCount = count,
             VkDescriptorSetLayoutBinding.descriptorType = Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
             VkDescriptorSetLayoutBinding.stageFlags = Vk.SHADER_STAGE_FRAGMENT_BIT
           }
       lights =
         Vk.zero
-          { VkDescriptorSetLayoutBinding.binding = 1,
-            VkDescriptorSetLayoutBinding.descriptorCount = count,
+          { VkDescriptorSetLayoutBinding.binding = 1, -- TODO hardcoded
+            VkDescriptorSetLayoutBinding.descriptorCount = 1,
             VkDescriptorSetLayoutBinding.descriptorType = Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
             VkDescriptorSetLayoutBinding.stageFlags = Vk.SHADER_STAGE_FRAGMENT_BIT
           }
+      viewport =
+        Vk.zero
+          { VkDescriptorSetLayoutBinding.binding = 2, -- TODO hardcoded
+            VkDescriptorSetLayoutBinding.descriptorCount = 1,
+            VkDescriptorSetLayoutBinding.descriptorType = Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            VkDescriptorSetLayoutBinding.stageFlags = Vk.SHADER_STAGE_FRAGMENT_BIT
+          }
+      bindings = [textures, lights, viewport]
       flagsInfo =
         Vk.zero
-          { VkDescriptorSetLayoutBindingFlagsCreateInfo.bindingFlags = [flags, flags]
+          { VkDescriptorSetLayoutBindingFlagsCreateInfo.bindingFlags = flags <$ bindings
           }
       layoutInfo =
         Vk.zero
-          { VkDescriptorSetLayoutCreateInfo.bindings = [textures, lights],
+          { VkDescriptorSetLayoutCreateInfo.bindings = bindings,
             VkDescriptorSetLayoutCreateInfo.flags = Vk.DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT
           }
           ::& flagsInfo :& ()
@@ -799,6 +835,27 @@ bindLights dev set lights = do
     bufferInfo =
       Vk.zero
         { VkDescriptorBufferInfo.buffer = lights,
+          VkDescriptorBufferInfo.offset = 0,
+          VkDescriptorBufferInfo.range = VK.WHOLE_SIZE -- TODO better value ?
+        }
+
+bindViewport :: (MonadIO io) => Vk.Device -> Vk.DescriptorSet -> Vk.Buffer -> io ()
+bindViewport dev set viewport = do
+  let info =
+        Vk.SomeStruct
+          Vk.zero
+            { VkWriteDescriptorSet.dstSet = set,
+              VkWriteDescriptorSet.dstBinding = 2, -- TODO magic number, use a configurable value
+              VkWriteDescriptorSet.descriptorType = Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+              VkWriteDescriptorSet.descriptorCount = 1,
+              VkWriteDescriptorSet.bufferInfo = [bufferInfo],
+              VkWriteDescriptorSet.dstArrayElement = 0
+            }
+   in Vk.updateDescriptorSets dev [info] []
+  where
+    bufferInfo =
+      Vk.zero
+        { VkDescriptorBufferInfo.buffer = viewport,
           VkDescriptorBufferInfo.offset = 0,
           VkDescriptorBufferInfo.range = VK.WHOLE_SIZE -- TODO better value ?
         }

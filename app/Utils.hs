@@ -24,6 +24,7 @@ module Utils
     transitToGpuRead,
     copyBufferToImage,
     copyToGpu,
+    copyToGpu2,
     copyImageToImage,
   )
 where
@@ -102,8 +103,8 @@ withVulkan w = do
           ::& debugUtilsMessengerCreateInfo
             :& Vk.ValidationFeaturesEXT
               [ -- Vk.VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
-                Vk.VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT -- ,
-                -- Vk.VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT
+                -- Vk.VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT,
+                Vk.VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT
               ]
               []
             :& ()
@@ -114,12 +115,12 @@ debugUtilsMessengerCreateInfo =
   Vk.zero
     { Vk.messageSeverity =
         Vk.DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
-          .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
-      -- .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
+          .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT
+          .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
       Vk.messageType =
         Vk.DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
-          .|. Vk.DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
-          .|. Vk.DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
+          .|. Vk.DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT,
+      -- .|. Vk.DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT
       VkDebugUtilsMessengerCreateInfoEXT.pfnUserCallback = Vk.debugCallbackPtr
     }
 
@@ -379,6 +380,21 @@ copyToGpu device pool queue gpuBuffer (hostBuffer, hostBufferPtr) v = do
       size = fromIntegral $ sizeOf (undefined :: a) * len
   withForeignPtr src $ \s -> copyArray (castPtr hostBufferPtr) s len
   let copy cmd = Vk.cmdCopyBuffer cmd hostBuffer gpuBuffer [Vk.zero {VkBufferCopy.size = size}]
+   in submitWait device pool queue copy
+
+-- TODO DRY with copyToGpu
+copyToGpu2 ::
+  (Storable a) =>
+  Vk.Device ->
+  Vk.CommandPool ->
+  Vk.Queue ->
+  Vk.Buffer ->
+  (Vk.Buffer, Ptr ()) ->
+  a ->
+  IO ()
+copyToGpu2 device pool queue gpuBuffer (hostBuffer, hostBufferPtr) v = do
+  poke (castPtr hostBufferPtr) v
+  let copy cmd = Vk.cmdCopyBuffer cmd hostBuffer gpuBuffer [Vk.zero {VkBufferCopy.size = fromIntegral $ sizeOf v}]
    in submitWait device pool queue copy
 
 copyImageToImage :: (MonadIO io) => Vk.CommandBuffer -> Vk.Image -> Vk.Image -> Vk.Extent2D -> io ()

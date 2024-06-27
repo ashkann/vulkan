@@ -236,7 +236,7 @@ main = runManaged $ do
   say "Vulkan" "Created command pool"
   allocator <- withMemoryAllocator vulkan gpu device <* say "VMA" "Created allocator"
   say "Vulkan" "Created staging vertex buffer"
-  let descriptorCount = 16
+  let descriptorCount = 1000
   descSetLayout <- descriptorSetLayout device descriptorCount
   descPool <- descriptorPool device 1000
   descSet <- descriptorSet device descSetLayout descPool

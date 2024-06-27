@@ -102,7 +102,7 @@ withVulkan w = do
           }
           ::& debugUtilsMessengerCreateInfo
             :& Vk.ValidationFeaturesEXT
-              [ -- Vk.VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
+              [ Vk.VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
                 -- Vk.VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT,
                 Vk.VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT
               ]
@@ -119,8 +119,8 @@ debugUtilsMessengerCreateInfo =
           .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
       Vk.messageType =
         Vk.DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
-          .|. Vk.DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT,
-      -- .|. Vk.DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT
+          .|. Vk.DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
+          .|. Vk.DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
       VkDebugUtilsMessengerCreateInfoEXT.pfnUserCallback = Vk.debugCallbackPtr
     }
 

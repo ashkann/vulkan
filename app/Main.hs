@@ -303,7 +303,8 @@ main = runManaged $ do
   presentQueue <- Vk.getDeviceQueue device present 0 <* say "Vulkan" "Got present queue"
 
   let stagingBufferSize = 1048576
-      vertexBufferSize = 4 * 1024
+      maxVertCount = 1000
+      vertexBufferSize = fromIntegral $ sizeOf (undefined :: Vertex) * maxVertCount
       lightBufferSize = 1024
   frames <- withFrames device gfx allocator stagingBufferSize vertexBufferSize lightBufferSize frameCount
   let shutdown =

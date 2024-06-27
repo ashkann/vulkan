@@ -7,6 +7,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedLists #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
@@ -24,9 +25,8 @@ import Control.Applicative ((<|>))
 import Control.Concurrent (threadDelay)
 import Control.Exception (bracket)
 import Control.Lens
--- import Control.Lens.TH
 import Control.Monad (when)
-import Control.Monad.Except (ExceptT (ExceptT), MonadTrans (lift), runExceptT)
+import Control.Monad.Except (ExceptT (ExceptT), runExceptT)
 import Control.Monad.Managed (Managed, MonadIO (liftIO), managed, runManaged)
 import Data.Bits ((.&.), (.|.))
 import Data.ByteString qualified as BS (readFile)
@@ -97,22 +97,17 @@ import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCre
 import VulkanMemoryAllocator qualified as VmaAllocatorCreateInfo (AllocatorCreateInfo (..))
 import Prelude hiding (init)
 
-data Vertex = Vertex
-  { xy :: G.Vec2,
-    rgb :: G.Vec3,
-    uv :: G.Vec2,
-    texture :: Word32
-  }
-  deriving (Show, Eq)
+data Vertex = Vertex {xy :: G.Vec2, uv :: G.Vec2, texture :: Word32}
+
+-- $(makeLenses ''Vertex)
 
 vertexStore :: Store.Dictionary Vertex
 vertexStore =
   Store.run $
     Vertex
-      <$> Store.element (\Vertex {xy} -> xy)
-      <*> Store.element (\Vertex {rgb} -> rgb)
-      <*> Store.element (\Vertex {uv} -> uv)
-      <*> Store.element (\Vertex {texture} -> texture)
+      <$> Store.element (.xy)
+      <*> Store.element (.uv)
+      <*> Store.element (.texture)
 
 instance Storable Vertex where
   sizeOf = Store.sizeOf vertexStore
@@ -630,10 +625,10 @@ vertices ss =
               vuTopRight = G.vec2 vx2 vy1
               vuBottomRight = G.vec2 vx2 vy2
               vuBottomLeft = G.vec2 vx1 vy2
-              topLeft = Vertex {xy = G.vec2 x y, rgb = rgb, uv = vuTopLeft, texture = tex}
-              topRight = Vertex {xy = G.vec2 (x + w) y, rgb = rgb, uv = vuTopRight, texture = tex}
-              bottomRight = Vertex {xy = G.vec2 (x + w) (y + h), rgb = rgb, uv = vuBottomRight, texture = tex}
-              bottomLeft = Vertex {xy = G.vec2 x (y + h), rgb = rgb, uv = vuBottomLeft, texture = tex}
+              topLeft = Vertex {xy = G.vec2 x y, uv = vuTopLeft, texture = tex}
+              topRight = Vertex {xy = G.vec2 (x + w) y, uv = vuTopRight, texture = tex}
+              bottomRight = Vertex {xy = G.vec2 (x + w) (y + h), uv = vuBottomRight, texture = tex}
+              bottomLeft = Vertex {xy = G.vec2 x (y + h), uv = vuBottomLeft, texture = tex}
            in SV.fromList
                 [topLeft, topRight, bottomRight, bottomRight, bottomLeft, topLeft]
    in mconcat $ toQuad <$> ss
@@ -876,13 +871,11 @@ createPipeline dev extent layout = do
               VkVertexInputAttributeDescription.offset = fromIntegral offset
             }
         posSize = sizeOf (undefined :: G.Vec2)
-        colorSize = sizeOf (undefined :: G.Vec3)
         texCordSize = sizeOf (undefined :: G.Vec2)
         attributes =
           [ vertextAttribute Vk.FORMAT_R32G32_SFLOAT 0 (0 :: Int), -- position
-            vertextAttribute Vk.FORMAT_R32G32B32_SFLOAT 1 (0 + posSize), -- color
-            vertextAttribute Vk.FORMAT_R32G32_SFLOAT 2 (posSize + colorSize), -- texture coordinates
-            vertextAttribute Vk.FORMAT_R32_UINT 3 (posSize + colorSize + texCordSize) -- texture index
+            vertextAttribute Vk.FORMAT_R32G32_SFLOAT 1 posSize, -- texture coordinates
+            vertextAttribute Vk.FORMAT_R32_UINT 2 (posSize + texCordSize) -- texture index
           ]
         vertexInputInfo =
           Just $

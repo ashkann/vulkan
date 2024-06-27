@@ -50,8 +50,7 @@ void main(){
         finalColor.rgb*=lightEffect;
     // }
     outColor=finalColor;
-    // outColor = texColor;
-    // debugPrintfEXT("(r=%f g=%f b=%f a=%f)", outColor.r, outColor.g, outColor.b, outColor.a);
+    
     if(insideBox(gl_FragCoord.xy,vec2(240,240),vec2(260,260))>0){
         // debugPrintfEXT("%1.1f %1.1f",lights[0].intensity, lights[0].intensity/d);
         // debugPrintfEXT("%v2i",viewportSizeInPixels);

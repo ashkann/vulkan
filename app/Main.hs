@@ -126,15 +126,13 @@ data Sprite = Sprite
     frame :: G.Vec4
   }
 
-data Sheet = Sheet {_texture :: Texture, _frames :: V.Vector G.Vec4}
+data Sheet = Sheet {texture :: Texture, frames :: V.Vector G.Vec4}
 
-data Animation = Animation {_sheet :: Sheet, _speed :: Float}
+data Animation = Animation {sheet :: Sheet, speed :: Float}
 
-data Animated = Animated {_animation :: Animation, _frameIndex :: Float}
+data Animated = Animated {animation :: Animation, frameIndex :: Float}
 
-$(makeLenses ''Sheet)
-$(makeLenses ''Animated)
-$(makeLenses ''Animation)
+-- $(makeLenses ''Animated)
 
 -- loopAnimate :: Animated -> Word32 -> Animated
 -- loopAnimate ani dt =
@@ -161,15 +159,29 @@ instance Storable PointLight where
   peek = Store.peek pointLightStore
   poke = Store.poke pointLightStore
 
-data Viewport = Viewport {_viewportSize :: G.UVec2}
+data GlobalLight = GlobalLight {intesity :: Float, color :: G.Vec3}
 
-$(makeLenses ''Viewport)
+globalLightStore :: Store.Dictionary GlobalLight
+globalLightStore =
+  Store.run $ GlobalLight <$> Store.element (.intesity) <*> Store.element (.color)
+
+instance Storable GlobalLight where
+  sizeOf = Store.sizeOf globalLightStore
+  alignment = Store.alignment globalLightStore
+  peek = Store.peek globalLightStore
+  poke = Store.poke globalLightStore
+
+data Viewport = Viewport
+  { viewportSize :: G.UVec2,
+    globalLight :: GlobalLight
+  }
 
 viewportStore :: Store.Dictionary Viewport
 viewportStore =
   Store.run $
     Viewport
-      <$> Store.element (^. viewportSize)
+      <$> Store.element (.viewportSize)
+      <*> Store.element (.globalLight)
 
 instance Storable Viewport where
   sizeOf = Store.sizeOf viewportStore
@@ -185,17 +197,17 @@ data World = World
     a :: Object,
     b :: Object,
     c :: Object,
-    _lights :: [PointLight]
+    globalLight :: GlobalLight,
+    lights :: [PointLight]
   }
 
-$(makeLenses ''World)
-
-data Ashkan = Ashkan {_sprites2 :: [Sprite], _lights2 :: [PointLight]}
-
-$(makeLenses ''Ashkan)
-
-ashkan2 :: World -> Ashkan
-ashkan2 world = Ashkan {_sprites2 = sprites world, _lights2 = world ^. lights}
+frameData :: World -> FrameData
+frameData world =
+  FrameData
+    { verts = vertices $ sprites world,
+      lights = SV.fromList world.lights,
+      viewport = Viewport {viewportSize = G.uvec2 windowWidth windowHeight, globalLight = world.globalLight}
+    }
 
 data Frame = Frame
   { pool :: Vk.CommandPool,
@@ -216,7 +228,7 @@ data Frame = Frame
 main :: IO ()
 main = runManaged $ do
   withSDL
-  window <- withWindow windowWidth windowHeight
+  window <- withWindow (fromIntegral windowWidth) (fromIntegral windowHeight)
   vulkan <- withVulkan window
   _ <- withDebug vulkan
   surface <- withSurface window vulkan
@@ -258,8 +270,8 @@ main = runManaged $ do
       viewFrame = G.vec4 0.0 0.0 0.143 0.25
       sheet =
         Sheet
-          { _texture = texture2,
-            _frames =
+          { texture = texture2,
+            frames =
               V.fromList
                 [ let width = 0.143
                       height = 0.25
@@ -271,9 +283,10 @@ main = runManaged $ do
                   | frameNumber <- [0 .. 26 :: Int]
                 ]
           }
-      b = Sprite {pos = p0, scale = one, texture = texture2, frame = (sheet ^. frames) ! 0}
-      animation = Animation {_sheet = sheet, _speed = 15.0}
+      b = Sprite {pos = p0, scale = one, texture = texture2, frame = sheet.frames ! 0}
+      animation = Animation {sheet = sheet, speed = 15.0}
       whiteLight = PointLight {_position = G.vec2 0.0 0.0, _color = G.vec3 1.0 1.0 0.7, _intensity = 1.0}
+      globalLight = GlobalLight {intesity = 1.0, color = G.vec3 1.0 1.0 1.0}
       world0 =
         World
           { background = Sprite {pos = G.vec2 (-1.0) (-1.0), scale = G.vec2 0.2 0.2, texture = background, frame = viewFull},
@@ -281,7 +294,8 @@ main = runManaged $ do
             a = Object {sprite = Sprite {pos = p0, scale = one, texture = texture1, frame = viewFull}, vel = G.vec2 0.002 0.001, animation = Nothing},
             b = Object {sprite = b, vel = G.vec2 0.0 0.0, animation = Just $ Animated animation 0.0},
             c = Object {sprite = Sprite {pos = p0, scale = one, texture = texture3, frame = viewFull}, vel = G.vec2 0.001 0.002, animation = Nothing},
-            _lights = [whiteLight]
+            lights = [whiteLight],
+            globalLight = globalLight
           }
 
   swapchain@(_, swapchainExtent, swapchainImages) <-
@@ -314,16 +328,22 @@ main = runManaged $ do
    in say "Engine" "Entering the main loop"
         *> mainLoop
           shutdown
-          ashkan2
-          ( \frameNumber verts lights ->
+          frameData
+          ( \frameNumber frameData ->
               do
                 let n = frameNumber `mod` frameCount
                     f = frames ! n
-                 in frame device gfxQueue presentQueue pipeline pipelineLayout swapchain descSet f verts lights
+                 in frame device gfxQueue presentQueue pipeline pipelineLayout swapchain descSet f frameData
           )
           worldTime
           worldEvent
           world0
+
+data FrameData = FrameData
+  { verts :: SV.Vector Vertex,
+    lights :: SV.Vector PointLight,
+    viewport :: Viewport
+  }
 
 frame ::
   (MonadIO m) =>
@@ -335,10 +355,9 @@ frame ::
   (Vk.SwapchainKHR, VkExtent2D.Extent2D, V.Vector Vk.Image) ->
   Vk.DescriptorSet ->
   Frame ->
-  SV.Vector Vertex ->
-  SV.Vector PointLight ->
+  FrameData ->
   m ()
-frame device gfxQueue presentQueue pipeline pipelineLayout swp descSet f verts lights = do
+frame device gfxQueue presentQueue pipeline pipelineLayout swp descSet f frameData = do
   let Frame
         { pool,
           renderCmd,
@@ -354,15 +373,15 @@ frame device gfxQueue presentQueue pipeline pipelineLayout swp descSet f verts l
           targetImage,
           targetView
         } = f
+      FrameData {verts, lights, viewport = viewport'} = frameData
       (swapchain, swapchainExtent, swapchainImages) = swp
-      viewport' = Viewport {_viewportSize = G.uvec2 (fromIntegral windowWidth) (fromIntegral windowHeight)}
   waitForFrame device f
   liftIO $ copyToGpu device pool gfxQueue vertex staging verts
   liftIO $ copyToGpu device pool gfxQueue light staging lights
   liftIO $ copyToGpu2 device pool gfxQueue viewport staging viewport'
   -- say "Light" $ show (SV.head lights)
 
-  recordRender renderCmd vertex light viewport (targetImage, targetView) swapchainExtent
+  recordRender renderCmd vertex light viewport (targetImage, targetView) swapchainExtent (fromIntegral $ SV.length verts)
   index <- Vk.acquireNextImageKHR device swapchain maxBound imageAvailable Vk.zero >>= \(r, index) -> checkSwapchainIsOld r $> index
   let swapchainImage = swapchainImages ! fromIntegral index
    in recordCopyToSwapchain copyCmd targetImage swapchainImage swapchainExtent
@@ -397,7 +416,7 @@ frame device gfxQueue presentQueue pipeline pipelineLayout swp descSet f verts l
         transitToCopyDst cmd swapchainImage
         copyImageToImage cmd offscreenImage swapchainImage extent
         transitToPresent cmd swapchainImage
-    recordRender cmd vertBuff lightBuff viewportBuff target extent =
+    recordRender cmd vertBuff lightBuff viewportBuff target extent vertexCount =
       Vk.useCommandBuffer cmd Vk.zero $ do
         let (image, view) = target
         Vk.cmdBindPipeline cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
@@ -406,8 +425,7 @@ frame device gfxQueue presentQueue pipeline pipelineLayout swp descSet f verts l
         bindLights device descSet lightBuff
         bindViewport device descSet viewportBuff
         transitToRenderTarget cmd image
-        let vertexCount = fromIntegral $ SV.length verts
-            attachment =
+        let attachment =
               Vk.zero
                 { VkRenderingAttachmentInfo.imageView = view,
                   VkRenderingAttachmentInfo.imageLayout = Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
@@ -488,13 +506,13 @@ waitForFrame device (Frame {fence}) =
 mainLoop ::
   (MonadIO io) =>
   io () ->
-  (w -> Ashkan) ->
-  (Int -> SV.Vector Vertex -> SV.Vector PointLight -> io ()) ->
+  (w -> FrameData) ->
+  (Int -> FrameData -> io ()) ->
   (Word32 -> w -> io w) ->
   (SDL.Event -> w -> io w) ->
   w ->
   io ()
-mainLoop shutdown ashkan frame worldTime worldEvent world0 =
+mainLoop shutdown frameData frame worldTime worldEvent world0 =
   do
     t0 <- SDL.ticks
     go 0 t0 world0
@@ -511,10 +529,7 @@ mainLoop shutdown ashkan frame worldTime worldEvent world0 =
       if any isQuitEvent es
         then shutdown
         else do
-          let ash = ashkan w
-              verts = vertices $ ash ^. sprites2
-              lights = SV.fromList $ ash ^. lights2
-          frame frameNumber verts lights
+          frame frameNumber $ frameData w
           w2 <- foldlM (flip worldEvent) w es
           t2 <- lockFrameRate 60 t
           w3 <- worldTime (t2 - t) w2
@@ -523,7 +538,7 @@ mainLoop shutdown ashkan frame worldTime worldEvent world0 =
 whiteLight pos = PointLight {_position = pos, _color = G.vec3 1.0 1.0 1.0, _intensity = 1.0}
 
 worldEvent :: (Monad io) => SDL.Event -> World -> io World
-worldEvent e w@(World {pointer = pointer@Sprite {pos = pos}}) = return let p = f pos e; w1 = w {pointer = pointer {pos = p}, _lights = [whiteLight p]} in w1
+worldEvent e w@(World {pointer = pointer@Sprite {pos = pos}}) = return let p = f pos e; w1 = w {pointer = pointer {pos = p}, lights = [whiteLight p]} in w1
   where
     f _ (SDL.Event _ (SDL.MouseMotionEvent (SDL.MouseMotionEventData {mouseMotionEventPos = SDL.P (SDL.V2 x y)}))) = normalPos x y
     f p _ = p
@@ -540,11 +555,11 @@ worldTime dt w@(World {a, b, c}) = return w {a = update a, b = update b, c = upd
       let ani2 = animatedProgress ani
        in obj {sprite = sprite {frame = animatedFrame ani2}, animation = Just ani2}
     animatedFrame :: Animated -> G.Vec4
-    animatedFrame ani = (ani ^. animation . sheet . frames) ! floor (ani ^. frameIndex)
+    animatedFrame ani = ani.animation.sheet.frames ! floor ani.frameIndex
     animatedProgress ani =
-      let new fi = fi + (ani ^. animation . speed * fromIntegral dt) / 1000
-          loop fi = if floor fi >= (ani ^. animation . sheet . frames . to V.length) then 0 else fi
-       in over frameIndex (loop . new) ani
+      let new fi = fi + (ani.animation.speed * fromIntegral dt) / 1000
+          loop fi = if floor fi >= (V.length ani.animation.sheet.frames) then 0 else fi
+       in ani {frameIndex = loop (new ani.frameIndex)}
 
 repeatingSampler :: Vk.Device -> Managed Vk.Sampler
 repeatingSampler device =
@@ -560,10 +575,10 @@ repeatingSampler device =
           }
    in managed $ Vk.withSampler device info Nothing bracket
 
-windowWidth :: Int
+windowWidth :: Word32
 windowWidth = 500
 
-windowHeight :: Int
+windowHeight :: Word32
 windowHeight = 500
 
 normalSize :: G.UVec2 -> G.Vec2
@@ -579,7 +594,7 @@ normalPos x y =
    in G.vec2 x' y'
 
 sprites :: World -> [Sprite]
-sprites (World background pointer a b c _) =
+sprites World {background, pointer, a, b, c} =
   [ background,
     s a,
     s b,
@@ -634,7 +649,7 @@ vertices ss =
                 [topLeft, topRight, bottomRight, bottomRight, bottomLeft, topLeft]
    in mconcat $ toQuad <$> ss
 
-withImage :: Vma.Allocator -> Int -> Int -> Vk.Format -> Managed Vk.Image
+withImage :: Vma.Allocator -> Word32 -> Word32 -> Vk.Format -> Managed Vk.Image
 withImage allocator width height format = do
   (image, _, _) <-
     let dims =
@@ -665,7 +680,7 @@ withImage allocator width height format = do
      in managed $ Vma.withImage allocator imgInfo allocInfo bracket
   return image
 
-withImageAndView :: Vma.Allocator -> Vk.Device -> Int -> Int -> Vk.Format -> Managed (Vk.Image, Vk.ImageView)
+withImageAndView :: Vma.Allocator -> Vk.Device -> Word32 -> Word32 -> Vk.Format -> Managed (Vk.Image, Vk.ImageView)
 withImageAndView allocator device width height format = do
   image <- withImage allocator width height format
   view <- withImageView device image format
@@ -676,7 +691,7 @@ readTexture allocator device pool queue path = do
   JP.ImageRGBA8 (JP.Image width height pixels) <- liftIO $ JP.readPng path >>= either (sayErr "Texture" . show) return
   let size = width * height * 4
       format = Vk.FORMAT_R8G8B8A8_SRGB
-  (image, view) <- withImageAndView allocator device width height format
+  (image, view) <- withImageAndView allocator device (fromIntegral width) (fromIntegral height) format
   do
     (staging, mem) <- withHostBuffer allocator (fromIntegral size)
     liftIO $ copy pixels mem size
@@ -1018,8 +1033,8 @@ createSwapchain ::
   Vk.SurfaceKHR ->
   Word32 ->
   Word32 ->
-  Int ->
-  Int ->
+  Word32 ->
+  Word32 ->
   Managed (Vk.SwapchainKHR, Vk.Extent2D, V.Vector Vk.Image)
 createSwapchain
   gpu

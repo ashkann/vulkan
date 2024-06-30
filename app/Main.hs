@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
@@ -14,7 +13,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StrictData #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE NoFieldSelectors #-}
 
@@ -35,9 +33,10 @@ import Data.Functor (($>))
 import Data.Vector ((!))
 import Data.Vector qualified as V
 import Data.Vector.Storable qualified as SV
-import Foreign (Bits (zeroBits), Ptr, Storable, Word32, castPtr, copyArray, withForeignPtr)
+import Foreign (Bits (zeroBits), Ptr, Storable, Word32, Word64, Word8, alignPtr, castPtr, copyArray, plusPtr, withForeignPtr)
 import Foreign.Ptr (castFunPtr)
 import Foreign.Storable (Storable (..), sizeOf)
+import Foreign.Storable.Record (Access)
 import Foreign.Storable.Record qualified as Store
 import Geomancy qualified as G
 import SDL qualified
@@ -141,17 +140,15 @@ data Animated = Animated {animation :: Animation, frameIndex :: Float}
 --    in over frameIndex (loop . new) ani
 
 -- TODO reordering the fields apparently breaks the alignment. why?
-data PointLight = PointLight {_intensity :: Float, _position :: G.Vec2, _color :: G.Vec3} deriving (Show)
-
-$(makeLenses ''PointLight)
+data PointLight = PointLight {intensity :: Float, position :: G.Vec2, color :: G.Vec3} deriving (Show)
 
 pointLightStore :: Store.Dictionary PointLight
 pointLightStore =
   Store.run $
     PointLight
-      <$> Store.element (^. intensity)
-      <*> Store.element (^. position)
-      <*> Store.element (^. color)
+      <$> Store.element (.intensity)
+      <*> Store.element (.position)
+      <*> Store.element (.color)
 
 instance Storable PointLight where
   sizeOf = Store.sizeOf pointLightStore
@@ -159,11 +156,22 @@ instance Storable PointLight where
   peek = Store.peek pointLightStore
   poke = Store.poke pointLightStore
 
-data GlobalLight = GlobalLight {intesity :: Float, color :: G.Vec3}
+data GlobalLight = GlobalLight
+  { intensity :: Float,
+    _padding1 :: Word64, -- TODO remove and make the Storable instance handle it
+    _padding2 :: Word32,
+    color :: G.Vec3
+  }
+  deriving (Show)
 
 globalLightStore :: Store.Dictionary GlobalLight
 globalLightStore =
-  Store.run $ GlobalLight <$> Store.element (.intesity) <*> Store.element (.color)
+  Store.run $
+    GlobalLight
+      <$> Store.element (.intensity)
+      <*> Store.element (const 0)
+      <*> Store.element (const 0)
+      <*> Store.element (.color)
 
 instance Storable GlobalLight where
   sizeOf = Store.sizeOf globalLightStore
@@ -173,6 +181,7 @@ instance Storable GlobalLight where
 
 data Viewport = Viewport
   { viewportSize :: G.UVec2,
+    _padding :: Word64, -- TODO remove and make the Storable instance handle it
     globalLight :: GlobalLight
   }
 
@@ -181,6 +190,7 @@ viewportStore =
   Store.run $
     Viewport
       <$> Store.element (.viewportSize)
+      <*> Store.element (const 0)
       <*> Store.element (.globalLight)
 
 instance Storable Viewport where
@@ -206,7 +216,7 @@ frameData world =
   FrameData
     { verts = vertices $ sprites world,
       lights = SV.fromList world.lights,
-      viewport = Viewport {viewportSize = G.uvec2 windowWidth windowHeight, globalLight = world.globalLight}
+      viewport = Viewport {viewportSize = G.uvec2 windowWidth windowHeight, _padding = 0, globalLight = world.globalLight}
     }
 
 data Frame = Frame
@@ -248,7 +258,7 @@ main = runManaged $ do
   say "Vulkan" "Created command pool"
   allocator <- withMemoryAllocator vulkan gpu device <* say "VMA" "Created allocator"
   say "Vulkan" "Created staging vertex buffer"
-  let descriptorCount = 1000
+  let descriptorCount = 16
   descSetLayout <- descriptorSetLayout device descriptorCount
   descPool <- descriptorPool device 1000
   descSet <- descriptorSet device descSetLayout descPool
@@ -285,8 +295,8 @@ main = runManaged $ do
           }
       b = Sprite {pos = p0, scale = one, texture = texture2, frame = sheet.frames ! 0}
       animation = Animation {sheet = sheet, speed = 15.0}
-      whiteLight = PointLight {_position = G.vec2 0.0 0.0, _color = G.vec3 1.0 1.0 0.7, _intensity = 1.0}
-      globalLight = GlobalLight {intesity = 1.0, color = G.vec3 1.0 1.0 1.0}
+      whiteLight = PointLight {position = G.vec2 0.0 0.0, color = G.vec3 1.0 1.0 0.7, intensity = 1.0}
+      globalLight = GlobalLight {intensity = 0.93, _padding1 = 0, _padding2 = 0, color = G.vec3 1.0 0.73 1.0}
       world0 =
         World
           { background = Sprite {pos = G.vec2 (-1.0) (-1.0), scale = G.vec2 0.2 0.2, texture = background, frame = viewFull},
@@ -376,11 +386,10 @@ frame device gfxQueue presentQueue pipeline pipelineLayout swp descSet f frameDa
       FrameData {verts, lights, viewport = viewport'} = frameData
       (swapchain, swapchainExtent, swapchainImages) = swp
   waitForFrame device f
+  liftIO $ copyToGpu2 device pool gfxQueue viewport staging viewport'
   liftIO $ copyToGpu device pool gfxQueue vertex staging verts
   liftIO $ copyToGpu device pool gfxQueue light staging lights
-  liftIO $ copyToGpu2 device pool gfxQueue viewport staging viewport'
-  -- say "Light" $ show (SV.head lights)
-
+  -- say "Global light" $ show viewport'.globalLight
   recordRender renderCmd vertex light viewport (targetImage, targetView) swapchainExtent (fromIntegral $ SV.length verts)
   index <- Vk.acquireNextImageKHR device swapchain maxBound imageAvailable Vk.zero >>= \(r, index) -> checkSwapchainIsOld r $> index
   let swapchainImage = swapchainImages ! fromIntegral index
@@ -535,7 +544,7 @@ mainLoop shutdown frameData frame worldTime worldEvent world0 =
           w3 <- worldTime (t2 - t) w2
           go (frameNumber + 1) t2 w3
 
-whiteLight pos = PointLight {_position = pos, _color = G.vec3 1.0 1.0 1.0, _intensity = 1.0}
+whiteLight pos = PointLight {position = pos, color = G.vec3 1.0 1.0 1.0, intensity = 1.0}
 
 worldEvent :: (Monad io) => SDL.Event -> World -> io World
 worldEvent e w@(World {pointer = pointer@Sprite {pos = pos}}) = return let p = f pos e; w1 = w {pointer = pointer {pos = p}, lights = [whiteLight p]} in w1
@@ -557,8 +566,8 @@ worldTime dt w@(World {a, b, c}) = return w {a = update a, b = update b, c = upd
     animatedFrame :: Animated -> G.Vec4
     animatedFrame ani = ani.animation.sheet.frames ! floor ani.frameIndex
     animatedProgress ani =
-      let new fi = fi + (ani.animation.speed * fromIntegral dt) / 1000
-          loop fi = if floor fi >= (V.length ani.animation.sheet.frames) then 0 else fi
+      let new fi = fi + ani.animation.speed * fromIntegral dt / 1000
+          loop fi = if floor fi >= V.length ani.animation.sheet.frames then 0 else fi
        in ani {frameIndex = loop (new ani.frameIndex)}
 
 repeatingSampler :: Vk.Device -> Managed Vk.Sampler
@@ -589,8 +598,8 @@ normalSize (G.WithUVec2 w h) =
 
 normalPos :: (Integral i) => i -> i -> G.Vec2
 normalPos x y =
-  let x' = (2.0 * fromIntegral x / fromIntegral windowWidth) - 1.0
-      y' = (2.0 * fromIntegral y / fromIntegral windowHeight) - 1.0
+  let x' = 2.0 * fromIntegral x / fromIntegral windowWidth - 1.0
+      y' = 2.0 * fromIntegral y / fromIntegral windowHeight - 1.0
    in G.vec2 x' y'
 
 sprites :: World -> [Sprite]
@@ -779,7 +788,7 @@ descriptorSetLayout dev count = do
   managed $ Vk.withDescriptorSetLayout dev layoutInfo Nothing bracket
 
 descriptorPool :: Vk.Device -> Word32 -> Managed Vk.DescriptorPool
-descriptorPool dev textureCount = do
+descriptorPool dev textureCount =
   let poolSize typ =
         Vk.zero
           { VkDescriptorPoolSize.descriptorCount = textureCount,
@@ -799,7 +808,7 @@ descriptorPool dev textureCount = do
    in managed $ Vk.withDescriptorPool dev info Nothing bracket
 
 descriptorSet :: Vk.Device -> Vk.DescriptorSetLayout -> Vk.DescriptorPool -> Managed Vk.DescriptorSet
-descriptorSet dev layout pool = do
+descriptorSet dev layout pool =
   let info =
         Vk.zero
           { VkDescriptorSetAllocateInfo.descriptorPool = pool,
@@ -830,7 +839,7 @@ bindTextures dev set textures sampler = do
         }
 
 bindLights :: (MonadIO io) => Vk.Device -> Vk.DescriptorSet -> Vk.Buffer -> io ()
-bindLights dev set lights = do
+bindLights dev set lights =
   let info =
         Vk.SomeStruct
           Vk.zero
@@ -851,7 +860,7 @@ bindLights dev set lights = do
         }
 
 bindViewport :: (MonadIO io) => Vk.Device -> Vk.DescriptorSet -> Vk.Buffer -> io ()
-bindViewport dev set viewport = do
+bindViewport dev set viewport =
   let info =
         Vk.SomeStruct
           Vk.zero
@@ -1170,7 +1179,7 @@ pickGPU vulkan surface = do
           | Vk.queueCount q <= 0 = continue (gfx, present)
           | otherwise =
               let i = fromIntegral index
-                  isGfx = ((Vk.QUEUE_GRAPHICS_BIT .&. Vk.queueFlags q) /= zeroBits) && (Vk.queueCount q > 0)
+                  isGfx = (Vk.QUEUE_GRAPHICS_BIT .&. Vk.queueFlags q) /= zeroBits && Vk.queueCount q > 0
                   isPresent = Vk.getPhysicalDeviceSurfaceSupportKHR gpu i surface
                   pick b = if b then Just i else Nothing
                   gfx2 = present <|> pick isGfx

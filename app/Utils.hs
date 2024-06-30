@@ -392,9 +392,9 @@ copyToGpu2 ::
   (Vk.Buffer, Ptr ()) ->
   a ->
   IO ()
-copyToGpu2 device pool queue gpuBuffer (hostBuffer, hostBufferPtr) v = do
-  poke (castPtr hostBufferPtr) v
-  let copy cmd = Vk.cmdCopyBuffer cmd hostBuffer gpuBuffer [Vk.zero {VkBufferCopy.size = fromIntegral $ sizeOf v}]
+copyToGpu2 device pool queue gpuBuffer (hostBuffer, hostBufferPtr) a = do
+  poke (castPtr hostBufferPtr) a
+  let copy cmd = Vk.cmdCopyBuffer cmd hostBuffer gpuBuffer [Vk.zero {VkBufferCopy.size = fromIntegral $ sizeOf a}]
    in submitWait device pool queue copy
 
 copyImageToImage :: (MonadIO io) => Vk.CommandBuffer -> Vk.Image -> Vk.Image -> Vk.Extent2D -> io ()

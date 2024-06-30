@@ -13,7 +13,6 @@ executable vulkan2dengine
   main-is: Main.hs
   other-modules:
       Ashkan
-      Tut
       Utils
       Paths_Vulkan2DEngine
   hs-source-dirs:

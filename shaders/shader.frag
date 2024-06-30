@@ -2,26 +2,29 @@
 #extension GL_EXT_debug_printf:enable
 #extension GL_EXT_nonuniform_qualifier:enable
 
-struct Light{
+struct PointLight{
     float intensity;
     vec2 position;
     vec3 color;
 };
 
-layout(binding=1)uniform LightBlock{
-    // int numLights;
-    Light lights[1];
-};
-
-layout(binding=2)uniform ScreenBlock{
-    uvec2 viewportSizeInPixels;
+struct GlobalLight{
+    float intensity;
+    vec3 color;
 };
 
 layout(binding=0)uniform sampler2D texSampler[];
+layout(binding=1)uniform LightBlock{
+    // int numLights;
+    PointLight lights[1];
+};
+layout(binding=2)uniform ScreenBlock{
+    uvec2 viewportSizeInPixels;
+    GlobalLight globalLight;
+};
 
-layout(location=0)in vec3 fragColor;// not used
-layout(location=1)in vec2 fragTexCoord;
-layout(location=2)in flat uint fragTexIndex;
+layout(location=0)in vec2 fragTexCoord;
+layout(location=1)in flat uint fragTexIndex;
 
 layout(location=0)out vec4 outColor;
 
@@ -47,14 +50,17 @@ void main(){
         float falloffConstant=1.;
         float falloff=intensity/(falloffConstant+(d*d));
         vec3 lightEffect=lights[0].color*falloff;
+        
+        vec3 globalLightEffect=globalLight.color*globalLight.intensity;
         finalColor.rgb*=lightEffect;
     // }
     outColor=finalColor;
     
-    if(insideBox(gl_FragCoord.xy,vec2(240,240),vec2(260,260))>0){
+    if(insideBox(gl_FragCoord.xy,vec2(240,240),vec2(245,245))>0){
         // debugPrintfEXT("%1.1f %1.1f",lights[0].intensity, lights[0].intensity/d);
         // debugPrintfEXT("%v2i",viewportSizeInPixels);
         // debugPrintfEXT("%1.1v2f|%1.1v3f|%1.1f",lights[0].position,lights[0].color,lights[0].intensity);
         // debugPrintfEXT("%1.1f",lights[0].intensity);
+        debugPrintfEXT("%1.2f|(%1.2v3f)",globalLight.intensity,globalLight.color);
     }
 }

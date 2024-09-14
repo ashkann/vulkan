@@ -1,11 +1,11 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.36.0.
+-- This file has been generated from package.yaml by hpack version 0.37.0.
 --
 -- see: https://github.com/sol/hpack
 
 name:           Vulkan2DEngine
-version:        0.1.0.0
+version:        0.1.0
 maintainer:     ashkan.kh.nazary@gmail.com
 build-type:     Simple
 
@@ -13,15 +13,16 @@ executable vulkan2dengine
   main-is: Main.hs
   other-modules:
       Ashkan
+      Learn
       Utils
       Paths_Vulkan2DEngine
   hs-source-dirs:
       app
-  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -Wambiguous-fields -O1 -optl-Wl,-rpath,/usr/local/lib -threaded -rtsopts -with-rtsopts=-N -Wall -g -rtsopts -dcore-lint -debug -optcxx-std=c++11
+  ghc-options: -Wall -Wcompat -Widentities -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -Wambiguous-fields -Wno-name-shadowing -optl-Wl,-rpath,/usr/local/lib
   build-depends:
       JuicyPixels
     , VulkanMemoryAllocator
-    , base >=4.7 && <5
+    , base
     , bytestring
     , containers
     , dear-imgui

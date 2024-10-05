@@ -15,31 +15,33 @@
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE NoFieldSelectors #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+{-# HLINT ignore "Use newtype instead of data" #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Main (main) where
 
 import Codec.Picture qualified as JP
-import Control.Applicative ((<|>))
 import Control.Concurrent (threadDelay)
 import Control.Exception (bracket)
 import Control.Lens
 import Control.Monad (when)
 import Control.Monad.Except (ExceptT (ExceptT), runExceptT)
 import Control.Monad.Managed (Managed, MonadIO (liftIO), managed, runManaged)
-import Data.Bits ((.&.), (.|.))
+import Data.Bits ((.|.))
 import Data.ByteString qualified as BS (readFile)
 import Data.Foldable (foldlM)
 import Data.Functor (($>))
 import Data.Vector ((!))
 import Data.Vector qualified as V
 import Data.Vector.Storable qualified as SV
-import Foreign (Bits (zeroBits), Ptr, Storable, Word32, Word64, Word8, alignPtr, castPtr, copyArray, plusPtr, withForeignPtr)
+import Foreign (Ptr, Storable, Word32, Word64, castPtr, copyArray, withForeignPtr)
 import Foreign.Ptr (castFunPtr)
 import Foreign.Storable (Storable (..), sizeOf)
-import Foreign.Storable.Record (Access)
 import Foreign.Storable.Record qualified as Store
 import Geomancy qualified as G
 import SDL qualified
+import Init qualified
 import Utils
 import Vulkan qualified as VK
 import Vulkan qualified as Vk
@@ -95,6 +97,7 @@ import VulkanMemoryAllocator qualified as Vma
 import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCreateInfo (..))
 import VulkanMemoryAllocator qualified as VmaAllocatorCreateInfo (AllocatorCreateInfo (..))
 import Prelude hiding (init)
+import Control.Monad.Trans.Maybe (runMaybeT)
 
 data Vertex = Vertex {xy :: G.Vec2, uv :: G.Vec2, texture :: Word32}
 
@@ -234,6 +237,10 @@ data Frame = Frame
     targetImage :: Vk.Image,
     targetView :: Vk.ImageView
   }
+
+data QueueFamily = Graphics | Present
+
+newtype QueueFamilyIndex (f :: QueueFamily) = QueueFamilyIndex Word32
 
 main :: IO ()
 main = runManaged $ do
@@ -1145,19 +1152,20 @@ pickGPU ::
   Managed (Maybe (Vk.PhysicalDevice, Word32, Word32, Bool))
 pickGPU vulkan surface = do
   (_, gpus) <- Vk.enumeratePhysicalDevices vulkan
-  let good' d = ExceptT $ good d <&> (\case Nothing -> Right (); Just ((g, p), pss) -> Left (d, g, p, pss))
-   in findM (\_ gpu -> good' gpu) () gpus
+  let isGood d = ExceptT $ find d <&> (\case Nothing -> Right (); Just ((g, p), pss) -> Left (d, g, p, pss))
+   in findM (\_ gpu -> isGood gpu) () gpus
   where
     findM f s0 ta = runExceptT (foldlM f s0 ta) >>= (\r -> return $ case r of Left b -> Just b; Right _ -> Nothing)
-    found = ExceptT . return . Left
-    continue = ExceptT . return . Right
+    -- found = ExceptT . return . Left
+    -- continue = ExceptT . return . Right
 
     support yes feature = liftIO (say "Enging" msg $> out)
       where
         msg = "GPU supports " ++ feature ++ ": " ++ show yes
         out = if yes then Just () else Nothing
 
-    good gpu = do
+    find :: Vk.PhysicalDevice -> Managed (Maybe ((Word32, Word32), Bool))
+    find gpu = do
       features <- Vk.getPhysicalDeviceFeatures2 gpu :: Managed (Vk.PhysicalDeviceFeatures2 '[Vk.PhysicalDeviceVulkan12Features])
       _ <-
         let f = fst $ VkPhysicalDeviceFeatures2.next features
@@ -1170,24 +1178,10 @@ pickGPU vulkan surface = do
       r <- swapchainSupported exts
       if r && dynamicRenderingSupported exts
         then do
-          qs <- Vk.getPhysicalDeviceQueueFamilyProperties gpu
-          maybeQs <- findM ff (Nothing, Nothing) (V.indexed qs)
+          maybeQs <- runMaybeT $ Init.suitable gpu surface
           return $ (,portabilitySubSetPresent exts) <$> maybeQs
         else return Nothing
       where
-        ff (gfx, present) (index, q)
-          | Vk.queueCount q <= 0 = continue (gfx, present)
-          | otherwise =
-              let i = fromIntegral index
-                  isGfx = (Vk.QUEUE_GRAPHICS_BIT .&. Vk.queueFlags q) /= zeroBits && Vk.queueCount q > 0
-                  isPresent = Vk.getPhysicalDeviceSurfaceSupportKHR gpu i surface
-                  pick b = if b then Just i else Nothing
-                  gfx2 = present <|> pick isGfx
-                  present2 = maybe (pick <$> isPresent) (pure . Just) gfx
-                  nxt (Just g) (Just p) = found (g, p)
-                  nxt g p = continue (g, p)
-               in present2 >>= nxt gfx2
-
         dynamicRenderingSupported = V.any ((== Vk.KHR_DYNAMIC_RENDERING_EXTENSION_NAME) . Vk.extensionName)
 
         swapchainSupported exts = do

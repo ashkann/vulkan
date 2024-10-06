@@ -5,7 +5,7 @@
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE TupleSections #-}
 
-module Init (suitable, pickGPU, presentMode, imageFormat, colorSpace) where
+module Init (pickGPU, presentMode, imageFormat, colorSpace) where
 
 import Control.Monad.Managed
 import Control.Monad.Trans.Except (ExceptT (ExceptT), runExceptT, throwE)
@@ -31,27 +31,29 @@ imageFormat = Vk.FORMAT_B8G8R8A8_SRGB
 colorSpace :: Vk.ColorSpaceKHR
 colorSpace = Vk.COLOR_SPACE_SRGB_NONLINEAR_KHR
 
+data QueueLookup = NoneFound | GfxFound Word32 | PresentFound Word32
+
 pickGPU ::
+  forall io.
+  (MonadIO io) =>
   Vk.Instance ->
   Vk.SurfaceKHR ->
-  Managed (Maybe (Vk.PhysicalDevice, Word32, Word32, Bool))
+  io (Maybe (Vk.PhysicalDevice, Word32, Word32, Bool))
 pickGPU vulkan surface = do
   (_, gpus) <- Vk.enumeratePhysicalDevices vulkan
   let isGood d = ExceptT $ find d <&> (\case Nothing -> Right (); Just ((g, p), pss) -> Left (d, g, p, pss))
    in findM (\_ gpu -> isGood gpu) () gpus
   where
     findM f s0 ta = runExceptT (foldlM f s0 ta) >>= (\r -> return $ case r of Left b -> Just b; Right _ -> Nothing)
-    -- found = ExceptT . return . Left
-    -- continue = ExceptT . return . Right
 
     support yes feature = liftIO (say "Enging" msg $> out)
       where
         msg = "GPU supports " ++ feature ++ ": " ++ show yes
         out = if yes then Just () else Nothing
 
-    find :: Vk.PhysicalDevice -> Managed (Maybe ((Word32, Word32), Bool))
+    find :: Vk.PhysicalDevice -> io (Maybe ((Word32, Word32), Bool))
     find gpu = do
-      features <- Vk.getPhysicalDeviceFeatures2 gpu :: Managed (Vk.PhysicalDeviceFeatures2 '[Vk.PhysicalDeviceVulkan12Features])
+      features <- Vk.getPhysicalDeviceFeatures2 gpu :: io (Vk.PhysicalDeviceFeatures2 '[Vk.PhysicalDeviceVulkan12Features])
       _ <-
         let f = fst $ VkPhysicalDeviceFeatures2.next features
          in do
@@ -63,7 +65,7 @@ pickGPU vulkan surface = do
       r <- swapchainSupported exts
       if r && dynamicRenderingSupported exts
         then do
-          queueFamilyIndices <- Init.suitable gpu surface
+          queueFamilyIndices <- suitable
           return $ (,portabilitySubSetPresent exts) <$> queueFamilyIndices
         else return Nothing
       where
@@ -81,29 +83,27 @@ pickGPU vulkan surface = do
 
         portabilitySubSetPresent = any ((== Vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME) . Vk.extensionName)
 
-data QueueLookup = NoneFound | GfxFound Word32 | PresentFound Word32
-
-suitable :: forall io. (MonadIO io) => Vk.PhysicalDevice -> Vk.SurfaceKHR -> io (Maybe (Word32, Word32))
-suitable gpu surface = do
-  qs <- Vk.getPhysicalDeviceQueueFamilyProperties gpu
-  either Just (const Nothing) <$> runExceptT (V.ifoldM lookup NoneFound qs)
-  where
-    lookup :: QueueLookup -> Int -> Vk.QueueFamilyProperties -> ExceptT (Word32, Word32) io QueueLookup
-    lookup acc _ q | Vk.queueCount q <= 0 = pure acc
-    lookup acc index q =
-      let i = fromIntegral index
-          maybeGfx = pick $ (Vk.QUEUE_GRAPHICS_BIT .&. Vk.queueFlags q) /= zeroBits
-          maybePresent = Vk.getPhysicalDeviceSurfaceSupportKHR gpu i surface <&> pick
-          pick b = if b then Just i else Nothing
-          (gfx, ioPresent) =
-            case acc of
-              GfxFound gfx -> (Just gfx, maybePresent)
-              PresentFound present -> (maybeGfx, pure (Just present))
-              NoneFound -> (maybeGfx, maybePresent)
-       in do
-            present <- ioPresent
-            case (gfx, present) of
-              (Just gfx, Just present) -> throwE (gfx, present)
-              (Just gfx, Nothing) -> pure $ GfxFound gfx
-              (Nothing, Just present) -> pure $ PresentFound present
-              (Nothing, Nothing) -> pure NoneFound
+        suitable :: io (Maybe (Word32, Word32))
+        suitable = do
+          qs <- Vk.getPhysicalDeviceQueueFamilyProperties gpu
+          either Just (const Nothing) <$> runExceptT (V.ifoldM lookup NoneFound qs)
+          where
+            lookup :: QueueLookup -> Int -> Vk.QueueFamilyProperties -> ExceptT (Word32, Word32) io QueueLookup
+            lookup acc _ q | Vk.queueCount q <= 0 = pure acc
+            lookup acc index q =
+              let i = fromIntegral index
+                  maybeGfx = pick $ (Vk.QUEUE_GRAPHICS_BIT .&. Vk.queueFlags q) /= zeroBits
+                  maybePresent = Vk.getPhysicalDeviceSurfaceSupportKHR gpu i surface <&> pick
+                  pick b = if b then Just i else Nothing
+                  (gfx, ioPresent) =
+                    case acc of
+                      GfxFound gfx -> (Just gfx, maybePresent)
+                      PresentFound present -> (maybeGfx, pure (Just present))
+                      NoneFound -> (maybeGfx, maybePresent)
+               in do
+                    present <- ioPresent
+                    case (gfx, present) of
+                      (Just gfx, Just present) -> throwE (gfx, present)
+                      (Just gfx, Nothing) -> pure $ GfxFound gfx
+                      (Nothing, Just present) -> pure $ PresentFound present
+                      (Nothing, Nothing) -> pure NoneFound

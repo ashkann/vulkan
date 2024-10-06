@@ -3,7 +3,6 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ImportQualifiedPost #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedRecordDot #-}
@@ -13,7 +12,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StrictData #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE NoFieldSelectors #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 {-# HLINT ignore "Use newtype instead of data" #-}
@@ -26,7 +24,6 @@ import Control.Concurrent (threadDelay)
 import Control.Exception (bracket)
 import Control.Lens
 import Control.Monad (when)
-import Control.Monad.Except (ExceptT (ExceptT), runExceptT)
 import Control.Monad.Managed (Managed, MonadIO (liftIO), managed, runManaged)
 import Data.Bits ((.|.))
 import Data.ByteString qualified as BS (readFile)
@@ -43,7 +40,6 @@ import Geomancy qualified as G
 import SDL qualified
 import Init qualified
 import Utils
-import Vulkan qualified as VK
 import Vulkan qualified as Vk
 import Vulkan qualified as VkBufferCreateInfo (BufferCreateInfo (..))
 import Vulkan qualified as VkCommandPoolCreateInfo (CommandPoolCreateInfo (..))
@@ -67,7 +63,6 @@ import Vulkan qualified as VkImageSubresourceRange (ImageSubresourceRange (..))
 import Vulkan qualified as VkImageViewCreateInfo (ImageViewCreateInfo (..))
 import Vulkan qualified as VkInstance (Instance (..))
 import Vulkan qualified as VkPhysicalDeviceDynamicRenderingFeatures (PhysicalDeviceDynamicRenderingFeatures (..))
-import Vulkan qualified as VkPhysicalDeviceFeatures2 (PhysicalDeviceFeatures2 (..))
 import Vulkan qualified as VkPhysicalDeviceVulkan12Features (PhysicalDeviceVulkan12Features (..))
 import Vulkan qualified as VkPipelineColorBlendStateCreateInfo (PipelineColorBlendStateCreateInfo (..))
 import Vulkan qualified as VkPipelineLayoutCreateInfo (PipelineLayoutCreateInfo (..))
@@ -81,7 +76,6 @@ import Vulkan qualified as VkRenderingInfo (RenderingInfo (..))
 import Vulkan qualified as VkSamplerCreateInfo (SamplerCreateInfo (..))
 import Vulkan qualified as VkShaderModuleCreateInfo (ShaderModuleCreateInfo (..))
 import Vulkan qualified as VkSubmitInfo (SubmitInfo (..))
-import Vulkan qualified as VkSurface (SurfaceFormatKHR (..))
 import Vulkan qualified as VkSurfaceCaps (SurfaceCapabilitiesKHR (..))
 import Vulkan qualified as VkSwapchainCreateInfo (SwapchainCreateInfoKHR (..))
 import Vulkan qualified as VkVPipelineMultisampleStateCreateInfo (PipelineMultisampleStateCreateInfo (..))
@@ -97,7 +91,6 @@ import VulkanMemoryAllocator qualified as Vma
 import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCreateInfo (..))
 import VulkanMemoryAllocator qualified as VmaAllocatorCreateInfo (AllocatorCreateInfo (..))
 import Prelude hiding (init)
-import Control.Monad.Trans.Maybe (runMaybeT)
 
 data Vertex = Vertex {xy :: G.Vec2, uv :: G.Vec2, texture :: Word32}
 
@@ -238,9 +231,7 @@ data Frame = Frame
     targetView :: Vk.ImageView
   }
 
-data QueueFamily = Graphics | Present
 
-newtype QueueFamilyIndex (f :: QueueFamily) = QueueFamilyIndex Word32
 
 main :: IO ()
 main = runManaged $ do
@@ -249,7 +240,7 @@ main = runManaged $ do
   vulkan <- withVulkan window
   _ <- withDebug vulkan
   surface <- withSurface window vulkan
-  (gpu, gfx, present, portable) <- pickGPU vulkan surface >>= maybe (sayErr "Vulkan" "Suitable GPU not found") return
+  (gpu, gfx, present, portable) <- Init.pickGPU vulkan surface >>= maybe (sayErr "Vulkan" "Suitable GPU not found") return
   props <- Vk.getPhysicalDeviceProperties gpu
   say "Vulkan" $ "GPU " ++ show (Vk.deviceName props) ++ ", present queue " ++ show present ++ ", graphics queue " ++ show gfx
   say "Vulkan" "Creating device"
@@ -497,7 +488,7 @@ withFrames device gfx allocator stagingBufferSize vertexBufferSize lightBufferSi
         vertexBuffer <- withGPUBuffer allocator vertexBufferSize Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
         lightBuffer <- withGPUBuffer allocator lightBufferSize Vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT
         viewportBuffer <- withGPUBuffer allocator lightBufferSize Vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT
-        (image, view) <- withImageAndView allocator device windowWidth windowHeight imageFormat
+        (image, view) <- withImageAndView allocator device windowWidth windowHeight Init.imageFormat
         return
           Frame
             { pool = pool,
@@ -863,7 +854,7 @@ bindLights dev set lights =
       Vk.zero
         { VkDescriptorBufferInfo.buffer = lights,
           VkDescriptorBufferInfo.offset = 0,
-          VkDescriptorBufferInfo.range = VK.WHOLE_SIZE -- TODO better value ?
+          VkDescriptorBufferInfo.range = Vk.WHOLE_SIZE -- TODO better value ?
         }
 
 bindViewport :: (MonadIO io) => Vk.Device -> Vk.DescriptorSet -> Vk.Buffer -> io ()
@@ -884,7 +875,7 @@ bindViewport dev set viewport =
       Vk.zero
         { VkDescriptorBufferInfo.buffer = viewport,
           VkDescriptorBufferInfo.offset = 0,
-          VkDescriptorBufferInfo.range = VK.WHOLE_SIZE -- TODO better value ?
+          VkDescriptorBufferInfo.range = Vk.WHOLE_SIZE -- TODO better value ?
         }
 
 createPipeline ::
@@ -924,7 +915,7 @@ createPipeline dev extent layout = do
                 }
         dynamicRendering =
           Vk.zero
-            { VkPipelineRenderingCreateInfo.colorAttachmentFormats = [imageFormat]
+            { VkPipelineRenderingCreateInfo.colorAttachmentFormats = [Init.imageFormat]
             }
         inputAssembly =
           Just
@@ -1031,15 +1022,6 @@ createShaders dev =
             }
     pure (Vk.SomeStruct vertextInfo, Vk.SomeStruct fragInfo)
 
-presentMode :: Vk.PresentModeKHR
-presentMode = Vk.PRESENT_MODE_FIFO_KHR
-
-imageFormat :: Vk.Format
-imageFormat = Vk.FORMAT_B8G8R8A8_SRGB
-
-colorSpace :: Vk.ColorSpaceKHR
-colorSpace = Vk.COLOR_SPACE_SRGB_NONLINEAR_KHR
-
 clearColor :: Vk.ClearValue
 clearColor = Vk.Color (Vk.Float32 1.0 0.0 1.0 0)
 
@@ -1080,8 +1062,8 @@ createSwapchain
             Vk.zero
               { VkSwapchainCreateInfo.surface = surface,
                 VkSwapchainCreateInfo.minImageCount = minImageCount + 1,
-                VkSwapchainCreateInfo.imageFormat = imageFormat,
-                VkSwapchainCreateInfo.imageColorSpace = colorSpace,
+                VkSwapchainCreateInfo.imageFormat = Init.imageFormat,
+                VkSwapchainCreateInfo.imageColorSpace = Init.colorSpace,
                 VkSwapchainCreateInfo.imageExtent = extent,
                 VkSwapchainCreateInfo.imageArrayLayers = 1,
                 VkSwapchainCreateInfo.imageUsage = Vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT .|. Vk.IMAGE_USAGE_TRANSFER_DST_BIT,
@@ -1089,7 +1071,7 @@ createSwapchain
                 VkSwapchainCreateInfo.queueFamilyIndices = queues,
                 VkSwapchainCreateInfo.preTransform = transform,
                 VkSwapchainCreateInfo.compositeAlpha = Vk.COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
-                VkSwapchainCreateInfo.presentMode = presentMode,
+                VkSwapchainCreateInfo.presentMode = Init.presentMode,
                 VkSwapchainCreateInfo.clipped = True
               }
       swapchain <- managed $ Vk.withSwapchainKHR dev info Nothing bracket
@@ -1145,53 +1127,3 @@ withDevice gpu gfx present portable =
           { VkDeviceQueueCreateInfo.queueFamilyIndex = i,
             VkDeviceQueueCreateInfo.queuePriorities = [1.0]
           }
-
-pickGPU ::
-  Vk.Instance ->
-  Vk.SurfaceKHR ->
-  Managed (Maybe (Vk.PhysicalDevice, Word32, Word32, Bool))
-pickGPU vulkan surface = do
-  (_, gpus) <- Vk.enumeratePhysicalDevices vulkan
-  let isGood d = ExceptT $ find d <&> (\case Nothing -> Right (); Just ((g, p), pss) -> Left (d, g, p, pss))
-   in findM (\_ gpu -> isGood gpu) () gpus
-  where
-    findM f s0 ta = runExceptT (foldlM f s0 ta) >>= (\r -> return $ case r of Left b -> Just b; Right _ -> Nothing)
-    -- found = ExceptT . return . Left
-    -- continue = ExceptT . return . Right
-
-    support yes feature = liftIO (say "Enging" msg $> out)
-      where
-        msg = "GPU supports " ++ feature ++ ": " ++ show yes
-        out = if yes then Just () else Nothing
-
-    find :: Vk.PhysicalDevice -> Managed (Maybe ((Word32, Word32), Bool))
-    find gpu = do
-      features <- Vk.getPhysicalDeviceFeatures2 gpu :: Managed (Vk.PhysicalDeviceFeatures2 '[Vk.PhysicalDeviceVulkan12Features])
-      _ <-
-        let f = fst $ VkPhysicalDeviceFeatures2.next features
-         in do
-              _ <- support (VkPhysicalDeviceVulkan12Features.runtimeDescriptorArray f) "runtimeDescriptorArray"
-              _ <- support (VkPhysicalDeviceVulkan12Features.descriptorBindingPartiallyBound f) "descriptorBindingPartiallyBound"
-              _ <- support (VkPhysicalDeviceVulkan12Features.descriptorBindingSampledImageUpdateAfterBind f) "descriptorBindingSampledImageUpdateAfterBind"
-              support True "Bindless Descriptors"
-      (_, exts) <- Vk.enumerateDeviceExtensionProperties gpu Nothing
-      r <- swapchainSupported exts
-      if r && dynamicRenderingSupported exts
-        then do
-          maybeQs <- runMaybeT $ Init.suitable gpu surface
-          return $ (,portabilitySubSetPresent exts) <$> maybeQs
-        else return Nothing
-      where
-        dynamicRenderingSupported = V.any ((== Vk.KHR_DYNAMIC_RENDERING_EXTENSION_NAME) . Vk.extensionName)
-
-        swapchainSupported exts = do
-          (_, formats) <- Vk.getPhysicalDeviceSurfaceFormatsKHR gpu surface
-          (_, modes) <- Vk.getPhysicalDeviceSurfacePresentModesKHR gpu surface
-          let isGood f = VkSurface.format f == imageFormat && VkSurface.colorSpace f == colorSpace
-              swapChain =
-                any ((== Vk.KHR_SWAPCHAIN_EXTENSION_NAME) . Vk.extensionName) exts
-                  && V.any isGood formats
-                  && V.any (== presentMode) modes
-          return swapChain
-
-        portabilitySubSetPresent = any ((== Vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME) . Vk.extensionName)

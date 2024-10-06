@@ -102,9 +102,9 @@ withVulkan w = do
           }
           ::& debugUtilsMessengerCreateInfo
             :& Vk.ValidationFeaturesEXT
-              [ Vk.VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
-                -- Vk.VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT,
-                Vk.VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT
+              [ Vk.VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT
+                -- Vk.VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT
+                -- Vk.VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT
               ]
               []
             :& ()

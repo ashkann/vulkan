@@ -61,6 +61,6 @@ void main(){
         // debugPrintfEXT("%v2i",viewportSizeInPixels);
         // debugPrintfEXT("%1.1v2f|%1.1v3f|%1.1f",lights[0].position,lights[0].color,lights[0].intensity);
         // debugPrintfEXT("%1.1f",lights[0].intensity);
-        debugPrintfEXT("%1.2f|(%1.2v3f)",globalLight.intensity,globalLight.color);
+        // debugPrintfEXT("%1.2f|(%1.2v3f)",globalLight.intensity,globalLight.color);
     }
 }

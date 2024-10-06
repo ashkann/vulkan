@@ -1,6 +1,5 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE TupleSections #-}
@@ -8,10 +7,12 @@
 module Init (pickGPU, presentMode, imageFormat, colorSpace) where
 
 import Control.Monad.Managed
-import Control.Monad.Trans.Except (ExceptT (ExceptT), runExceptT, throwE)
+import Control.Monad.Trans (lift)
+import Control.Monad.Trans.Except (ExceptT, runExceptT, throwE)
+import Control.Monad.Trans.Maybe (MaybeT (MaybeT, runMaybeT))
 import Data.Bits (Bits (zeroBits), (.&.))
-import Data.Foldable (foldlM)
 import Data.Functor (($>), (<&>))
+import Data.Monoid (Alt (Alt))
 import qualified Data.Vector as V
 import Data.Word (Word32)
 import Utils (say)
@@ -41,35 +42,39 @@ pickGPU ::
   io (Maybe (Vk.PhysicalDevice, Word32, Word32, Bool))
 pickGPU vulkan surface = do
   (_, gpus) <- Vk.enumeratePhysicalDevices vulkan
-  let isGood d = ExceptT $ find d <&> (\case Nothing -> Right (); Just ((g, p), pss) -> Left (d, g, p, pss))
-   in findM (\_ gpu -> isGood gpu) () gpus
+  runMaybeT $ do
+    let Alt maybeGpu = V.foldMap (\gpu -> Alt $ (gpu,) <$> suitable gpu) gpus
+    (gpu, ((gfx, present), portability)) <- maybeGpu
+    return (gpu, gfx, present, portability)
   where
-    findM f s0 ta = runExceptT (foldlM f s0 ta) >>= (\r -> return $ case r of Left b -> Just b; Right _ -> Nothing)
-
-    support yes feature = liftIO (say "Enging" msg $> out)
-      where
-        msg = "GPU supports " ++ feature ++ ": " ++ show yes
-        out = if yes then Just () else Nothing
-
-    find :: Vk.PhysicalDevice -> io (Maybe ((Word32, Word32), Bool))
-    find gpu = do
-      features <- Vk.getPhysicalDeviceFeatures2 gpu :: io (Vk.PhysicalDeviceFeatures2 '[Vk.PhysicalDeviceVulkan12Features])
+    -- TODO get rid of the `lift` s?
+    suitable :: Vk.PhysicalDevice -> MaybeT io ((Word32, Word32), Bool)
+    suitable gpu = do
+      features <- lift (Vk.getPhysicalDeviceFeatures2 gpu :: io (Vk.PhysicalDeviceFeatures2 '[Vk.PhysicalDeviceVulkan12Features]))
       _ <-
         let f = fst $ VkPhysicalDeviceFeatures2.next features
          in do
-              _ <- support (VkPhysicalDeviceVulkan12Features.runtimeDescriptorArray f) "runtimeDescriptorArray"
-              _ <- support (VkPhysicalDeviceVulkan12Features.descriptorBindingPartiallyBound f) "descriptorBindingPartiallyBound"
-              _ <- support (VkPhysicalDeviceVulkan12Features.descriptorBindingSampledImageUpdateAfterBind f) "descriptorBindingSampledImageUpdateAfterBind"
-              support True "Bindless Descriptors"
+              _ <- supported (VkPhysicalDeviceVulkan12Features.runtimeDescriptorArray f) "runtimeDescriptorArray"
+              _ <- supported (VkPhysicalDeviceVulkan12Features.descriptorBindingPartiallyBound f) "descriptorBindingPartiallyBound"
+              _ <- supported (VkPhysicalDeviceVulkan12Features.descriptorBindingSampledImageUpdateAfterBind f) "descriptorBindingSampledImageUpdateAfterBind"
+              supported True "Bindless Descriptors"
       (_, exts) <- Vk.enumerateDeviceExtensionProperties gpu Nothing
-      r <- swapchainSupported exts
-      if r && dynamicRenderingSupported exts
+      swpChain <- swapchainSupported exts
+      if swpChain && dynamicRenderingSupported exts
         then do
-          queueFamilyIndices <- suitable
-          return $ (,portabilitySubSetPresent exts) <$> queueFamilyIndices
-        else return Nothing
+          maybeIndecies <- lift findQueueFamilyIndecies
+          MaybeT . return $ ((,portabilitySubSetPresent exts) <$> maybeIndecies)
+        else MaybeT $ return Nothing
       where
+        -- TODO encode theerror in a monad
+        supported isSupported feature = liftIO (say "Enging" msg $> out)
+          where
+            msg = "GPU supports " ++ feature ++ ": " ++ show isSupported
+            out = if isSupported then Just () else Nothing
+
         dynamicRenderingSupported = V.any ((== Vk.KHR_DYNAMIC_RENDERING_EXTENSION_NAME) . Vk.extensionName)
+
+        portabilitySubSetPresent = any ((== Vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME) . Vk.extensionName)
 
         swapchainSupported exts = do
           (_, formats) <- Vk.getPhysicalDeviceSurfaceFormatsKHR gpu surface
@@ -81,10 +86,8 @@ pickGPU vulkan surface = do
                   && V.any (== presentMode) modes
           return swapChain
 
-        portabilitySubSetPresent = any ((== Vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME) . Vk.extensionName)
-
-        suitable :: io (Maybe (Word32, Word32))
-        suitable = do
+        findQueueFamilyIndecies :: io (Maybe (Word32, Word32))
+        findQueueFamilyIndecies = do
           qs <- Vk.getPhysicalDeviceQueueFamilyProperties gpu
           either Just (const Nothing) <$> runExceptT (V.ifoldM lookup NoneFound qs)
           where

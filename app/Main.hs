@@ -240,6 +240,7 @@ main = runManaged $ do
   vulkan <- withVulkan window
   _ <- withDebug vulkan
   surface <- withSurface window vulkan
+  -- TODO make the `pickGPU` return an error in a monad if no suitable GPU is found
   (gpu, gfx, present, portable) <- Init.pickGPU vulkan surface >>= maybe (sayErr "Vulkan" "Suitable GPU not found") return
   props <- Vk.getPhysicalDeviceProperties gpu
   say "Vulkan" $ "GPU " ++ show (Vk.deviceName props) ++ ", present queue " ++ show present ++ ", graphics queue " ++ show gfx
@@ -316,7 +317,7 @@ main = runManaged $ do
       windowWidth
       windowHeight
   let frameCount = V.length swapchainImages
-  say "Engin" $ "Frame count is " ++ show frameCount
+  say "Engine" $ "Frame count is " ++ show frameCount
 
   pipelineLayout <-
     let info = Vk.zero {VkPipelineLayoutCreateInfo.setLayouts = [descSetLayout]}

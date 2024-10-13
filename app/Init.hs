@@ -39,19 +39,19 @@ pickGPU ::
   (MonadIO io) =>
   Vk.Instance ->
   Vk.SurfaceKHR ->
-  io (Vk.PhysicalDevice, Word32, Word32, Bool)
+  io (Vk.PhysicalDevice, Word32, Word32, Bool, String)
 pickGPU vulkan surface = do
   (_, gpus) <- Vk.enumeratePhysicalDevices vulkan
   maybeGpu <- runMaybeT . getAlt $ V.foldMap (Alt . check) gpus
   maybe (sayErr "Vulkan" "No suitable GPU found") pure maybeGpu
   where
-    check :: Vk.PhysicalDevice -> MaybeT io (Vk.PhysicalDevice, Word32, Word32, Bool)
+    check :: Vk.PhysicalDevice -> MaybeT io (Vk.PhysicalDevice, Word32, Word32, Bool, String)
     check gpu = do
       name <- unpack . decodeUtf8 . Vk.deviceName <$> Vk.getPhysicalDeviceProperties gpu
       say "Vulkan" $ "Checking GPU \"" ++ name ++ "\" for requirements"
       outcome <- runExceptT $ suitable gpu surface
       (gfx, present, portability) <- either (notGood name) pure outcome
-      return (gpu, gfx, present, portability)
+      return (gpu, gfx, present, portability, name)
     notGood name es = forM_ (reverse $ "Not suitable" : es) (say name) *> MaybeT (pure Nothing)
 
 -- | Checks if the GPU has the required features

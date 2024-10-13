@@ -25,7 +25,6 @@ import Control.Exception (bracket)
 import Control.Lens
 import Control.Monad (when)
 import Control.Monad.Managed (Managed, MonadIO (liftIO), managed, runManaged)
-import Control.Monad.Trans.Maybe (MaybeT (runMaybeT))
 import Data.Bits ((.|.))
 import Data.ByteString qualified as BS (readFile)
 import Data.Foldable (foldlM)
@@ -239,14 +238,9 @@ main = runManaged $ do
   vulkan <- withVulkan window
   _ <- withDebug vulkan
   surface <- withSurface window vulkan
-  -- TODO make the `pickGPU` return an error in a monad if no suitable GPU is found
-  -- TODO use something like flatTap to chain the error handling
-  (gpu, gfx, present, portability) <- Init.pickGPU vulkan surface
-  props <- Vk.getPhysicalDeviceProperties gpu
-  say "Vulkan" $ "GPU " ++ show (Vk.deviceName props) ++ ", present queue " ++ show present ++ ", graphics queue " ++ show gfx
-  say "Vulkan" "Creating device"
-  device <- withDevice gpu present gfx portability <* say "Vulkan" "Device created"
-  say "Vulkan" "Creating swap chain"
+  (gpu, gfx, present, portability, gpuName) <- Init.pickGPU vulkan surface
+  say "Vulkan" $ "Picked GPU \""  ++ gpuName ++ "\", present queue " ++ show present ++ ", graphics queue " ++ show gfx
+  device <- withDevice gpu present gfx portability <* say "Vulkan" "Created device"
   commandPool <-
     let info =
           Vk.zero
@@ -254,9 +248,8 @@ main = runManaged $ do
               VkCommandPoolCreateInfo.flags = Vk.COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT
             }
      in managed $ Vk.withCommandPool device info Nothing bracket
-  say "Vulkan" "Created command pool"
-  allocator <- withMemoryAllocator vulkan gpu device <* say "VMA" "Created allocator"
-  say "Vulkan" "Created staging vertex buffer"
+  say "Vulkan" "Created swapchain"
+  allocator <- withMemoryAllocator vulkan gpu device <* say "Vulkan" "Created VMA allocator"
   let descriptorCount = 16
   descSetLayout <- descriptorSetLayout device descriptorCount
   descPool <- descriptorPool device 1000
@@ -1098,12 +1091,12 @@ withImageView dev img format =
    in managed $ Vk.withImageView dev imageViewCreateInfo Nothing bracket
 
 withDevice :: Vk.PhysicalDevice -> Word32 -> Word32 -> Bool -> Managed Vk.Device
-withDevice gpu gfx present portable =
+withDevice gpu gfx present portability =
   let exts =
         Vk.KHR_DYNAMIC_RENDERING_EXTENSION_NAME
           : Vk.KHR_SWAPCHAIN_EXTENSION_NAME
           : Vk.KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME
-          : ([Vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME | portable])
+          : ([Vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME | portability])
       dynamicRendering = Vk.zero {VkPhysicalDeviceDynamicRenderingFeatures.dynamicRendering = True}
       bindlessDescriptors =
         Vk.zero

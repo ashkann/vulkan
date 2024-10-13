@@ -239,7 +239,7 @@ main = runManaged $ do
   _ <- withDebug vulkan
   surface <- withSurface window vulkan
   (gpu, gfx, present, portability, gpuName) <- Init.pickGPU vulkan surface
-  say "Vulkan" $ "Picked GPU \""  ++ gpuName ++ "\", present queue " ++ show present ++ ", graphics queue " ++ show gfx
+  say "Vulkan" $ "Picked GPU \"" ++ gpuName ++ "\", present queue " ++ show present ++ ", graphics queue " ++ show gfx
   device <- withDevice gpu present gfx portability <* say "Vulkan" "Created device"
   commandPool <-
     let info =
@@ -257,9 +257,10 @@ main = runManaged $ do
   sampler <- repeatingSampler device
   gfxQueue <- Vk.getDeviceQueue device gfx 0 <* say "Vulkan" "Got graphics queue"
   textures <-
-    let textures = ["checkerboard", "crosshair", "basketball", "animation", "blue_ball"] :: [String]
-     in traverse (\tex -> let file = "textures/" ++ tex ++ ".png" in readTexture allocator device commandPool gfxQueue file) textures
-  [background, pointer, texture1, texture2, texture3] <- bindTextures device descSet textures sampler
+    let names = ["checkerboard", "crosshair", "basketball", "animation", "blue_ball", "light_source"] :: [String]
+        read name = readTexture allocator device commandPool gfxQueue $ "textures/" ++ name ++ ".png"
+     in traverse read names
+  [background, pointer, texture1, texture2, texture3, lightSource] <- bindTextures device descSet textures sampler
   SDL.showWindow window <* say "SDL" "Show window"
   SDL.raiseWindow window <* say "SDL" "Raise window"
   (SDL.cursorVisible SDL.$= False) <* say "SDL" "Dsiable cursor"
@@ -292,7 +293,7 @@ main = runManaged $ do
       world0 =
         World
           { background = Sprite {pos = G.vec2 (-1.0) (-1.0), scale = G.vec2 0.2 0.2, texture = background, frame = viewFull},
-            pointer = Sprite {pos = G.vec2 0.0 0.0, texture = pointer, scale = half, frame = viewFull},
+            pointer = Sprite {pos = G.vec2 0.0 0.0, texture = lightSource, scale = one, frame = viewFull},
             a = Object {sprite = Sprite {pos = p0, scale = one, texture = texture1, frame = viewFull}, vel = G.vec2 0.002 0.001, animation = Nothing},
             b = Object {sprite = b, vel = G.vec2 0.0 0.0, animation = Just $ Animated animation 0.0},
             c = Object {sprite = Sprite {pos = p0, scale = one, texture = texture3, frame = viewFull}, vel = G.vec2 0.001 0.002, animation = Nothing},

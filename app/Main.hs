@@ -12,10 +12,10 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StrictData #-}
-{-# LANGUAGE NoFieldSelectors #-}
-{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 {-# HLINT ignore "Use newtype instead of data" #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE NoFieldSelectors #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
 module Main (main) where
 
@@ -25,6 +25,7 @@ import Control.Exception (bracket)
 import Control.Lens
 import Control.Monad (when)
 import Control.Monad.Managed (Managed, MonadIO (liftIO), managed, runManaged)
+import Control.Monad.Trans.Maybe (MaybeT (runMaybeT))
 import Data.Bits ((.|.))
 import Data.ByteString qualified as BS (readFile)
 import Data.Foldable (foldlM)
@@ -37,8 +38,8 @@ import Foreign.Ptr (castFunPtr)
 import Foreign.Storable (Storable (..), sizeOf)
 import Foreign.Storable.Record qualified as Store
 import Geomancy qualified as G
-import SDL qualified
 import Init qualified
+import SDL qualified
 import Utils
 import Vulkan qualified as Vk
 import Vulkan qualified as VkBufferCreateInfo (BufferCreateInfo (..))
@@ -231,8 +232,6 @@ data Frame = Frame
     targetView :: Vk.ImageView
   }
 
-
-
 main :: IO ()
 main = runManaged $ do
   withSDL
@@ -241,11 +240,12 @@ main = runManaged $ do
   _ <- withDebug vulkan
   surface <- withSurface window vulkan
   -- TODO make the `pickGPU` return an error in a monad if no suitable GPU is found
-  (gpu, gfx, present, portable) <- Init.pickGPU vulkan surface >>= maybe (sayErr "Vulkan" "Suitable GPU not found") return
+  -- TODO use something like flatTap to chain the error handling
+  (gpu, gfx, present, portability) <- Init.pickGPU vulkan surface
   props <- Vk.getPhysicalDeviceProperties gpu
   say "Vulkan" $ "GPU " ++ show (Vk.deviceName props) ++ ", present queue " ++ show present ++ ", graphics queue " ++ show gfx
   say "Vulkan" "Creating device"
-  device <- withDevice gpu present gfx portable <* say "Vulkan" "Device created"
+  device <- withDevice gpu present gfx portability <* say "Vulkan" "Device created"
   say "Vulkan" "Creating swap chain"
   commandPool <-
     let info =

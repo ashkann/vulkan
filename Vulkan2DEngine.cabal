@@ -36,6 +36,7 @@ executable vulkan2dengine
     , mtl
     , sdl2
     , storable-record
+    , text
     , transformers
     , vector
     , vulkan

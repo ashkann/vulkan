@@ -8,6 +8,7 @@ dependencies:
   - vulkan-utils
   - VulkanMemoryAllocator
   - bytestring
+  - text
   - vector
   - sdl2
   - managed

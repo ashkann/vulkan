@@ -256,10 +256,10 @@ main = runManaged $ do
   sampler <- repeatingSampler device
   gfxQueue <- Vk.getDeviceQueue device gfx 0 <* say "Vulkan" "Got graphics queue"
   textures <-
-    let names = ["checkerboard", "crosshair", "basketball", "animation", "blue_ball", "light_source"] :: [String]
+    let names = ["checkerboard", "crosshair", "basketball", "animation", "blue_ball", "light_source", "rectangles"] :: [String]
         read name = texture allocator device commandPool gfxQueue $ "textures/" ++ name ++ ".png"
      in traverse read names
-  [background, _, basketball, runningMan, texture3, lightSource] <- bindTextures device descSet textures sampler
+  [background, _, basketball, runningMan, blueBall, lightSource, rectangles] <- bindTextures device descSet textures sampler
   SDL.showWindow window <* say "SDL" "Show window"
   SDL.raiseWindow window <* say "SDL" "Raise window"
   (SDL.cursorVisible SDL.$= False) <* say "SDL" "Dsiable cursor"
@@ -269,10 +269,18 @@ main = runManaged $ do
       half = G.vec2 0.5 0.5
       third = G.vec2 0.33 0.33
       topLeft = G.vec2 (-1.0) (-1.0)
+      topRight = G.vec2 1.0 (-1.0)
+      bottomLeft = G.vec2 (-1.0) 1.0
+      bottomRight = G.vec2 1.0 1.0
       center = G.vec2 0.0 0.0
-      singleFrame = G.vec4 0 0 1 1
-      viewFrame = G.vec4 0.0 0.0 0.143 0.25
-      mkSprite tex = Sprite {pos = topLeft, scale = one, texture = tex, view = singleFrame, origin = topLeft}
+      wholeSprite = G.vec4 0 0 1 1
+      mkSprite tex = Sprite {pos = topLeft, scale = one, texture = tex, view = wholeSprite, origin = topLeft}
+      mkRectObj tex org pos view =
+        Object
+          { sprite = (mkSprite tex) {origin = org, pos = pos, view = view},
+            vel = G.vec2 0.0 0.0,
+            animation = Nothing
+          }
       sheet =
         Sheet
           { texture = runningMan,
@@ -291,14 +299,20 @@ main = runManaged $ do
       animation = Animation {sheet = sheet, speed = 15.0}
       whiteLight = PointLight {position = G.vec2 0.0 0.0, color = G.vec3 1.0 1.0 0.7, intensity = 1.0}
       globalLight = GlobalLight {intensity = 0.93, _padding1 = 0, _padding2 = 0, color = G.vec3 1.0 0.73 1.0}
-      a = Object {sprite = (mkSprite basketball) {pos = center, origin = center}, vel = G.vec2 0.0 0.0, animation = Nothing}
+
+      a = Object {sprite = (mkSprite basketball) {pos = center, origin = center}, vel = G.vec2 (-0.0005) (-0.002), animation = Nothing}
       b = Object {sprite = (mkSprite runningMan) {view = sheet.frames ! 0}, vel = G.vec2 0.0 0.0, animation = Just $ Animated animation 0.0}
-      c = Object {sprite = mkSprite texture3, vel = G.vec2 0.001 0.002, animation = Nothing}
+      c = Object {sprite = mkSprite blueBall, vel = G.vec2 0.001 0.002, animation = Nothing}
+      r1 = mkRectObj rectangles topLeft topLeft (G.vec4 0 0 (1 / 2) (1 / 3))
+      r2 = mkRectObj rectangles topRight topRight (G.vec4 (1 / 2) 0 1 (1 / 3))
+      r3 = mkRectObj rectangles bottomLeft bottomLeft (G.vec4 0 (1 / 3) (1 / 2) (2 / 3))
+      r4 = mkRectObj rectangles bottomRight bottomRight (G.vec4 (1 / 2) (1 / 3) 1 (2 / 3))
+      r5 = mkRectObj rectangles center center (G.vec4 0 (2 / 3)  (1 / 2) 1)
       world0 =
         World
-          { background = (mkSprite background) {scale = G.vec2 0.2 0.2, view = singleFrame},
+          { background = mkSprite background,
             pointer = (mkSprite lightSource) {pos = center, origin = center},
-            objects = [a, b, c],
+            objects = [r1, r2 , r3, r4, r5, a, b, c],
             lights = [whiteLight],
             globalLight = globalLight
           }
@@ -624,26 +638,23 @@ vertices ss = mconcat $ toQuad <$> ss
   where
     toQuad
       Sprite
-        { pos = G.WithVec2 px py,
+        { pos,
           scale = G.WithVec2 sx sy,
           texture = BoundTexture {index = tex, texture = Texture {size = G.WithVec2 tw th}},
-          view = (G.WithVec4 x1' y1' x2' y2'), -- in UV [(0,0) - (1,1)]
+          view = (G.WithVec4 u1 v1 u2 v2), -- in UV [(0,0) - (1,1)]
           origin = G.WithVec2 ox' oy'
         } =
-        let fx = (x2' - x1')
-            fy = (y2' - y1')
-            w = tw * fx
-            h = th * fy
-            ox = ox' * fx
-            oy = oy' * fy
-            -- x = px + (ox) * tw * (x2' - x1')
-            -- y = py + (oy) * th * (y2' - y1')
-            x = px - (ox * fx) - (w / 2)
-            y = py - (oy * fy) - (h / 2)
-            topLeft = Vertex {xy = G.vec2 x y, uv = G.vec2 x1' y1', texture = tex}
-            topRight = Vertex {xy = G.vec2 (x + w) y, uv = G.vec2 x2' y1', texture = tex}
-            bottomRight = Vertex {xy = G.vec2 (x + w) (y + h), uv = G.vec2 x2' y2', texture = tex}
-            bottomLeft = Vertex {xy = G.vec2 x (y + h), uv = G.vec2 x1' y2', texture = tex}
+        let uvw = (u2 - u1)
+            uvh = (v2 - v1)
+            w = tw * uvw
+            h = th * uvh
+            spriteOrigin = G.vec2 (ox' * w / 2) (oy' * h / 2)
+            spriteTopLeft = G.vec2 (-(w / 2)) (-(h / 2))
+            G.WithVec2 x y = pos - spriteOrigin + spriteTopLeft
+            topLeft = Vertex {xy = G.vec2 x y, uv = G.vec2 u1 v1, texture = tex}
+            topRight = Vertex {xy = G.vec2 (x + w) y, uv = G.vec2 u2 v1, texture = tex}
+            bottomRight = Vertex {xy = G.vec2 (x + w) (y + h), uv = G.vec2 u2 v2, texture = tex}
+            bottomLeft = Vertex {xy = G.vec2 x (y + h), uv = G.vec2 u1 v2, texture = tex}
          in SV.fromList
               [topLeft, topRight, bottomRight, bottomRight, bottomLeft, topLeft]
 

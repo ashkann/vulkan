@@ -44,15 +44,15 @@ void main(){
         // Calculate the effect of light[i] on the fragment
         // This is a simplified example; actual lighting calculations would involve
         // the light's position, the fragment's position, normal vectors, etc.
-        float intensity=lights[0].intensity;
+        // float intensity=lights[0].intensity;
         
-        float d=distance(lights[0].position,normalizedFragCoord)*5.;
-        float falloffConstant=1.;
-        float falloff=intensity/(falloffConstant+(d*d));
-        vec3 lightEffect=lights[0].color*falloff;
+        // float d=distance(lights[0].position,normalizedFragCoord)*5.;
+        // float falloffConstant=1.;
+        // float falloff=intensity/(falloffConstant+(d*d));
+        // vec3 lightEffect=lights[0].color*falloff;
         
-        vec3 globalLightEffect=globalLight.color*globalLight.intensity;
-        finalColor.rgb*=lightEffect;
+        // vec3 globalLightEffect=globalLight.color*globalLight.intensity;
+        // finalColor.rgb*=lightEffect;
     // }
     outColor=finalColor;
     

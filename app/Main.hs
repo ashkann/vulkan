@@ -110,18 +110,19 @@ instance Storable Vertex where
   peek = Store.peek vertexStore
   poke = Store.poke vertexStore
 
-data LoadedTexture = LoadedTexture {resolution :: G.UVec2, size :: G.Vec2, image :: Vk.Image, view :: Vk.ImageView}
+data Texture = Texture {resolution :: G.UVec2, size :: G.Vec2, image :: Vk.Image, view :: Vk.ImageView}
 
-data Texture = Texture {index :: Word32, texture :: LoadedTexture}
+data BoundTexture = BoundTexture {index :: Word32, texture :: Texture}
 
 data Sprite = Sprite
   { pos :: G.Vec2,
     scale :: G.Vec2,
-    texture :: Texture,
-    frame :: G.Vec4
+    texture :: BoundTexture,
+    view :: G.Vec4,
+    origin :: G.Vec2
   }
 
-data Sheet = Sheet {texture :: Texture, frames :: V.Vector G.Vec4}
+data Sheet = Sheet {texture :: BoundTexture, frames :: V.Vector G.Vec4}
 
 data Animation = Animation {sheet :: Sheet, speed :: Float}
 
@@ -200,9 +201,7 @@ data Object = Object {sprite :: Sprite, vel :: G.Vec2, animation :: Maybe Animat
 data World = World
   { background :: Sprite,
     pointer :: Sprite,
-    a :: Object,
-    b :: Object,
-    c :: Object,
+    objects :: [Object],
     globalLight :: GlobalLight,
     lights :: [PointLight]
   }
@@ -258,9 +257,9 @@ main = runManaged $ do
   gfxQueue <- Vk.getDeviceQueue device gfx 0 <* say "Vulkan" "Got graphics queue"
   textures <-
     let names = ["checkerboard", "crosshair", "basketball", "animation", "blue_ball", "light_source"] :: [String]
-        read name = readTexture allocator device commandPool gfxQueue $ "textures/" ++ name ++ ".png"
+        read name = texture allocator device commandPool gfxQueue $ "textures/" ++ name ++ ".png"
      in traverse read names
-  [background, pointer, texture1, texture2, texture3, lightSource] <- bindTextures device descSet textures sampler
+  [background, _, basketball, runningMan, texture3, lightSource] <- bindTextures device descSet textures sampler
   SDL.showWindow window <* say "SDL" "Show window"
   SDL.raiseWindow window <* say "SDL" "Raise window"
   (SDL.cursorVisible SDL.$= False) <* say "SDL" "Dsiable cursor"
@@ -269,11 +268,14 @@ main = runManaged $ do
       one = G.vec2 1 1
       half = G.vec2 0.5 0.5
       third = G.vec2 0.33 0.33
-      viewFull = G.vec4 0 0 1 1
+      topLeft = G.vec2 (-1.0) (-1.0)
+      center = G.vec2 0.0 0.0
+      singleFrame = G.vec4 0 0 1 1
       viewFrame = G.vec4 0.0 0.0 0.143 0.25
+      mkSprite tex = Sprite {pos = topLeft, scale = one, texture = tex, view = singleFrame, origin = topLeft}
       sheet =
         Sheet
-          { texture = texture2,
+          { texture = runningMan,
             frames =
               V.fromList
                 [ let width = 0.143
@@ -286,17 +288,17 @@ main = runManaged $ do
                   | frameNumber <- [0 .. 26 :: Int]
                 ]
           }
-      b = Sprite {pos = p0, scale = one, texture = texture2, frame = sheet.frames ! 0}
       animation = Animation {sheet = sheet, speed = 15.0}
       whiteLight = PointLight {position = G.vec2 0.0 0.0, color = G.vec3 1.0 1.0 0.7, intensity = 1.0}
       globalLight = GlobalLight {intensity = 0.93, _padding1 = 0, _padding2 = 0, color = G.vec3 1.0 0.73 1.0}
+      a = Object {sprite = (mkSprite basketball) {pos = center, origin = center}, vel = G.vec2 0.0 0.0, animation = Nothing}
+      b = Object {sprite = (mkSprite runningMan) {view = sheet.frames ! 0}, vel = G.vec2 0.0 0.0, animation = Just $ Animated animation 0.0}
+      c = Object {sprite = mkSprite texture3, vel = G.vec2 0.001 0.002, animation = Nothing}
       world0 =
         World
-          { background = Sprite {pos = G.vec2 (-1.0) (-1.0), scale = G.vec2 0.2 0.2, texture = background, frame = viewFull},
-            pointer = Sprite {pos = G.vec2 0.0 0.0, texture = lightSource, scale = one, frame = viewFull},
-            a = Object {sprite = Sprite {pos = p0, scale = one, texture = texture1, frame = viewFull}, vel = G.vec2 0.002 0.001, animation = Nothing},
-            b = Object {sprite = b, vel = G.vec2 0.0 0.0, animation = Just $ Animated animation 0.0},
-            c = Object {sprite = Sprite {pos = p0, scale = one, texture = texture3, frame = viewFull}, vel = G.vec2 0.001 0.002, animation = Nothing},
+          { background = (mkSprite background) {scale = G.vec2 0.2 0.2, view = singleFrame},
+            pointer = (mkSprite lightSource) {pos = center, origin = center},
+            objects = [a, b, c],
             lights = [whiteLight],
             globalLight = globalLight
           }
@@ -542,12 +544,12 @@ whiteLight pos = PointLight {position = pos, color = G.vec3 1.0 1.0 1.0, intensi
 worldEvent :: (Monad io) => SDL.Event -> World -> io World
 worldEvent e w@(World {pointer = pointer@Sprite {pos = pos}}) = return let p = f pos e; w1 = w {pointer = pointer {pos = p}, lights = [whiteLight p]} in w1
   where
-    f _ (SDL.Event _ (SDL.MouseMotionEvent (SDL.MouseMotionEventData {mouseMotionEventPos = SDL.P (SDL.V2 x y)}))) = normalPos x y
+    f _ (SDL.Event _ (SDL.MouseMotionEvent (SDL.MouseMotionEventData {mouseMotionEventPos = SDL.P (SDL.V2 x y)}))) = normalPos (fromIntegral x) (fromIntegral y)
     f p _ = p
 
 worldTime :: (Monad io) => Word32 -> World -> io World
 worldTime 0 w = return w
-worldTime dt w@(World {a, b, c}) = return w {a = update a, b = update b, c = update c}
+worldTime dt w@(World {objects}) = return w {objects = update <$> objects}
   where
     update obj@Object {sprite = sprite@Sprite {pos = p0}, vel = v0, animation = Nothing} =
       let p1 = p0 + (v0 G.^* fromIntegral dt)
@@ -555,7 +557,7 @@ worldTime dt w@(World {a, b, c}) = return w {a = update a, b = update b, c = upd
        in obj {sprite = sprite {pos = p1}, vel = v1}
     update obj@Object {sprite, animation = Just ani} =
       let ani2 = animatedProgress ani
-       in obj {sprite = sprite {frame = animatedFrame ani2}, animation = Just ani2}
+       in obj {sprite = sprite {view = animatedFrame ani2}, animation = Just ani2}
     animatedFrame :: Animated -> G.Vec4
     animatedFrame ani = ani.animation.sheet.frames ! floor ani.frameIndex
     animatedProgress ani =
@@ -585,24 +587,16 @@ windowHeight = 500
 
 normalSize :: G.UVec2 -> G.Vec2
 normalSize (G.WithUVec2 w h) =
-  let x' = (2.0 * fromIntegral w / fromIntegral windowWidth)
-      y' = (2.0 * fromIntegral h / fromIntegral windowHeight)
-   in G.vec2 x' y'
+  let w' = (2.0 * fromIntegral w) / fromIntegral windowWidth
+      h' = (2.0 * fromIntegral h) / fromIntegral windowHeight
+   in G.vec2 w' h'
 
-normalPos :: (Integral i) => i -> i -> G.Vec2
-normalPos x y =
-  let x' = 2.0 * fromIntegral x / fromIntegral windowWidth - 1.0
-      y' = 2.0 * fromIntegral y / fromIntegral windowHeight - 1.0
-   in G.vec2 x' y'
+normalPos :: Word32 -> Word32 -> G.Vec2
+normalPos x y = normalSize (G.uvec2 x y) - G.vec2 1.0 1.0
 
 sprites :: World -> [Sprite]
-sprites World {background, pointer, a, b, c} =
-  [ background,
-    s a,
-    s b,
-    s c,
-    pointer
-  ]
+sprites World {background, pointer, objects} =
+  background : (s <$> objects) ++ [pointer]
   where
     s Object {sprite} = sprite
 
@@ -626,38 +620,40 @@ withMemoryAllocator vulkan gpu device =
    in managed $ Vma.withAllocator info bracket
 
 vertices :: [Sprite] -> SV.Vector Vertex
-vertices ss =
-  let rgb = G.vec3 1.0 0.0 0.0
-      toQuad
-        Sprite
-          { pos = G.WithVec2 x y,
-            scale = G.WithVec2 sx sy,
-            texture = Texture {index = tex, texture = LoadedTexture {size = G.WithVec2 tw th}},
-            frame = (G.WithVec4 vx1 vy1 vx2 vy2)
-          } =
-          let vw = vx2 - vx1
-              vh = vy2 - vy1
-              w = tw * vw * sx
-              h = th * vh * sy
-              vuTopLeft = G.vec2 vx1 vy1
-              vuTopRight = G.vec2 vx2 vy1
-              vuBottomRight = G.vec2 vx2 vy2
-              vuBottomLeft = G.vec2 vx1 vy2
-              topLeft = Vertex {xy = G.vec2 x y, uv = vuTopLeft, texture = tex}
-              topRight = Vertex {xy = G.vec2 (x + w) y, uv = vuTopRight, texture = tex}
-              bottomRight = Vertex {xy = G.vec2 (x + w) (y + h), uv = vuBottomRight, texture = tex}
-              bottomLeft = Vertex {xy = G.vec2 x (y + h), uv = vuBottomLeft, texture = tex}
-           in SV.fromList
-                [topLeft, topRight, bottomRight, bottomRight, bottomLeft, topLeft]
-   in mconcat $ toQuad <$> ss
+vertices ss = mconcat $ toQuad <$> ss
+  where
+    toQuad
+      Sprite
+        { pos = G.WithVec2 px py,
+          scale = G.WithVec2 sx sy,
+          texture = BoundTexture {index = tex, texture = Texture {size = G.WithVec2 tw th}},
+          view = (G.WithVec4 x1' y1' x2' y2'), -- in UV [(0,0) - (1,1)]
+          origin = G.WithVec2 ox' oy'
+        } =
+        let fx = (x2' - x1')
+            fy = (y2' - y1')
+            w = tw * fx
+            h = th * fy
+            ox = ox' * fx
+            oy = oy' * fy
+            -- x = px + (ox) * tw * (x2' - x1')
+            -- y = py + (oy) * th * (y2' - y1')
+            x = px - (ox * fx) - (w / 2)
+            y = py - (oy * fy) - (h / 2)
+            topLeft = Vertex {xy = G.vec2 x y, uv = G.vec2 x1' y1', texture = tex}
+            topRight = Vertex {xy = G.vec2 (x + w) y, uv = G.vec2 x2' y1', texture = tex}
+            bottomRight = Vertex {xy = G.vec2 (x + w) (y + h), uv = G.vec2 x2' y2', texture = tex}
+            bottomLeft = Vertex {xy = G.vec2 x (y + h), uv = G.vec2 x1' y2', texture = tex}
+         in SV.fromList
+              [topLeft, topRight, bottomRight, bottomRight, bottomLeft, topLeft]
 
 withImage :: Vma.Allocator -> Word32 -> Word32 -> Vk.Format -> Managed Vk.Image
 withImage allocator width height format = do
   (image, _, _) <-
     let dims =
           Vk.Extent3D
-            { VkExtent3D.width = fromIntegral width,
-              VkExtent3D.height = fromIntegral height,
+            { VkExtent3D.width = width,
+              VkExtent3D.height = height,
               VkExtent3D.depth = 1
             }
         usage = Vk.IMAGE_USAGE_TRANSFER_SRC_BIT .|. Vk.IMAGE_USAGE_TRANSFER_DST_BIT .|. Vk.IMAGE_USAGE_SAMPLED_BIT .|. Vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT -- Put only what we actually need
@@ -688,8 +684,8 @@ withImageAndView allocator device width height format = do
   view <- withImageView device image format
   return (image, view)
 
-readTexture :: Vma.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> FilePath -> Managed LoadedTexture
-readTexture allocator device pool queue path = do
+texture :: Vma.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> FilePath -> Managed Texture
+texture allocator device pool queue path = do
   JP.ImageRGBA8 (JP.Image width height pixels) <- liftIO $ JP.readPng path >>= either (sayErr "Texture" . show) return
   let size = width * height * 4
       format = Vk.FORMAT_R8G8B8A8_SRGB
@@ -699,7 +695,7 @@ readTexture allocator device pool queue path = do
     liftIO $ copy pixels mem size
     copyBufferToImage device pool queue staging image width height
     let res = G.uvec2 (fromIntegral width) (fromIntegral height)
-    return LoadedTexture {resolution = res, size = normalSize res, image = image, view = view}
+    return Texture {resolution = res, size = normalSize res, image = image, view = view}
   where
     copy pixels mem size =
       let (src, _) = SV.unsafeToForeignPtr0 pixels
@@ -809,7 +805,7 @@ descriptorSet dev layout pool =
           }
    in V.head <$> managed (Vk.withDescriptorSets dev info bracket)
 
-bindTextures :: Vk.Device -> Vk.DescriptorSet -> [LoadedTexture] -> Vk.Sampler -> Managed [Texture]
+bindTextures :: Vk.Device -> Vk.DescriptorSet -> [Texture] -> Vk.Sampler -> Managed [BoundTexture]
 bindTextures dev set textures sampler = do
   let info =
         Vk.SomeStruct
@@ -822,9 +818,9 @@ bindTextures dev set textures sampler = do
               VkWriteDescriptorSet.dstArrayElement = 0
             }
    in Vk.updateDescriptorSets dev [info] []
-  return $ zipWith (\i t -> Texture {index = i, texture = t}) [0 ..] textures
+  return $ zipWith (\i t -> BoundTexture {index = i, texture = t}) [0 ..] textures
   where
-    imageInfo (LoadedTexture {view = v}) =
+    imageInfo (Texture {view = v}) =
       Vk.zero
         { VkDescriptorImageInfo.imageView = v,
           VkDescriptorImageInfo.sampler = sampler,

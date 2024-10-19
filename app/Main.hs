@@ -104,12 +104,14 @@ vertexStore =
       <*> Store.element (.uv)
       <*> Store.element (.texture)
 
+-- TODO automate the layout according to Vulkan spec
 instance Storable Vertex where
   sizeOf = Store.sizeOf vertexStore
   alignment = Store.alignment vertexStore
   peek = Store.peek vertexStore
   poke = Store.poke vertexStore
 
+-- TODO remove the Texture and put everything into BoundTexture and rename it to Texture
 data Texture = Texture {resolution :: G.UVec2, size :: G.Vec2, image :: Vk.Image, view :: Vk.ImageView}
 
 data BoundTexture = BoundTexture {index :: Word32, texture :: Texture}
@@ -1006,8 +1008,8 @@ createShaders ::
   Managed (Vk.SomeStruct Vk.PipelineShaderStageCreateInfo, Vk.SomeStruct Vk.PipelineShaderStageCreateInfo)
 createShaders dev =
   do
-    fragCode <- liftIO $ BS.readFile "frag.spv"
-    vertCode <- liftIO $ BS.readFile "vert.spv"
+    fragCode <- liftIO $ BS.readFile "out/frag.spv"
+    vertCode <- liftIO $ BS.readFile "out/vert.spv"
     fragModule <- managed $ Vk.withShaderModule dev Vk.zero {VkShaderModuleCreateInfo.code = fragCode} Nothing bracket
     vertModule <- managed $ Vk.withShaderModule dev Vk.zero {VkShaderModuleCreateInfo.code = vertCode} Nothing bracket
     let vertextInfo =

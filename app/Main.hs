@@ -19,20 +19,17 @@
 
 module Main (main) where
 
-import Atlas (Key (..))
 import Atlas qualified
 import Codec.Picture qualified as JP
 import Control.Concurrent (threadDelay)
 import Control.Exception (bracket)
-import Control.Lens
 import Control.Monad (when)
-import Control.Monad.Except (MonadError, runExceptT)
+import Control.Monad.Except (runExceptT)
 import Control.Monad.Managed (Managed, MonadIO (liftIO), managed, runManaged)
 import Data.Bits ((.|.))
 import Data.ByteString qualified as BS (readFile)
 import Data.Foldable (foldlM)
 import Data.Functor (($>))
-import Data.Map.Strict qualified as M
 import Data.Vector ((!))
 import Data.Vector qualified as V
 import Data.Vector.Storable qualified as SV
@@ -43,10 +40,6 @@ import Foreign.Storable.Record qualified as Store
 import Geomancy qualified as G
 import Init qualified
 import SDL qualified
-import System.IO.Error.Lens (fileName)
-import Text.Parsec.Combinator
-import Text.Parsec.Prim
-import Text.Parsec.String qualified as Parsec
 import Utils
 import Vulkan qualified as Vk
 import Vulkan qualified as VkBufferCreateInfo (BufferCreateInfo (..))
@@ -344,11 +337,11 @@ main = runManaged $ do
           }
       background = mkSprite "checkerboard"
       lightSource = mkSprite "light_source"
-      r1 = mkRectObj 1 topLeft topLeft
-      r2 = mkRectObj 2 topRight topRight
-      r3 = mkRectObj 3 bottomLeft bottomLeft
-      r4 = mkRectObj 4 bottomRight bottomRight
-      r5 = mkRectObj 5 center center
+      r1 = mkRectObj 0 topLeft topLeft
+      r2 = mkRectObj 1 topRight topRight
+      r3 = mkRectObj 2 bottomLeft bottomLeft
+      r4 = mkRectObj 3 bottomRight bottomRight
+      r5 = mkRectObj 4 center center
       world0 =
         World
           { background = background,

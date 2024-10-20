@@ -49,7 +49,7 @@ uatlas file = liftIO (parseFromFile parser file) >>= either (throwError . show) 
 
 atlas :: UAtlas -> Atlas
 atlas (UAtlas _ regions (G.WithUVec2 aw ah)) =
-  Atlas $ (\(URegion (G.WithUVec4 x1 y1 x2 y2)) -> Region $ G.vec4 (u x1) (u y1) (u x2) (v y2)) <$> regions
+  Atlas $ (\(URegion (G.WithUVec4 x1 y1 x2 y2)) -> Region $ G.vec4 (u x1) (v y1) (u x2) (v y2)) <$> regions
   where
     u x = fromIntegral x / fromIntegral aw
     v y = fromIntegral y / fromIntegral ah

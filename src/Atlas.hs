@@ -3,10 +3,9 @@
 
 module Atlas
   ( atlas,
-    uatlas,
     lookup,
     lookupIndexed,
-    UAtlas (..),
+    Atlas (..),
     Region (..),
     Key (..),
   )
@@ -15,6 +14,7 @@ where
 import Control.Monad (when)
 import Control.Monad.Except (MonadError (throwError))
 import Control.Monad.IO.Class (MonadIO, liftIO)
+import Data.Functor ((<&>))
 import qualified Data.Map.Strict as M
 import Data.Word (Word32)
 import qualified Geomancy as G
@@ -23,15 +23,11 @@ import Text.Parsec.Char (spaces)
 import Text.Parsec.String (Parser, parseFromFile)
 import Prelude hiding (lookup)
 
-newtype URegion = URegion G.UVec4 deriving (Show)
-
 newtype Region = Region G.Vec4 deriving (Show)
 
 newtype Key = Key (String, Maybe Word32)
   deriving (Show)
   deriving (Ord, Eq)
-
-data UAtlas = UAtlas {fileName :: FilePath, regions :: M.Map Key URegion, size :: G.UVec2} deriving (Show)
 
 newtype Atlas = Atlas (M.Map Key Region) deriving (Show)
 
@@ -41,24 +37,27 @@ lookup (Atlas rs) name = rs M.! Key (name, Nothing)
 lookupIndexed :: Atlas -> String -> Word32 -> Region
 lookupIndexed (Atlas rs) name index = rs M.! Key (name, Just index)
 
--- load :: Atlas -> IO (Maybe G.Vec4)
--- load atlas = _
+atlas :: (MonadError String m, MonadIO m) => FilePath -> m (FilePath, Atlas)
+atlas file = liftIO (parseFromFile parser file) >>= either (throwError . show) return
 
-uatlas :: (MonadError String m, MonadIO m) => FilePath -> m UAtlas
-uatlas file = liftIO (parseFromFile parser file) >>= either (throwError . show) return
+-- atlas :: Atlas -> Atlas
+-- atlas (Atlas _ regions (G.WithUVec2 aw ah)) =
+--   Atlas $ (\(URegion (G.WithUVec4 x1 y1 x2 y2)) -> Region $ G.vec4 (u x1) (v y1) (u x2) (v y2)) <$> regions
+--   where
+--     u x = fromIntegral x / fromIntegral aw
+--     v y = fromIntegral y / fromIntegral ah
 
-atlas :: UAtlas -> Atlas
-atlas (UAtlas _ regions (G.WithUVec2 aw ah)) =
-  Atlas $ (\(URegion (G.WithUVec4 x1 y1 x2 y2)) -> Region $ G.vec4 (u x1) (v y1) (u x2) (v y2)) <$> regions
-  where
-    u x = fromIntegral x / fromIntegral aw
-    v y = fromIntegral y / fromIntegral ah
-
-parser :: Parser UAtlas
+parser :: Parser (FilePath, Atlas)
 parser = do
-  (fileName, size) <- headerP <?> "header"
-  regions <- manyTill regionP eof
-  return $ UAtlas {fileName = fileName, size = size, regions = M.fromList regions}
+  (fileName, s) <- headerP <?> "header"
+  regions <- manyTill (regionP <&> \(k, xy, size) -> (k, toRegion s xy size)) eof
+  return (fileName, Atlas $ M.fromList regions)
+
+toRegion :: G.UVec2 -> G.UVec2 -> G.UVec2 -> Region
+toRegion (G.WithUVec2 sx sy) (G.WithUVec2 x y) (G.WithUVec2 w h) = Region $ G.vec4 (u x) (v y) (u $ x + w) (v $ y + h)
+  where
+    u x = fromIntegral x / fromIntegral sx
+    v y = fromIntegral y / fromIntegral sy
 
 -- | Parse the header
 
@@ -100,17 +99,16 @@ animation
   offset: 0, 0
   index: -1
 -}
-regionP :: Parser (Key, URegion)
+regionP :: Parser (Key, G.UVec2, G.UVec2)
 regionP = do
   name <- manyTill anyChar endOfLine
   _ <- spaces >> varP "rotate"
-  G.WithUVec2 x y <- spaces >> vartP "xy" (const uvec2P)
-  G.WithUVec2 w h <- spaces >> vartP "size" (const uvec2P)
+  xy <- spaces >> vartP "xy" (const uvec2P)
+  size <- spaces >> vartP "size" (const uvec2P)
   _ <- spaces >> vartP "orig" (const uvec2P)
   _ <- spaces >> vartP "offset" (const uvec2P)
   index <- spaces >> vartP "index" (const $ optionMaybe word32P)
-  let region = URegion $ G.uvec4 x y (x + w) (y + h)
-  return (Key (name, index), region)
+  return (Key (name, index), xy, size)
 
 word32P :: Parser Word32
 word32P = read <$> many1 digit

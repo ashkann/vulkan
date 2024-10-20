@@ -261,11 +261,10 @@ main = runManaged $ do
   descSet <- descriptorSet device descSetLayout descPool
   sampler <- repeatingSampler device
   gfxQueue <- Vk.getDeviceQueue device gfx 0 <* say "Vulkan" "Got graphics queue"
-  uatlas@(Atlas.UAtlas {fileName}) <- either (sayErr "Atlas") return =<< runExceptT (Atlas.uatlas "out/atlas.atlas")
-  atlasTexture <- texture allocator device commandPool gfxQueue $ "out/" ++ fileName
+  (atlasTextureFile, atlas) <- either (sayErr "Atlas") return =<< runExceptT (Atlas.atlas "out/atlas.atlas")
+  atlasTexture <- texture allocator device commandPool gfxQueue $ "out/" ++ atlasTextureFile
   [boundAtlasTexture] <- bindTextures device descSet [atlasTexture] sampler
 
-  let atlas = Atlas.atlas uatlas
   let p0 = G.vec2 (-0.5) (-0.5)
       one = G.vec2 1 1
       half = G.vec2 0.5 0.5
@@ -322,13 +321,12 @@ main = runManaged $ do
             vel = G.vec2 (-0.0005) (-0.002),
             animation = Nothing
           }
-      -- employee <- mkSprite "employee"
-      -- let b =
-      --       Object
-      --         { sprite = employee {region = sheet.frames ! 0},
-      --           vel = G.vec2 0.0 0.0,
-      --           animation = Just $ Animated animation 0.0
-      --         }
+      -- b =
+      --   Object
+      --     { sprite = (mkSprite "basketball") {region = sheet.frames ! 0},
+      --       vel = G.vec2 0.0 0.0,
+      --       animation = Just $ Animated animation 0.0
+      --     }
       c =
         Object
           { sprite = mkSprite "blue_ball",

@@ -19,16 +19,20 @@
 
 module Main (main) where
 
+import Atlas (Key (..))
+import Atlas qualified
 import Codec.Picture qualified as JP
 import Control.Concurrent (threadDelay)
 import Control.Exception (bracket)
 import Control.Lens
 import Control.Monad (when)
+import Control.Monad.Except (MonadError, runExceptT)
 import Control.Monad.Managed (Managed, MonadIO (liftIO), managed, runManaged)
 import Data.Bits ((.|.))
 import Data.ByteString qualified as BS (readFile)
 import Data.Foldable (foldlM)
 import Data.Functor (($>))
+import Data.Map.Strict qualified as M
 import Data.Vector ((!))
 import Data.Vector qualified as V
 import Data.Vector.Storable qualified as SV
@@ -39,6 +43,10 @@ import Foreign.Storable.Record qualified as Store
 import Geomancy qualified as G
 import Init qualified
 import SDL qualified
+import System.IO.Error.Lens (fileName)
+import Text.Parsec.Combinator
+import Text.Parsec.Prim
+import Text.Parsec.String qualified as Parsec
 import Utils
 import Vulkan qualified as Vk
 import Vulkan qualified as VkBufferCreateInfo (BufferCreateInfo (..))
@@ -120,7 +128,7 @@ data Sprite = Sprite
   { pos :: G.Vec2,
     scale :: G.Vec2,
     texture :: BoundTexture,
-    view :: G.Vec4,
+    region :: G.Vec4,
     origin :: G.Vec2
   }
 
@@ -216,6 +224,8 @@ frameData world =
       viewport = Viewport {viewportSize = G.uvec2 windowWidth windowHeight, _padding = 0, globalLight = world.globalLight}
     }
 
+-- instance MonadError String Managed where
+
 data Frame = Frame
   { pool :: Vk.CommandPool,
     renderCmd :: Vk.CommandBuffer,
@@ -232,6 +242,7 @@ data Frame = Frame
     targetView :: Vk.ImageView
   }
 
+-- TODO run inside a MonadError instance
 main :: IO ()
 main = runManaged $ do
   withSDL
@@ -257,15 +268,11 @@ main = runManaged $ do
   descSet <- descriptorSet device descSetLayout descPool
   sampler <- repeatingSampler device
   gfxQueue <- Vk.getDeviceQueue device gfx 0 <* say "Vulkan" "Got graphics queue"
-  textures <-
-    let names = ["checkerboard", "crosshair", "basketball", "animation", "blue_ball", "light_source", "rectangles"] :: [String]
-        read name = texture allocator device commandPool gfxQueue $ "textures/" ++ name ++ ".png"
-     in traverse read names
-  [background, _, basketball, runningMan, blueBall, lightSource, rectangles] <- bindTextures device descSet textures sampler
-  SDL.showWindow window <* say "SDL" "Show window"
-  SDL.raiseWindow window <* say "SDL" "Raise window"
-  (SDL.cursorVisible SDL.$= False) <* say "SDL" "Dsiable cursor"
-  -- withImGui vulkan gpu device window gfxQueue commandPool gfxQueue
+  uatlas@(Atlas.UAtlas {fileName}) <- either (sayErr "Atlas") return =<< runExceptT (Atlas.uatlas "out/atlas.atlas")
+  atlasTexture <- texture allocator device commandPool gfxQueue $ "out/" ++ fileName
+  [boundAtlasTexture] <- bindTextures device descSet [atlasTexture] sampler
+
+  let atlas = Atlas.atlas uatlas
   let p0 = G.vec2 (-0.5) (-0.5)
       one = G.vec2 1 1
       half = G.vec2 0.5 0.5
@@ -276,48 +283,85 @@ main = runManaged $ do
       bottomRight = G.vec2 1.0 1.0
       center = G.vec2 0.0 0.0
       wholeSprite = G.vec4 0 0 1 1
-      mkSprite tex = Sprite {pos = topLeft, scale = one, texture = tex, view = wholeSprite, origin = topLeft}
-      mkRectObj tex org pos view =
+      mkSprite name =
+        Sprite
+          { pos = topLeft,
+            scale = one,
+            texture = boundAtlasTexture,
+            region = let Atlas.Region r = Atlas.lookup atlas name in r,
+            origin = topLeft
+          }
+      mkSpriteIndexed name index =
+        Sprite
+          { pos = topLeft,
+            scale = one,
+            texture = boundAtlasTexture,
+            region = let Atlas.Region r = Atlas.lookupIndexed atlas name index in r,
+            origin = topLeft
+          }
+      mkRectObj index org pos =
         Object
-          { sprite = (mkSprite tex) {origin = org, pos = pos, view = view},
+          { sprite = (mkSpriteIndexed "rectangle" index) {origin = org, pos = pos},
             vel = G.vec2 0.0 0.0,
             animation = Nothing
           }
-      sheet =
-        Sheet
-          { texture = runningMan,
-            frames =
-              V.fromList
-                [ let width = 0.143
-                      height = 0.25
-                      row = frameNumber `mod` 7
-                      col = frameNumber `mod` 4
-                      x = fromIntegral col * 0.143
-                      y = fromIntegral row * 0.25
-                   in G.vec4 x y (x + width) (y + height)
-                  | frameNumber <- [0 .. 26 :: Int]
-                ]
-          }
-      animation = Animation {sheet = sheet, speed = 15.0}
+      -- sheet =
+      --   Sheet
+      --     { texture = runningMan,
+      --       frames =
+      --         V.fromList
+      --           [ let width = 0.143
+      --                 height = 0.25
+      --                 row = frameNumber `mod` 7
+      --                 col = frameNumber `mod` 4
+      --                 x = fromIntegral col * 0.143
+      --                 y = fromIntegral row * 0.25
+      --              in G.vec4 x y (x + width) (y + height)
+      --             | frameNumber <- [0 .. 26 :: Int]
+      --           ]
+      --     }
+      -- animation = Animation {sheet = sheet, speed = 15.0}
       whiteLight = PointLight {position = G.vec2 0.0 0.0, color = G.vec3 1.0 1.0 0.7, intensity = 1.0}
       globalLight = GlobalLight {intensity = 0.93, _padding1 = 0, _padding2 = 0, color = G.vec3 1.0 0.73 1.0}
-
-      a = Object {sprite = (mkSprite basketball) {pos = center, origin = center}, vel = G.vec2 (-0.0005) (-0.002), animation = Nothing}
-      b = Object {sprite = (mkSprite runningMan) {view = sheet.frames ! 0}, vel = G.vec2 0.0 0.0, animation = Just $ Animated animation 0.0}
-      c = Object {sprite = mkSprite blueBall, vel = G.vec2 0.001 0.002, animation = Nothing}
-      r1 = mkRectObj rectangles topLeft topLeft (G.vec4 0 0 (1 / 2) (1 / 3))
-      r2 = mkRectObj rectangles topRight topRight (G.vec4 (1 / 2) 0 1 (1 / 3))
-      r3 = mkRectObj rectangles bottomLeft bottomLeft (G.vec4 0 (1 / 3) (1 / 2) (2 / 3))
-      r4 = mkRectObj rectangles bottomRight bottomRight (G.vec4 (1 / 2) (1 / 3) 1 (2 / 3))
-      r5 = mkRectObj rectangles center center (G.vec4 0 (2 / 3)  (1 / 2) 1)
+      a =
+        Object
+          { sprite = (mkSprite "basketball") {pos = center, origin = center},
+            vel = G.vec2 (-0.0005) (-0.002),
+            animation = Nothing
+          }
+      -- employee <- mkSprite "employee"
+      -- let b =
+      --       Object
+      --         { sprite = employee {region = sheet.frames ! 0},
+      --           vel = G.vec2 0.0 0.0,
+      --           animation = Just $ Animated animation 0.0
+      --         }
+      c =
+        Object
+          { sprite = mkSprite "blue_ball",
+            vel = G.vec2 0.001 0.002,
+            animation = Nothing
+          }
+      background = mkSprite "checkerboard"
+      lightSource = mkSprite "light_source"
+      r1 = mkRectObj 1 topLeft topLeft
+      r2 = mkRectObj 2 topRight topRight
+      r3 = mkRectObj 3 bottomLeft bottomLeft
+      r4 = mkRectObj 4 bottomRight bottomRight
+      r5 = mkRectObj 5 center center
       world0 =
         World
-          { background = mkSprite background,
-            pointer = (mkSprite lightSource) {pos = center, origin = center},
-            objects = [r1, r2 , r3, r4, r5, a, b, c],
+          { background = background,
+            pointer = lightSource {pos = center, origin = center},
+            -- objects = [r1, r2, r3, r4, r5, a, b, c],
+            objects = [r1, r2, r3, r4, r5, a, c],
             lights = [whiteLight],
             globalLight = globalLight
           }
+
+  SDL.showWindow window <* say "SDL" "Show window"
+  SDL.raiseWindow window <* say "SDL" "Raise window"
+  (SDL.cursorVisible SDL.$= False) <* say "SDL" "Dsiable cursor"
 
   swapchain@(_, swapchainExtent, swapchainImages) <-
     createSwapchain
@@ -573,7 +617,7 @@ worldTime dt w@(World {objects}) = return w {objects = update <$> objects}
        in obj {sprite = sprite {pos = p1}, vel = v1}
     update obj@Object {sprite, animation = Just ani} =
       let ani2 = animatedProgress ani
-       in obj {sprite = sprite {view = animatedFrame ani2}, animation = Just ani2}
+       in obj {sprite = sprite {region = animatedFrame ani2}, animation = Just ani2}
     animatedFrame :: Animated -> G.Vec4
     animatedFrame ani = ani.animation.sheet.frames ! floor ani.frameIndex
     animatedProgress ani =
@@ -643,7 +687,7 @@ vertices ss = mconcat $ toQuad <$> ss
         { pos,
           scale = G.WithVec2 sx sy,
           texture = BoundTexture {index = tex, texture = Texture {size = G.WithVec2 tw th}},
-          view = (G.WithVec4 u1 v1 u2 v2), -- in UV [(0,0) - (1,1)]
+          region = (G.WithVec4 u1 v1 u2 v2), -- in UV [(0,0) - (1,1)]
           origin = G.WithVec2 ox' oy'
         } =
         let uvw = (u2 - u1)

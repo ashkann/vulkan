@@ -24,6 +24,7 @@ dependencies:
   - containers
   - lens
   - lens-tutorial
+  - parsec
 
 ghc-options:
   - -Wall
@@ -40,4 +41,11 @@ ghc-options:
 executables:
   vulkan2dengine:
     main: Main.hs
-    source-dirs: app
+    source-dirs: 
+     - app
+     - src
+  atlas-parser:
+    main: Main.hs
+    source-dirs:
+      - atlas-parser
+      - src

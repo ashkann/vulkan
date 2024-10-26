@@ -1,6 +1,5 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE PatternSynonyms #-}
 
 module Atlas
   ( atlas,
@@ -19,32 +18,17 @@ import Data.Functor ((<&>))
 import qualified Data.Map.Strict as M
 import Data.Word (Word32)
 import qualified Geomancy as G
+import Measure
 import Text.Parsec (anyChar, char, digit, endOfLine, eof, many1, manyTill, optionMaybe, parse, string, (<?>))
 import Text.Parsec.Char (spaces)
 import Text.Parsec.String (Parser, parseFromFile)
 import Prelude hiding (lookup)
-
-newtype TextureRegion = TextureRegion G.Vec4 deriving (Show)
 
 newtype Key = Key (String, Maybe Word32)
   deriving (Show)
   deriving (Ord, Eq)
 
 newtype Atlas = Atlas (M.Map Key TextureRegion) deriving (Show)
-
-newtype PixelPosition = PixelPosition G.UVec2 deriving (Show)
-
-{-# COMPLETE PixelXY #-}
-
-pattern PixelXY :: Word32 -> Word32 -> PixelPosition
-pattern PixelXY x y <- PixelPosition (G.WithUVec2 x y)
-
-newtype PixelSize = PixelSize G.UVec2 deriving (Show)
-
-{-# COMPLETE PixelWH #-}
-
-pattern PixelWH :: Word32 -> Word32 -> PixelSize
-pattern PixelWH w h <- PixelSize (G.WithUVec2 w h)
 
 mkRegion :: PixelSize -> PixelPosition -> PixelSize -> TextureRegion
 mkRegion (PixelWH sx sy) (PixelXY x y) (PixelWH w h) =
@@ -71,12 +55,12 @@ atlasP = do
 -- | Parse the atlas header
 --
 -- @
---(empty line)
---atlas.png
---size: 3165, 2052
---format: RGBA8888
---filter: Nearest, Nearest
---repeat: none
+-- (empty line)
+-- atlas.png
+-- size: 3165, 2052
+-- format: RGBA8888
+-- filter: Nearest, Nearest
+-- repeat: none
 -- @
 headerP :: Parser (FilePath, PixelSize)
 headerP = do

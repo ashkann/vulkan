@@ -12,7 +12,11 @@ build-type:     Simple
 executable atlas-parser
   main-is: Main.hs
   other-modules:
+      Ashkan
       Atlas
+      Init
+      Measure
+      Utils
       Paths_Vulkan2DEngine
   hs-source-dirs:
       atlas-parser
@@ -47,9 +51,10 @@ executable vulkan2dengine
   main-is: Main.hs
   other-modules:
       Ashkan
-      Init
-      Utils
       Atlas
+      Init
+      Measure
+      Utils
       Paths_Vulkan2DEngine
   hs-source-dirs:
       app

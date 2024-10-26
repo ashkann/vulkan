@@ -68,15 +68,16 @@ atlasP = do
   regions <- manyTill (regionP <&> \(k, xy, size) -> (k, mkRegion s xy size)) eof
   return (fileName, Atlas $ M.fromList regions)
 
--- | Parse the header
-
-{-
-atlas.png
-size: 3165, 2052
-format: RGBA8888
-filter: Nearest, Nearest
-repeat: none
--}
+-- | Parse the atlas header
+--
+-- @
+--(empty line)
+--atlas.png
+--size: 3165, 2052
+--format: RGBA8888
+--filter: Nearest, Nearest
+--repeat: none
+-- @
 headerP :: Parser (FilePath, PixelSize)
 headerP = do
   _ <- endOfLine <?> "empty line"
@@ -99,15 +100,17 @@ vartP name f =
 varP :: String -> Parser String
 varP name = vartP name return
 
-{-
-animation
-  rotate: false
-  xy: 2554, 379
-  size: 520, 347
-  orig: 520, 347
-  offset: 0, 0
-  index: -1
--}
+-- | Parse a region
+--
+-- @
+-- animation
+--  rotate: false
+--  xy: 2554, 379
+--  size: 520, 347
+--  orig: 520, 347
+--  offset: 0, 0
+--  index: -1
+-- @
 regionP :: Parser (Key, PixelPosition, PixelSize)
 regionP = do
   name <- manyTill anyChar endOfLine

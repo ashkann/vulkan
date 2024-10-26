@@ -1,12 +1,12 @@
 module Main (main) where
 
-import Atlas (UAtlas, atlas, uatlas)
+import Atlas (atlas)
 import Control.Monad.Except (runExceptT)
 
 main :: IO ()
 main = do
-  ae <- runExceptT $ uatlas "out/atlas.atlas"
+  ae <- runExceptT $ atlas "out/atlas.atlas"
   case ae of
     Left e -> print e
-    Right a -> print $ atlas a
+    Right (_, a) -> print a
   return ()

@@ -280,7 +280,7 @@ main = runManaged $ do
           { pos = topLeft,
             scale = one,
             texture = boundAtlasTexture,
-            region = let Atlas.Region r = Atlas.lookup atlas name in r,
+            region = let Atlas.TextureRegion r = Atlas.lookup atlas name in r,
             origin = topLeft
           }
       mkSpriteIndexed name index =
@@ -288,7 +288,7 @@ main = runManaged $ do
           { pos = topLeft,
             scale = one,
             texture = boundAtlasTexture,
-            region = let Atlas.Region r = Atlas.lookupIndexed atlas name index in r,
+            region = let Atlas.TextureRegion r = Atlas.lookupIndexed atlas name index in r,
             origin = topLeft
           }
       mkRectObj index org pos =

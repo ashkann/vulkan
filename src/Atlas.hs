@@ -1,12 +1,13 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 module Atlas
   ( atlas,
     lookup,
     lookupIndexed,
     Atlas (..),
-    Region (..),
+    TextureRegion (..),
     Key (..),
   )
 where
@@ -23,41 +24,49 @@ import Text.Parsec.Char (spaces)
 import Text.Parsec.String (Parser, parseFromFile)
 import Prelude hiding (lookup)
 
-newtype Region = Region G.Vec4 deriving (Show)
+newtype TextureRegion = TextureRegion G.Vec4 deriving (Show)
 
 newtype Key = Key (String, Maybe Word32)
   deriving (Show)
   deriving (Ord, Eq)
 
-newtype Atlas = Atlas (M.Map Key Region) deriving (Show)
+newtype Atlas = Atlas (M.Map Key TextureRegion) deriving (Show)
 
-lookup :: Atlas -> String -> Region
-lookup (Atlas rs) name = rs M.! Key (name, Nothing)
+newtype PixelPosition = PixelPosition G.UVec2 deriving (Show)
 
-lookupIndexed :: Atlas -> String -> Word32 -> Region
-lookupIndexed (Atlas rs) name index = rs M.! Key (name, Just index)
+{-# COMPLETE PixelXY #-}
 
-atlas :: (MonadError String m, MonadIO m) => FilePath -> m (FilePath, Atlas)
-atlas file = liftIO (parseFromFile parser file) >>= either (throwError . show) return
+pattern PixelXY :: Word32 -> Word32 -> PixelPosition
+pattern PixelXY x y <- PixelPosition (G.WithUVec2 x y)
 
--- atlas :: Atlas -> Atlas
--- atlas (Atlas _ regions (G.WithUVec2 aw ah)) =
---   Atlas $ (\(URegion (G.WithUVec4 x1 y1 x2 y2)) -> Region $ G.vec4 (u x1) (v y1) (u x2) (v y2)) <$> regions
---   where
---     u x = fromIntegral x / fromIntegral aw
---     v y = fromIntegral y / fromIntegral ah
+newtype PixelSize = PixelSize G.UVec2 deriving (Show)
 
-parser :: Parser (FilePath, Atlas)
-parser = do
-  (fileName, s) <- headerP <?> "header"
-  regions <- manyTill (regionP <&> \(k, xy, size) -> (k, toRegion s xy size)) eof
-  return (fileName, Atlas $ M.fromList regions)
+{-# COMPLETE PixelWH #-}
 
-toRegion :: G.UVec2 -> G.UVec2 -> G.UVec2 -> Region
-toRegion (G.WithUVec2 sx sy) (G.WithUVec2 x y) (G.WithUVec2 w h) = Region $ G.vec4 (u x) (v y) (u $ x + w) (v $ y + h)
+pattern PixelWH :: Word32 -> Word32 -> PixelSize
+pattern PixelWH w h <- PixelSize (G.WithUVec2 w h)
+
+mkRegion :: PixelSize -> PixelPosition -> PixelSize -> TextureRegion
+mkRegion (PixelWH sx sy) (PixelXY x y) (PixelWH w h) =
+  TextureRegion $ G.vec4 (u x) (v y) (u $ x + w) (v $ y + h)
   where
     u x = fromIntegral x / fromIntegral sx
     v y = fromIntegral y / fromIntegral sy
+
+lookup :: Atlas -> String -> TextureRegion
+lookup (Atlas rs) name = rs M.! Key (name, Nothing)
+
+lookupIndexed :: Atlas -> String -> Word32 -> TextureRegion
+lookupIndexed (Atlas rs) name index = rs M.! Key (name, Just index)
+
+atlas :: (MonadError String m, MonadIO m) => FilePath -> m (FilePath, Atlas)
+atlas file = liftIO (parseFromFile atlasP file) >>= either (throwError . show) return
+
+atlasP :: Parser (FilePath, Atlas)
+atlasP = do
+  (fileName, s) <- headerP <?> "header"
+  regions <- manyTill (regionP <&> \(k, xy, size) -> (k, mkRegion s xy size)) eof
+  return (fileName, Atlas $ M.fromList regions)
 
 -- | Parse the header
 
@@ -68,11 +77,11 @@ format: RGBA8888
 filter: Nearest, Nearest
 repeat: none
 -}
-headerP :: Parser (FilePath, G.UVec2)
+headerP :: Parser (FilePath, PixelSize)
 headerP = do
   _ <- endOfLine <?> "empty line"
   fileName <- manyTill anyChar endOfLine <?> "fileName"
-  size <- vartP "size" (const uvec2P)
+  size <- vartP "size" (const pixelSizeP)
   _ <- vartP "format" $ \f -> when (f /= "RGBA8888") $ fail ("format must be RGBA8888, not " ++ f)
   _ <- varP "filter"
   _ <- varP "repeat"
@@ -99,12 +108,12 @@ animation
   offset: 0, 0
   index: -1
 -}
-regionP :: Parser (Key, G.UVec2, G.UVec2)
+regionP :: Parser (Key, PixelPosition, PixelSize)
 regionP = do
   name <- manyTill anyChar endOfLine
   _ <- spaces >> varP "rotate"
-  xy <- spaces >> vartP "xy" (const uvec2P)
-  size <- spaces >> vartP "size" (const uvec2P)
+  xy <- spaces >> vartP "xy" (const pixelPositionP)
+  size <- spaces >> vartP "size" (const pixelSizeP)
   _ <- spaces >> vartP "orig" (const uvec2P)
   _ <- spaces >> vartP "offset" (const uvec2P)
   index <- spaces >> vartP "index" (const $ optionMaybe word32P)
@@ -120,3 +129,9 @@ uvec2P = do
   y <- word32P
   let v = G.uvec2 x y
   return v
+
+pixelSizeP :: Parser PixelSize
+pixelSizeP = PixelSize <$> uvec2P
+
+pixelPositionP :: Parser PixelPosition
+pixelPositionP = PixelPosition <$> uvec2P

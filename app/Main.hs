@@ -39,6 +39,7 @@ import Foreign.Storable (Storable (..), sizeOf)
 import Foreign.Storable.Record qualified as Store
 import Geomancy qualified as G
 import Init qualified
+import Measure qualified
 import SDL qualified
 import Utils
 import Vulkan qualified as Vk
@@ -95,6 +96,9 @@ import Prelude hiding (init)
 
 data Vertex = Vertex {xy :: G.Vec2, uv :: G.Vec2, texture :: Word32}
 
+mkVertex :: Measure.QuadCorner -> Word32 -> Vertex
+mkVertex (Measure.QuadCorner (pos, uv)) index = Vertex {xy = Measure.ndcVec pos, uv = Measure.texVec uv, texture = index}
+
 -- $(makeLenses ''Vertex)
 
 vertexStore :: Store.Dictionary Vertex
@@ -113,16 +117,25 @@ instance Storable Vertex where
   poke = Store.poke vertexStore
 
 -- TODO remove the Texture and put everything into BoundTexture and rename it to Texture
-data Texture = Texture {resolution :: G.UVec2, size :: G.Vec2, image :: Vk.Image, view :: Vk.ImageView}
+data Texture = Texture
+  { resolution :: Measure.PixelSize,
+    size :: Measure.NormalizedDeviceSize,
+    image :: Vk.Image,
+    view :: Vk.ImageView
+  }
+  deriving (Show)
+
+-- TODO use this
+newtype BoundTextureDescriptorIndex = BoundTextureDescriptorIndex Word32
 
 data BoundTexture = BoundTexture {index :: Word32, texture :: Texture}
 
 data Sprite = Sprite
-  { pos :: G.Vec2,
+  { pos :: Measure.NormalizedDevicePosition,
     scale :: G.Vec2,
     texture :: BoundTexture,
-    region :: G.Vec4,
-    origin :: G.Vec2
+    region :: Measure.TextureRegion,
+    pivot :: Measure.TexturePosition
   }
 
 data Sheet = Sheet {texture :: BoundTexture, frames :: V.Vector G.Vec4}
@@ -199,7 +212,7 @@ instance Storable Viewport where
   peek = Store.peek viewportStore
   poke = Store.poke viewportStore
 
-data Object = Object {sprite :: Sprite, vel :: G.Vec2, animation :: Maybe Animated}
+data Object = Object {sprite :: Sprite, vel :: Measure.NormalizedDeviceSize, animation :: Maybe Animated}
 
 data World = World
   { background :: Sprite,
@@ -263,38 +276,31 @@ main = runManaged $ do
   gfxQueue <- Vk.getDeviceQueue device gfx 0 <* say "Vulkan" "Got graphics queue"
   (atlasTextureFile, atlas) <- either (sayErr "Atlas") return =<< runExceptT (Atlas.atlas "out/atlas.atlas")
   atlasTexture <- texture allocator device commandPool gfxQueue $ "out/" ++ atlasTextureFile
+  say "Atlas" $ "Loaded atlas" ++ show atlasTexture
   [boundAtlasTexture] <- bindTextures device descSet [atlasTexture] sampler
 
-  let p0 = G.vec2 (-0.5) (-0.5)
-      one = G.vec2 1 1
-      half = G.vec2 0.5 0.5
-      third = G.vec2 0.33 0.33
-      topLeft = G.vec2 (-1.0) (-1.0)
-      topRight = G.vec2 1.0 (-1.0)
-      bottomLeft = G.vec2 (-1.0) 1.0
-      bottomRight = G.vec2 1.0 1.0
-      center = G.vec2 0.0 0.0
-      wholeSprite = G.vec4 0 0 1 1
+  let one = G.vec2 1 1
+
       mkSprite name =
         Sprite
-          { pos = topLeft,
+          { pos = Measure.ndcTopLeft,
             scale = one,
             texture = boundAtlasTexture,
-            region = let Atlas.TextureRegion r = Atlas.lookup atlas name in r,
-            origin = topLeft
+            region = Atlas.lookup atlas name,
+            pivot = Measure.texTopLeft
           }
       mkSpriteIndexed name index =
         Sprite
-          { pos = topLeft,
+          { pos = Measure.ndcTopLeft,
             scale = one,
             texture = boundAtlasTexture,
-            region = let Atlas.TextureRegion r = Atlas.lookupIndexed atlas name index in r,
-            origin = topLeft
+            region = Atlas.lookupIndexed atlas name index,
+            pivot = Measure.texTopLeft
           }
-      mkRectObj index org pos =
+      mkRectObj index piv pos =
         Object
-          { sprite = (mkSpriteIndexed "rectangle" index) {origin = org, pos = pos},
-            vel = G.vec2 0.0 0.0,
+          { sprite = (mkSpriteIndexed "rectangle" index) {pivot = piv, pos = pos},
+            vel = Measure.mkNDCSize 0.0 0.0,
             animation = Nothing
           }
       -- sheet =
@@ -317,8 +323,8 @@ main = runManaged $ do
       globalLight = GlobalLight {intensity = 0.93, _padding1 = 0, _padding2 = 0, color = G.vec3 1.0 0.73 1.0}
       a =
         Object
-          { sprite = (mkSprite "basketball") {pos = center, origin = center},
-            vel = G.vec2 (-0.0005) (-0.002),
+          { sprite = (mkSprite "basketball") {pos = Measure.ndcCenter, pivot = Measure.texCenter},
+            vel = Measure.mkNDCSize (-0.0005) (-0.002),
             animation = Nothing
           }
       -- b =
@@ -330,22 +336,22 @@ main = runManaged $ do
       c =
         Object
           { sprite = mkSprite "blue_ball",
-            vel = G.vec2 0.001 0.002,
+            vel = Measure.mkNDCSize 0.001 0.002,
             animation = Nothing
           }
       background = mkSprite "checkerboard"
       lightSource = mkSprite "light_source"
-      r1 = mkRectObj 0 topLeft topLeft
-      r2 = mkRectObj 1 topRight topRight
-      r3 = mkRectObj 2 bottomLeft bottomLeft
-      r4 = mkRectObj 3 bottomRight bottomRight
-      r5 = mkRectObj 4 center center
+      r1 = mkRectObj 0 Measure.texTopLeft Measure.ndcTopLeft
+      r2 = mkRectObj 1 Measure.texTopRight Measure.ndcTopRight
+      r3 = mkRectObj 2 Measure.texBottomLeft Measure.ndcBottomLeft
+      r4 = mkRectObj 3 Measure.texBottomRight Measure.ndcBottomRight
+      r5 = mkRectObj 4 Measure.texCenter Measure.ndcCenter
       world0 =
         World
           { background = background,
-            pointer = lightSource {pos = center, origin = center},
+            pointer = lightSource {pos = Measure.ndcCenter, pivot = Measure.texCenter},
             -- objects = [r1, r2, r3, r4, r5, a, b, c],
-            objects = [r1, r2, r3, r4, r5, a, c],
+            objects = [r1, r2, r3, r4, r5],
             lights = [whiteLight],
             globalLight = globalLight
           }
@@ -590,25 +596,30 @@ mainLoop shutdown frameData frame worldTime worldEvent world0 =
           w3 <- worldTime (t2 - t) w2
           go (frameNumber + 1) t2 w3
 
+whiteLight :: G.Vec2 -> PointLight
 whiteLight pos = PointLight {position = pos, color = G.vec3 1.0 1.0 1.0, intensity = 1.0}
 
 worldEvent :: (Monad io) => SDL.Event -> World -> io World
-worldEvent e w@(World {pointer = pointer@Sprite {pos = pos}}) = return let p = f pos e; w1 = w {pointer = pointer {pos = p}, lights = [whiteLight p]} in w1
+worldEvent e w@(World {pointer = pointer@Sprite {pos = pos}}) =
+  -- return let p = f pos e; w1 = w {pointer = pointer {pos = p}, lights = [whiteLight p]} in w1
+  return let p = f pos e; w1 = w {pointer = pointer {pos = p}} in w1
   where
-    f _ (SDL.Event _ (SDL.MouseMotionEvent (SDL.MouseMotionEventData {mouseMotionEventPos = SDL.P (SDL.V2 x y)}))) = normalPos (fromIntegral x) (fromIntegral y)
+    f _ (SDL.Event _ (SDL.MouseMotionEvent (SDL.MouseMotionEventData {mouseMotionEventPos = SDL.P (SDL.V2 x y)}))) =
+      Measure.mkNDCPosFromPixel (Measure.mkPixelPos (fromIntegral x) (fromIntegral y)) (Measure.mkPixelSize windowWidth windowHeight)
     f p _ = p
 
 worldTime :: (Monad io) => Word32 -> World -> io World
 worldTime 0 w = return w
 worldTime dt w@(World {objects}) = return w {objects = update <$> objects}
   where
-    update obj@Object {sprite = sprite@Sprite {pos = p0}, vel = v0, animation = Nothing} =
-      let p1 = p0 + (v0 G.^* fromIntegral dt)
-          v1 = G.emap2 (\vi pos -> if pos >= 1.0 || pos <= -1.0 then -vi else vi) v0 p1
-       in obj {sprite = sprite {pos = p1}, vel = v1}
-    update obj@Object {sprite, animation = Just ani} =
-      let ani2 = animatedProgress ani
-       in obj {sprite = sprite {region = animatedFrame ani2}, animation = Just ani2}
+    update = id
+    -- update obj@Object {sprite = sprite@Sprite {pos = p0}, vel = v0, animation = _} =
+    --   let p1 = p0 + (v0 G.^* fromIntegral dt)
+    --       v1 = G.emap2 (\vi pos -> if pos >= 1.0 || pos <= -1.0 then -vi else vi) v0 p1
+    --    in obj {sprite = sprite {pos = p1}, vel = v1}
+    -- update obj@Object {sprite, animation = Just ani} =
+    --   let ani2 = animatedProgress ani
+    --    in obj {sprite = sprite {region = animatedFrame ani2}, animation = Just ani2}
     animatedFrame :: Animated -> G.Vec4
     animatedFrame ani = ani.animation.sheet.frames ! floor ani.frameIndex
     animatedProgress ani =
@@ -636,14 +647,8 @@ windowWidth = 500
 windowHeight :: Word32
 windowHeight = 500
 
-normalSize :: G.UVec2 -> G.Vec2
-normalSize (G.WithUVec2 w h) =
-  let w' = (2.0 * fromIntegral w) / fromIntegral windowWidth
-      h' = (2.0 * fromIntegral h) / fromIntegral windowHeight
-   in G.vec2 w' h'
-
-normalPos :: Word32 -> Word32 -> G.Vec2
-normalPos x y = normalSize (G.uvec2 x y) - G.vec2 1.0 1.0
+windowSize :: Measure.PixelSize
+windowSize = Measure.mkPixelSize windowWidth windowHeight
 
 sprites :: World -> [Sprite]
 sprites World {background, pointer, objects} =
@@ -675,25 +680,24 @@ vertices ss = mconcat $ toQuad <$> ss
   where
     toQuad
       Sprite
-        { pos,
-          scale = G.WithVec2 sx sy,
-          texture = BoundTexture {index = tex, texture = Texture {size = G.WithVec2 tw th}},
-          region = (G.WithVec4 u1 v1 u2 v2), -- in UV [(0,0) - (1,1)]
-          origin = G.WithVec2 ox' oy'
+        { pos = p,
+          texture = BoundTexture {index = tex, texture = Texture {size = ts}},
+          region = reg,
+          pivot = piv
         } =
-        let uvw = (u2 - u1)
-            uvh = (v2 - v1)
-            w = tw * uvw
-            h = th * uvh
-            spriteOrigin = G.vec2 (ox' * w / 2) (oy' * h / 2)
-            spriteTopLeft = G.vec2 (-(w / 2)) (-(h / 2))
-            G.WithVec2 x y = pos - spriteOrigin + spriteTopLeft
-            topLeft = Vertex {xy = G.vec2 x y, uv = G.vec2 u1 v1, texture = tex}
-            topRight = Vertex {xy = G.vec2 (x + w) y, uv = G.vec2 u2 v1, texture = tex}
-            bottomRight = Vertex {xy = G.vec2 (x + w) (y + h), uv = G.vec2 u2 v2, texture = tex}
-            bottomLeft = Vertex {xy = G.vec2 x (y + h), uv = G.vec2 u1 v2, texture = tex}
+        let Measure.Quad (a, b, c, d) = Measure.localToNdc ts reg piv p
+            topLeft = mkVertex a tex
+            topRight = mkVertex b tex
+            bottomRight = mkVertex c tex
+            bottomLeft = mkVertex d tex
          in SV.fromList
-              [topLeft, topRight, bottomRight, bottomRight, bottomLeft, topLeft]
+              [ topLeft,
+                topRight,
+                bottomRight,
+                bottomRight,
+                bottomLeft,
+                topLeft
+              ]
 
 withImage :: Vma.Allocator -> Word32 -> Word32 -> Vk.Format -> Managed Vk.Image
 withImage allocator width height format = do
@@ -742,8 +746,8 @@ texture allocator device pool queue path = do
     (staging, mem) <- withHostBuffer allocator (fromIntegral size)
     liftIO $ copy pixels mem size
     copyBufferToImage device pool queue staging image width height
-    let res = G.uvec2 (fromIntegral width) (fromIntegral height)
-    return Texture {resolution = res, size = normalSize res, image = image, view = view}
+    let res = Measure.mkPixelSize (fromIntegral width) (fromIntegral height)
+    return Texture {resolution = res, size = Measure.mkNDCSizeFromPixel res windowSize, image = image, view = view}
   where
     copy pixels mem size =
       let (src, _) = SV.unsafeToForeignPtr0 pixels

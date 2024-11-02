@@ -6,7 +6,6 @@ module Atlas
     lookup,
     lookupIndexed,
     Atlas (..),
-    TextureRegion (..),
     Key (..),
   )
 where

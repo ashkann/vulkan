@@ -103,8 +103,8 @@ mkNDCPosFromSize (NormalizedDeviceWH w h) = mkNdcPos (w - 1.0) (h - 1.0)
 
 mkNDCPosFromPixel :: PixelPosition -> PixelSize -> NormalizedDevicePosition
 mkNDCPosFromPixel (PixelXY x y) (PixelWH w h) =
-  let nx = fromIntegral x / fromIntegral w
-      ny = fromIntegral y / fromIntegral h
+  let nx = (fromIntegral x / fromIntegral w) * 2
+      ny = (fromIntegral y / fromIntegral h) * 2
    in mkNdcPos (nx - 1.0) (ny - 1.0)
 
 mkNDCSizeFromPixel :: PixelSize -> PixelSize -> NormalizedDeviceSize

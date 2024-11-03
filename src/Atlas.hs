@@ -29,7 +29,11 @@ newtype Key = Key (String, Maybe Word32)
 
 newtype Atlas = Atlas (M.Map Key TextureRegion) deriving (Show)
 
-mkRegion :: PixelSize -> PixelPosition -> PixelSize -> TextureRegion
+mkRegion ::
+  PixelSize -> -- ^ Size of the atlas 
+  PixelPosition -> -- ^ Position of the region
+  PixelSize -> -- ^ Size of the region
+  TextureRegion
 mkRegion (PixelWH sx sy) (PixelXY x y) (PixelWH w h) =
   TextureRegion $ G.vec4 (u x) (v y) (u $ x + w) (v $ y + h)
   where

@@ -97,7 +97,7 @@ import Prelude hiding (init)
 data Vertex = Vertex {xy :: G.Vec2, uv :: G.Vec2, texture :: Word32}
 
 mkVertex :: Measure.QuadCorner -> Word32 -> Vertex
-mkVertex (Measure.QuadCorner (pos, uv)) index = Vertex {xy = Measure.ndcVec pos, uv = Measure.texVec uv, texture = index}
+mkVertex (Measure.Corner (pos, uv)) index = Vertex {xy = Measure.ndcVec pos, uv = Measure.texVec uv, texture = index}
 
 -- $(makeLenses ''Vertex)
 
@@ -300,7 +300,7 @@ main = runManaged $ do
       mkRectObj index piv pos =
         Object
           { sprite = (mkSpriteIndexed "rectangle" index) {pivot = piv, pos = pos},
-            vel = Measure.mkNDCSize 0.0 0.0,
+            vel = Measure.ndcSize 0.0 0.0,
             animation = Nothing
           }
       -- sheet =
@@ -324,7 +324,7 @@ main = runManaged $ do
       a =
         Object
           { sprite = (mkSprite "basketball") {pos = Measure.ndcCenter, pivot = Measure.texCenter},
-            vel = Measure.mkNDCSize (-0.0005) (-0.002),
+            vel = Measure.ndcSize (-0.0005) (-0.002),
             animation = Nothing
           }
       -- b =
@@ -336,7 +336,7 @@ main = runManaged $ do
       c =
         Object
           { sprite = mkSprite "blue_ball",
-            vel = Measure.mkNDCSize 0.001 0.002,
+            vel = Measure.ndcSize 0.001 0.002,
             animation = Nothing
           }
       background = mkSprite "checkerboard"
@@ -605,7 +605,7 @@ worldEvent e w@(World {pointer = pointer@Sprite {pos = pos}}) =
   return let p = f pos e; w1 = w {pointer = pointer {pos = p}} in w1
   where
     f _ (SDL.Event _ (SDL.MouseMotionEvent (SDL.MouseMotionEventData {mouseMotionEventPos = SDL.P (SDL.V2 x y)}))) =
-      Measure.mkNDCPosFromPixel (Measure.mkPixelPos (fromIntegral x) (fromIntegral y)) (Measure.mkPixelSize windowWidth windowHeight)
+      Measure.pixelPosToNdc (Measure.pixelPos (fromIntegral x) (fromIntegral y)) (Measure.pixelSize windowWidth windowHeight)
     f p _ = p
 
 worldTime :: (Monad io) => Word32 -> World -> io World
@@ -648,7 +648,7 @@ windowHeight :: Word32
 windowHeight = 500
 
 windowSize :: Measure.PixelSize
-windowSize = Measure.mkPixelSize windowWidth windowHeight
+windowSize = Measure.pixelSize windowWidth windowHeight
 
 sprites :: World -> [Sprite]
 sprites World {background, pointer, objects} =
@@ -746,8 +746,8 @@ texture allocator device pool queue path = do
     (staging, mem) <- withHostBuffer allocator (fromIntegral size)
     liftIO $ copy pixels mem size
     copyBufferToImage device pool queue staging image width height
-    let res = Measure.mkPixelSize (fromIntegral width) (fromIntegral height)
-    return Texture {resolution = res, size = Measure.mkNDCSizeFromPixel res windowSize, image = image, view = view}
+    let res = Measure.pixelSize (fromIntegral width) (fromIntegral height)
+    return Texture {resolution = res, size = Measure.pixelSizeToNdc res windowSize, image = image, view = view}
   where
     copy pixels mem size =
       let (src, _) = SV.unsafeToForeignPtr0 pixels

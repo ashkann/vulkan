@@ -10,15 +10,14 @@ module Measure
     NormalizedDeviceSize,
     Quad (..),
     QuadCorner (..),
-    mkNdcPos,
-    mkTexturePos,
-    mkNDCSize,
-    mkNDCPosFromSize,
-    mkNDCPosFromPixel,
-    mkPixelPos,
-    mkPixelSize,
-    mkTextureSize,
-    mkNDCSizeFromPixel,
+    ndcPos,
+    texPos,
+    ndcSize,
+    pixelPosToNdc,
+    pixelPos,
+    pixelSize,
+    texSize,
+    pixelSizeToNdc,
     pattern TextureRegionXY,
     pattern TextureXY,
     pattern NormalizedDeviceWH,
@@ -38,6 +37,7 @@ module Measure
     localToNdc,
     ndcVec,
     texVec,
+    pixelPosToTex,
   )
 where
 
@@ -54,8 +54,8 @@ pattern TextureRegionXY u1 v1 u2 v2 <- TextureRegion (G.WithVec4 u1 v1 u2 v2)
 
 newtype PixelPosition = PixelPosition G.UVec2 deriving (Show)
 
-mkPixelPos :: Word32 -> Word32 -> PixelPosition
-mkPixelPos x y = PixelPosition $ G.uvec2 x y
+pixelPos :: Word32 -> Word32 -> PixelPosition
+pixelPos x y = PixelPosition $ G.uvec2 x y
 
 {-# COMPLETE PixelXY #-}
 
@@ -64,8 +64,8 @@ pattern PixelXY x y <- PixelPosition (G.WithUVec2 x y)
 
 newtype PixelSize = PixelSize G.UVec2 deriving (Show)
 
-mkPixelSize :: Word32 -> Word32 -> PixelSize
-mkPixelSize w h = PixelSize $ G.uvec2 w h
+pixelSize :: Word32 -> Word32 -> PixelSize
+pixelSize w h = PixelSize $ G.uvec2 w h
 
 {-# COMPLETE PixelWH #-}
 
@@ -85,8 +85,14 @@ pattern NormalizedDeviceXY x y <- NormalizedDevicePosition (G.WithVec2 x y)
 texVec :: TexturePosition -> G.Vec2
 texVec (TexturePosition v) = v
 
-mkNdcPos :: Float -> Float -> NormalizedDevicePosition
-mkNdcPos x y = NormalizedDevicePosition $ G.vec2 x y
+pixelPosToTex :: PixelSize -> PixelPosition -> TexturePosition
+pixelPosToTex (PixelWH w h) (PixelXY x y) =
+  let nx = fromIntegral x / fromIntegral w
+      ny = fromIntegral y / fromIntegral h
+   in texPos nx ny
+
+ndcPos :: Float -> Float -> NormalizedDevicePosition
+ndcPos x y = NormalizedDevicePosition $ G.vec2 x y
 
 newtype NormalizedDeviceSize = NormalizedDeviceSize G.Vec2 deriving (Show)
 
@@ -95,23 +101,20 @@ newtype NormalizedDeviceSize = NormalizedDeviceSize G.Vec2 deriving (Show)
 pattern NormalizedDeviceWH :: Float -> Float -> NormalizedDeviceSize
 pattern NormalizedDeviceWH w h <- NormalizedDeviceSize (G.WithVec2 w h)
 
-mkNDCSize :: Float -> Float -> NormalizedDeviceSize
-mkNDCSize w h = NormalizedDeviceSize $ G.vec2 w h
+ndcSize :: Float -> Float -> NormalizedDeviceSize
+ndcSize w h = NormalizedDeviceSize $ G.vec2 w h
 
-mkNDCPosFromSize :: NormalizedDeviceSize -> NormalizedDevicePosition
-mkNDCPosFromSize (NormalizedDeviceWH w h) = mkNdcPos (w - 1.0) (h - 1.0)
-
-mkNDCPosFromPixel :: PixelPosition -> PixelSize -> NormalizedDevicePosition
-mkNDCPosFromPixel (PixelXY x y) (PixelWH w h) =
+pixelPosToNdc :: PixelPosition -> PixelSize -> NormalizedDevicePosition
+pixelPosToNdc (PixelXY x y) (PixelWH w h) =
   let nx = (fromIntegral x / fromIntegral w) * 2
       ny = (fromIntegral y / fromIntegral h) * 2
-   in mkNdcPos (nx - 1.0) (ny - 1.0)
+   in ndcPos (nx - 1.0) (ny - 1.0)
 
-mkNDCSizeFromPixel :: PixelSize -> PixelSize -> NormalizedDeviceSize
-mkNDCSizeFromPixel (PixelWH w h) (PixelWH sw sh) =
+pixelSizeToNdc :: PixelSize -> PixelSize -> NormalizedDeviceSize
+pixelSizeToNdc (PixelWH w h) (PixelWH sw sh) =
   let nw = fromIntegral w / fromIntegral sw
       nh = fromIntegral h / fromIntegral sh
-   in mkNDCSize (nw * 2.0) (nh * 2.0)
+   in ndcSize (nw * 2.0) (nh * 2.0)
 
 newtype TexturePosition = TexturePosition G.Vec2 deriving (Show)
 
@@ -120,35 +123,15 @@ newtype TexturePosition = TexturePosition G.Vec2 deriving (Show)
 pattern TextureXY :: Float -> Float -> TexturePosition
 pattern TextureXY x y <- TexturePosition (G.WithVec2 x y)
 
-mkTexturePos :: Float -> Float -> TexturePosition
-mkTexturePos x y = TexturePosition $ G.vec2 x y
+texPos :: Float -> Float -> TexturePosition
+texPos x y = TexturePosition $ G.vec2 x y
 
 newtype TextureSize = TextureSize G.Vec2 deriving (Show)
 
-mkTextureSize :: Float -> Float -> TextureSize
-mkTextureSize w h = TextureSize $ G.vec2 w h
+texSize :: Float -> Float -> TextureSize
+texSize w h = TextureSize $ G.vec2 w h
 
-{-# COMPLETE TextureWH #-}
-
-pattern TextureWH :: Float -> Float -> TextureSize
-pattern TextureWH w h <- TextureSize (G.WithVec2 w h)
-
--- data Sapce = World | Device | Model | Texture
-
--- data CoordinateSystem a = CoordinateSystem
---   { top :: a,
---     left :: a,
---     bottom :: a,
---     right :: a
---   }
-
--- deviceNormalizedCoordinateSystem :: CoordinateSystem Float
--- deviceNormalizedCoordinateSystem = CoordinateSystem 1.0 (-1.0) (-1.0) 1.0
-
--- textureCoordinateSystem :: CoordinateSystem Float
--- textureCoordinateSystem = CoordinateSystem 1.0 0.0 0.0 1.0
-
-newtype QuadCorner = QuadCorner (NormalizedDevicePosition, TexturePosition)
+newtype QuadCorner = Corner (NormalizedDevicePosition, TexturePosition)
 
 newtype Quad = Quad (QuadCorner, QuadCorner, QuadCorner, QuadCorner)
 
@@ -163,10 +146,10 @@ localToNdc (NormalizedDeviceWH w h) (TextureRegionXY u1 v1 u2 v2) (TextureXY x y
   let (x1, x2) = toNdc w u1 u2 x x'
       (y1, y2) = toNdc h v1 v2 y y'
    in Quad
-        ( QuadCorner (mkNdcPos x1 y1, mkTexturePos u1 v1),
-          QuadCorner (mkNdcPos x2 y1, mkTexturePos u2 v1),
-          QuadCorner (mkNdcPos x2 y2, mkTexturePos u2 v2),
-          QuadCorner (mkNdcPos x1 y2, mkTexturePos u1 v2)
+        ( Corner (ndcPos x1 y1, texPos u1 v1),
+          Corner (ndcPos x2 y1, texPos u2 v1),
+          Corner (ndcPos x2 y2, texPos u2 v2),
+          Corner (ndcPos x1 y2, texPos u1 v2)
         )
   where
     toNdc w u1 u2 x x' =
@@ -175,31 +158,31 @@ localToNdc (NormalizedDeviceWH w h) (TextureRegionXY u1 v1 u2 v2) (TextureXY x y
        in (x1, x1 + rw)
 
 ndcTopLeft :: NormalizedDevicePosition
-ndcTopLeft = mkNdcPos (-1.0) (-1.0)
+ndcTopLeft = ndcPos (-1.0) (-1.0)
 
 ndcTopRight :: NormalizedDevicePosition
-ndcTopRight = mkNdcPos 1.0 (-1.0)
+ndcTopRight = ndcPos 1.0 (-1.0)
 
 ndcBottomLeft :: NormalizedDevicePosition
-ndcBottomLeft = mkNdcPos (-1.0) 1.0
+ndcBottomLeft = ndcPos (-1.0) 1.0
 
 ndcBottomRight :: NormalizedDevicePosition
-ndcBottomRight = mkNdcPos 1.0 1.0
+ndcBottomRight = ndcPos 1.0 1.0
 
 ndcCenter :: NormalizedDevicePosition
-ndcCenter = mkNdcPos 0.0 0.0
+ndcCenter = ndcPos 0.0 0.0
 
 texTopLeft :: TexturePosition
-texTopLeft = mkTexturePos 0.0 0.0
+texTopLeft = texPos 0.0 0.0
 
 texTopRight :: TexturePosition
-texTopRight = mkTexturePos 1.0 0.0
+texTopRight = texPos 1.0 0.0
 
 texBottomLeft :: TexturePosition
-texBottomLeft = mkTexturePos 0.0 1.0
+texBottomLeft = texPos 0.0 1.0
 
 texBottomRight :: TexturePosition
-texBottomRight = mkTexturePos 1.0 1.0
+texBottomRight = texPos 1.0 1.0
 
 texCenter :: TexturePosition
-texCenter = mkTexturePos 0.5 0.5
+texCenter = texPos 0.5 0.5

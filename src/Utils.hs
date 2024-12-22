@@ -382,7 +382,7 @@ copyToGpu device pool queue gpuBuffer (hostBuffer, hostBufferPtr) v = do
   let copy cmd = Vk.cmdCopyBuffer cmd hostBuffer gpuBuffer [Vk.zero {VkBufferCopy.size = size}]
    in submitWait device pool queue copy
 
--- TODO DRY with copyToGpu
+-- TODO: DRY with copyToGpu
 copyToGpu2 ::
   (Storable a) =>
   Vk.Device ->

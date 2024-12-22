@@ -105,17 +105,13 @@ vertexStore =
       <*> Store.element (.uv)
       <*> Store.element (.texture)
 
--- TODO automate the layout according to Vulkan spec
+-- TODO: automate the layout according to Vulkan spec
 instance Storable Vertex where
   sizeOf = Store.sizeOf vertexStore
   alignment = Store.alignment vertexStore
   peek = Store.peek vertexStore
   poke = Store.poke vertexStore
 
-data Sprite = Sprite
-  { texture :: BoundTexture,
-    region :: Measure.TextureRegion
-  }
 
 data SpriteState = SpriteState
   { position :: Measure.NormalizedDevicePosition,
@@ -137,7 +133,7 @@ data Animated = Animated {animation :: Animation, frameIndex :: Float}
 --       loop fi = if floor fi >= (ani ^. animation . sheet . frames . to V.length) then 0 else fi
 --    in over frameIndex (loop . new) ani
 
--- TODO reordering the fields apparently breaks the alignment. why?
+-- TODO: reordering the fields apparently breaks the alignment. why?
 data PointLight = PointLight {intensity :: Float, position :: G.Vec2, color :: G.Vec3} deriving (Show)
 
 pointLightStore :: Store.Dictionary PointLight
@@ -156,7 +152,7 @@ instance Storable PointLight where
 
 data GlobalLight = GlobalLight
   { intensity :: Float,
-    _padding1 :: Word64, -- TODO remove and make the Storable instance handle it
+    _padding1 :: Word64, -- TODO: remove and make the Storable instance handle it
     _padding2 :: Word32,
     color :: G.Vec3
   }
@@ -179,7 +175,7 @@ instance Storable GlobalLight where
 
 data Viewport = Viewport
   { viewportSize :: G.UVec2,
-    _padding :: Word64, -- TODO remove and make the Storable instance handle it
+    _padding :: Word64, -- TODO: remove and make the Storable instance handle it
     globalLight :: GlobalLight
   }
 
@@ -198,14 +194,14 @@ instance Storable Viewport where
   poke = Store.poke viewportStore
 
 data Object = Object
-  { sprite :: Sprite,
+  { sprite :: Atlas.Sprite,
     state :: SpriteState,
     vel :: Measure.NormalizedDeviceSize,
     animation :: Maybe Animated
   }
 
 data World = World
-  { background :: Sprite,
+  { background :: Atlas.Sprite,
     pointer :: Object,
     objects :: [Object],
     globalLight :: GlobalLight,
@@ -238,7 +234,7 @@ data Frame = Frame
     targetView :: Vk.ImageView
   }
 
--- TODO run inside a MonadError instance
+-- TODO: run inside a MonadError instance
 main :: IO ()
 main = runManaged $ do
   withSDL
@@ -265,7 +261,7 @@ main = runManaged $ do
   sampler <- repeatingSampler device
   gfxQueue <- Vk.getDeviceQueue device gfx 0 <* say "Vulkan" "Got graphics queue"
 
-  (boundAtlasTexture, atlas) <- Atlas.withAtlas allocator device commandPool gfxQueue descSet sampler "out/atlas.atlas"
+  atlas <- Atlas.withAtlas allocator device commandPool gfxQueue descSet sampler "out/atlas.atlas"
   say "Engine" "Atlas loaded"
 
   SDL.showWindow window <* say "SDL" "Show window"
@@ -311,24 +307,14 @@ main = runManaged $ do
           )
           worldTime
           worldEvent
-          (world0 boundAtlasTexture atlas)
+          (world0 atlas)
 
-world0 :: BoundTexture -> Atlas.Atlas -> World
-world0 tex atlas =
+world0 :: Atlas.Atlas2 -> World
+world0 atlas =
   let one = G.vec2 1 1
-      mkSprite name =
-        Sprite
-          { texture = tex,
-            region = Atlas.lookup atlas name
-          }
-      mkSpriteIndexed name index =
-        Sprite
-          { texture = tex,
-            region = Atlas.lookupIndexed atlas name index
-          }
       mkRectObj index piv pos =
         Object
-          { sprite = mkSpriteIndexed "rectangle" index,
+          { sprite = Atlas.mkSpriteIndexed atlas "rectangle" index,
             state = SpriteState {position = pos, pivot = piv, scale = one},
             vel = Measure.ndcSize 0.0 0.0,
             animation = Nothing
@@ -353,22 +339,22 @@ world0 tex atlas =
       globalLight = GlobalLight {intensity = 0.93, _padding1 = 0, _padding2 = 0, color = G.vec3 1.0 0.73 1.0}
       basketball =
         Object
-          { sprite = mkSprite "basketball",
+          { sprite = Atlas.mkSprite atlas "basketball",
             state = SpriteState {position = Measure.ndcCenter, pivot = Measure.texCenter, scale = one},
             vel = Measure.ndcSize (-0.0005) (-0.002),
             animation = Nothing
           }
       blueBall =
         Object
-          { sprite = mkSprite "blue_ball",
+          { sprite = Atlas.mkSprite atlas "blue_ball",
             state = SpriteState {position = Measure.ndcBottomLeft, pivot = Measure.texBottomLeft, scale = one},
             vel = Measure.ndcSize 0.001 0.002,
             animation = Nothing
           }
-      background = mkSprite "checkerboard"
+      background = Atlas.mkSprite atlas "checkerboard"
       lightSource =
         Object
-          { sprite = mkSprite "light_source",
+          { sprite = Atlas.mkSprite atlas "light_source",
             state = SpriteState {position = Measure.ndcCenter, pivot = Measure.texCenter, scale = one},
             vel = Measure.ndcSize 0.001 0.002,
             animation = Nothing
@@ -635,7 +621,7 @@ windowHeight = 500
 windowSize :: Measure.PixelSize
 windowSize = Measure.pixelSize windowWidth windowHeight
 
-sprites :: World -> [(Sprite, SpriteState)]
+sprites :: World -> [(Atlas.Sprite, SpriteState)]
 sprites World {background, pointer, objects} =
   (background, static) : (s <$> objects) ++ [s pointer]
   where
@@ -661,9 +647,9 @@ withMemoryAllocator vulkan gpu device =
           }
    in managed $ Vma.withAllocator info bracket
 
-vertices :: Sprite -> SpriteState -> SV.Vector Vertex
+vertices :: Atlas.Sprite -> SpriteState -> SV.Vector Vertex
 vertices
-  ( Sprite
+  ( Atlas.Sprite
       { texture = Texture.BoundTexture {index = tex, texture = Texture.Texture {resolution = res}},
         region = reg
       }
@@ -708,21 +694,21 @@ descriptorSetLayout dev count = do
   let flags = Vk.DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT .|. Vk.DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT
       textures =
         Vk.zero
-          { VkDescriptorSetLayoutBinding.binding = 0, -- TODO hardcoded
+          { VkDescriptorSetLayoutBinding.binding = 0, -- TODO: hardcoded
             VkDescriptorSetLayoutBinding.descriptorCount = count,
             VkDescriptorSetLayoutBinding.descriptorType = Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
             VkDescriptorSetLayoutBinding.stageFlags = Vk.SHADER_STAGE_FRAGMENT_BIT
           }
       lights =
         Vk.zero
-          { VkDescriptorSetLayoutBinding.binding = 1, -- TODO hardcoded
+          { VkDescriptorSetLayoutBinding.binding = 1, -- TODO: hardcoded
             VkDescriptorSetLayoutBinding.descriptorCount = 1,
             VkDescriptorSetLayoutBinding.descriptorType = Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
             VkDescriptorSetLayoutBinding.stageFlags = Vk.SHADER_STAGE_FRAGMENT_BIT
           }
       viewport =
         Vk.zero
-          { VkDescriptorSetLayoutBinding.binding = 2, -- TODO hardcoded
+          { VkDescriptorSetLayoutBinding.binding = 2, -- TODO: hardcoded
             VkDescriptorSetLayoutBinding.descriptorCount = 1,
             VkDescriptorSetLayoutBinding.descriptorType = Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
             VkDescriptorSetLayoutBinding.stageFlags = Vk.SHADER_STAGE_FRAGMENT_BIT
@@ -775,7 +761,7 @@ bindLights dev set lights =
         Vk.SomeStruct
           Vk.zero
             { VkWriteDescriptorSet.dstSet = set,
-              VkWriteDescriptorSet.dstBinding = 1, -- TODO magic number, use a configurable value
+              VkWriteDescriptorSet.dstBinding = 1, -- TODO: magic number, use a configurable value
               VkWriteDescriptorSet.descriptorType = Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
               VkWriteDescriptorSet.descriptorCount = 1,
               VkWriteDescriptorSet.bufferInfo = [bufferInfo],
@@ -787,7 +773,7 @@ bindLights dev set lights =
       Vk.zero
         { VkDescriptorBufferInfo.buffer = lights,
           VkDescriptorBufferInfo.offset = 0,
-          VkDescriptorBufferInfo.range = Vk.WHOLE_SIZE -- TODO better value ?
+          VkDescriptorBufferInfo.range = Vk.WHOLE_SIZE -- TODO: better value ?
         }
 
 bindViewport :: (MonadIO io) => Vk.Device -> Vk.DescriptorSet -> Vk.Buffer -> io ()
@@ -796,7 +782,7 @@ bindViewport dev set viewport =
         Vk.SomeStruct
           Vk.zero
             { VkWriteDescriptorSet.dstSet = set,
-              VkWriteDescriptorSet.dstBinding = 2, -- TODO magic number, use a configurable value
+              VkWriteDescriptorSet.dstBinding = 2, -- TODO: magic number, use a configurable value
               VkWriteDescriptorSet.descriptorType = Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
               VkWriteDescriptorSet.descriptorCount = 1,
               VkWriteDescriptorSet.bufferInfo = [bufferInfo],
@@ -808,7 +794,7 @@ bindViewport dev set viewport =
       Vk.zero
         { VkDescriptorBufferInfo.buffer = viewport,
           VkDescriptorBufferInfo.offset = 0,
-          VkDescriptorBufferInfo.range = Vk.WHOLE_SIZE -- TODO better value ?
+          VkDescriptorBufferInfo.range = Vk.WHOLE_SIZE -- TODO: better value ?
         }
 
 createPipeline ::
@@ -931,7 +917,7 @@ createPipeline dev extent layout = do
      in managed $ Vk.withGraphicsPipelines dev Vk.zero [Vk.SomeStruct pipelineCreateInfo] Nothing bracket
   return $ V.head res
 
--- TODO break into two functions
+-- TODO: break into two functions
 createShaders ::
   Vk.Device ->
   Managed (Vk.SomeStruct Vk.PipelineShaderStageCreateInfo, Vk.SomeStruct Vk.PipelineShaderStageCreateInfo)

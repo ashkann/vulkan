@@ -1,13 +1,19 @@
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE NoFieldSelectors #-}
 
 module Atlas
-  ( atlas,
+  ( Atlas (..),
+    Atlas2 (..),
+    Key (..),
+    Sprite (..),
+    atlas,
     lookup,
     lookupIndexed,
-    Atlas (..),
-    Key (..),
     withAtlas,
+    mkSprite,
+    mkSpriteIndexed,
   )
 where
 
@@ -135,9 +141,29 @@ pixelSizeP = PixelSize <$> uvec2P
 pixelPositionP :: Parser PixelPosition
 pixelPositionP = PixelPosition <$> uvec2P
 
-withAtlas :: Vk.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> Vk.DescriptorSet -> Vk.Sampler -> String -> Managed (Tex.BoundTexture, Atlas)
+data Atlas2 = Atlas2
+  { texture :: Tex.BoundTexture,
+    atlas :: Atlas
+  }
+
+withAtlas :: Vk.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> Vk.DescriptorSet -> Vk.Sampler -> String -> Managed Atlas2
 withAtlas allocator device commandPool gfxQueue descSet sampler atlasFile = do
   (atlasTextureFile, atlas) <- either (sayErr "Atlas") return =<< runExceptT (atlas atlasFile)
-  atlasTexture <- Tex.texture allocator device commandPool gfxQueue $ "out/" ++ atlasTextureFile
+  atlasTexture <- Tex.texture allocator device commandPool gfxQueue $ "out/" ++ atlasTextureFile -- TODO:: remove "out/""
   [boundAtlasTexture] <- Tex.bindTextures device descSet [atlasTexture] sampler
-  return (boundAtlasTexture, atlas)
+  return $ Atlas2 { texture = boundAtlasTexture, atlas = atlas}
+
+data Sprite = Sprite
+  { texture :: Tex.BoundTexture,
+    region :: Measure.TextureRegion
+  }
+
+mkSprite :: Atlas2 -> String -> Sprite
+mkSprite (Atlas2 {texture = atlasTexture, atlas = atlas}) name = Sprite {texture = atlasTexture, region = Atlas.lookup atlas name}
+
+mkSpriteIndexed :: Atlas2 -> String -> Word32 -> Sprite
+mkSpriteIndexed (Atlas2 {texture = atlasTexture, atlas = atlas}) name index =
+  Sprite
+    { texture = atlasTexture,
+      region = Atlas.lookupIndexed atlas name index
+    }

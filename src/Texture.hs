@@ -43,7 +43,7 @@ import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCre
 import Prelude hiding (init, lookup)
 import Foreign.Storable (Storable)
 
--- TODO remove the Texture and put everything into BoundTexture and rename it to Texture
+-- TODO: remove the Texture and put everything into BoundTexture and rename it to Texture
 data Texture = Texture
   { resolution :: Measure.PixelSize,
     image :: Vk.Image,
@@ -152,7 +152,7 @@ bindTextures dev set textures sampler = do
         Vk.SomeStruct
           Vk.zero
             { VkWriteDescriptorSet.dstSet = set,
-              VkWriteDescriptorSet.dstBinding = 0, -- TODO magic number, use a configurable value
+              VkWriteDescriptorSet.dstBinding = 0, -- TODO: magic number, use a configurable value
               VkWriteDescriptorSet.descriptorType = Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
               VkWriteDescriptorSet.descriptorCount = fromIntegral $ length textures,
               VkWriteDescriptorSet.imageInfo = V.fromList $ imageInfo <$> textures,

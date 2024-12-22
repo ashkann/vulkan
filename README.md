@@ -1,8 +1,9 @@
-# vulkan
+# Vulkan 2D Engine
 Trying to learn vulkan and Haskell hand in hand by doing a 2D engine.
 ```
 ./run.sh
 ```
+![Screenshot](screenshot.png)
 ## TODO (doubling as a roadmap)
 - [x] Separate vertex buffer
 - [x] Sepaerate sempaphores per frame

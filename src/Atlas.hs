@@ -1,6 +1,5 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE ImportQualifiedPost #-}
 
 module Atlas
   ( atlas,
@@ -8,24 +7,27 @@ module Atlas
     lookupIndexed,
     Atlas (..),
     Key (..),
-
-    bindTextures,
+    withAtlas,
   )
 where
 
 import Control.Monad (when)
-import Control.Monad.Except (MonadError (throwError))
+import Control.Monad.Except (MonadError (throwError), runExceptT)
 import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad.Managed (Managed)
 import Data.Functor ((<&>))
-import Data.Map.Strict qualified as M
+import qualified Data.Map.Strict as M
 import Data.Word (Word32)
-import Geomancy qualified as G
+import qualified Geomancy as G
 import Measure
 import Text.Parsec (anyChar, char, digit, endOfLine, eof, many1, manyTill, optionMaybe, parse, string, (<?>))
 import Text.Parsec.Char (spaces)
 import Text.Parsec.String (Parser, parseFromFile)
+import qualified Texture as Tex
+import Utils (sayErr)
+import qualified Vulkan as Vk
+import qualified VulkanMemoryAllocator as Vk
 import Prelude hiding (lookup)
-import Texture(bindTextures)
 
 newtype Key = Key (String, Maybe Word32)
   deriving (Show)
@@ -132,3 +134,10 @@ pixelSizeP = PixelSize <$> uvec2P
 
 pixelPositionP :: Parser PixelPosition
 pixelPositionP = PixelPosition <$> uvec2P
+
+withAtlas :: Vk.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> Vk.DescriptorSet -> Vk.Sampler -> String -> Managed (Tex.BoundTexture, Atlas)
+withAtlas allocator device commandPool gfxQueue descSet sampler atlasFile = do
+  (atlasTextureFile, atlas) <- either (sayErr "Atlas") return =<< runExceptT (atlas atlasFile)
+  atlasTexture <- Tex.texture allocator device commandPool gfxQueue $ "out/" ++ atlasTextureFile
+  [boundAtlasTexture] <- Tex.bindTextures device descSet [atlasTexture] sampler
+  return (boundAtlasTexture, atlas)

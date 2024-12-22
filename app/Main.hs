@@ -40,6 +40,8 @@ import Geomancy qualified as G
 import Init qualified
 import Measure qualified
 import SDL qualified
+import Texture (BoundTexture, DescriptorIndex)
+import Texture qualified
 import Utils
 import Vulkan qualified as Vk
 import Vulkan qualified as VkBufferCreateInfo (BufferCreateInfo (..))
@@ -87,8 +89,6 @@ import VulkanMemoryAllocator qualified as Vma
 import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCreateInfo (..))
 import VulkanMemoryAllocator qualified as VmaAllocatorCreateInfo (AllocatorCreateInfo (..))
 import Prelude hiding (init)
-import qualified Texture
-import Texture (DescriptorIndex, BoundTexture)
 
 data Vertex = Vertex {xy :: G.Vec2, uv :: G.Vec2, texture :: DescriptorIndex}
 
@@ -264,10 +264,9 @@ main = runManaged $ do
   descSet <- descriptorSet device descSetLayout descPool
   sampler <- repeatingSampler device
   gfxQueue <- Vk.getDeviceQueue device gfx 0 <* say "Vulkan" "Got graphics queue"
-  (atlasTextureFile, atlas) <- either (sayErr "Atlas") return =<< runExceptT (Atlas.atlas "out/atlas.atlas")
-  atlasTexture <- Texture.texture allocator device commandPool gfxQueue $ "out/" ++ atlasTextureFile
-  say "Atlas" $ "Loaded atlas" ++ show atlasTexture
-  [boundAtlasTexture] <- Texture.bindTextures device descSet [atlasTexture] sampler
+
+  (boundAtlasTexture, atlas) <- Atlas.withAtlas allocator device commandPool gfxQueue descSet sampler "out/atlas.atlas"
+  say "Engine" "Atlas loaded"
 
   SDL.showWindow window <* say "SDL" "Show window"
   SDL.raiseWindow window <* say "SDL" "Raise window"

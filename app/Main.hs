@@ -20,7 +20,6 @@
 module Main (main) where
 
 import Atlas qualified
-import Codec.Picture qualified as JP
 import Control.Concurrent (threadDelay)
 import Control.Exception (bracket)
 import Control.Monad (when)
@@ -33,7 +32,7 @@ import Data.Functor (($>))
 import Data.Vector ((!))
 import Data.Vector qualified as V
 import Data.Vector.Storable qualified as SV
-import Foreign (Ptr, Storable, Word32, Word64, castPtr, copyArray, withForeignPtr)
+import Foreign (Ptr, Storable, Word32, Word64)
 import Foreign.Ptr (castFunPtr)
 import Foreign.Storable (Storable (..), sizeOf)
 import Foreign.Storable.Record qualified as Store
@@ -46,7 +45,6 @@ import Vulkan qualified as Vk
 import Vulkan qualified as VkBufferCreateInfo (BufferCreateInfo (..))
 import Vulkan qualified as VkCommandPoolCreateInfo (CommandPoolCreateInfo (..))
 import Vulkan qualified as VkDescriptorBufferInfo (DescriptorBufferInfo (..))
-import Vulkan qualified as VkDescriptorImageInfo (DescriptorImageInfo (..))
 import Vulkan qualified as VkDescriptorPoolCreateInfo (DescriptorPoolCreateInfo (..))
 import Vulkan qualified as VkDescriptorPoolSize (DescriptorPoolSize (..))
 import Vulkan qualified as VkDescriptorSetAllocateInfo (DescriptorSetAllocateInfo (..))
@@ -57,12 +55,8 @@ import Vulkan qualified as VkDevice (Device (..))
 import Vulkan qualified as VkDeviceCreateInfo (DeviceCreateInfo (..))
 import Vulkan qualified as VkDeviceQueueCreateInfo (DeviceQueueCreateInfo (..))
 import Vulkan qualified as VkExtent2D (Extent2D (..))
-import Vulkan qualified as VkExtent3D (Extent3D (..))
 import Vulkan qualified as VkFenceCreateInfo (FenceCreateInfo (..))
 import Vulkan qualified as VkGraphicsPipelineCreateInfo (GraphicsPipelineCreateInfo (..))
-import Vulkan qualified as VkImageCreateInfo (ImageCreateInfo (..))
-import Vulkan qualified as VkImageSubresourceRange (ImageSubresourceRange (..))
-import Vulkan qualified as VkImageViewCreateInfo (ImageViewCreateInfo (..))
 import Vulkan qualified as VkInstance (Instance (..))
 import Vulkan qualified as VkPhysicalDeviceDynamicRenderingFeatures (PhysicalDeviceDynamicRenderingFeatures (..))
 import Vulkan qualified as VkPhysicalDeviceVulkan12Features (PhysicalDeviceVulkan12Features (..))
@@ -93,10 +87,12 @@ import VulkanMemoryAllocator qualified as Vma
 import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCreateInfo (..))
 import VulkanMemoryAllocator qualified as VmaAllocatorCreateInfo (AllocatorCreateInfo (..))
 import Prelude hiding (init)
+import qualified Texture
+import Texture (DescriptorIndex, BoundTexture)
 
-data Vertex = Vertex {xy :: G.Vec2, uv :: G.Vec2, texture :: Word32}
+data Vertex = Vertex {xy :: G.Vec2, uv :: G.Vec2, texture :: DescriptorIndex}
 
-mkVertex :: Measure.QuadCorner -> Word32 -> Vertex
+mkVertex :: Measure.QuadCorner -> DescriptorIndex -> Vertex
 mkVertex (Measure.Corner (pos, uv)) index = Vertex {xy = Measure.ndcVec pos, uv = Measure.texVec uv, texture = index}
 
 -- $(makeLenses ''Vertex)
@@ -115,20 +111,6 @@ instance Storable Vertex where
   alignment = Store.alignment vertexStore
   peek = Store.peek vertexStore
   poke = Store.poke vertexStore
-
--- TODO remove the Texture and put everything into BoundTexture and rename it to Texture
-data Texture = Texture
-  { resolution :: Measure.PixelSize,
-    size :: Measure.NormalizedDeviceSize,
-    image :: Vk.Image,
-    view :: Vk.ImageView
-  }
-  deriving (Show)
-
--- TODO use this
-newtype BoundTextureDescriptorIndex = BoundTextureDescriptorIndex Word32
-
-data BoundTexture = BoundTexture {index :: Word32, texture :: Texture}
 
 data Sprite = Sprite
   { texture :: BoundTexture,
@@ -283,9 +265,9 @@ main = runManaged $ do
   sampler <- repeatingSampler device
   gfxQueue <- Vk.getDeviceQueue device gfx 0 <* say "Vulkan" "Got graphics queue"
   (atlasTextureFile, atlas) <- either (sayErr "Atlas") return =<< runExceptT (Atlas.atlas "out/atlas.atlas")
-  atlasTexture <- texture allocator device commandPool gfxQueue $ "out/" ++ atlasTextureFile
+  atlasTexture <- Texture.texture allocator device commandPool gfxQueue $ "out/" ++ atlasTextureFile
   say "Atlas" $ "Loaded atlas" ++ show atlasTexture
-  [boundAtlasTexture] <- bindTextures device descSet [atlasTexture] sampler
+  [boundAtlasTexture] <- Texture.bindTextures device descSet [atlasTexture] sampler
 
   SDL.showWindow window <* say "SDL" "Show window"
   SDL.raiseWindow window <* say "SDL" "Raise window"
@@ -536,7 +518,7 @@ withFrames device gfx allocator stagingBufferSize vertexBufferSize lightBufferSi
                     Vk.commandBufferCount = 2
                   }
            in managed (Vk.withCommandBuffers device info bracket)
-        vertextStagingBuffer <- withHostBuffer allocator stagingBufferSize
+        vertextStagingBuffer <- Texture.withHostBuffer allocator stagingBufferSize
         imageAvailable <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
         renderFinished <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
         copyFinished <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
@@ -546,7 +528,7 @@ withFrames device gfx allocator stagingBufferSize vertexBufferSize lightBufferSi
         vertexBuffer <- withGPUBuffer allocator vertexBufferSize Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
         lightBuffer <- withGPUBuffer allocator lightBufferSize Vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT
         viewportBuffer <- withGPUBuffer allocator lightBufferSize Vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT
-        (image, view) <- withImageAndView allocator device windowWidth windowHeight Init.imageFormat
+        (image, view) <- Texture.withImageAndView allocator device windowWidth windowHeight Init.imageFormat
         return
           Frame
             { pool = pool,
@@ -683,12 +665,13 @@ withMemoryAllocator vulkan gpu device =
 vertices :: Sprite -> SpriteState -> SV.Vector Vertex
 vertices
   ( Sprite
-      { texture = BoundTexture {index = tex, texture = Texture {size = ts}},
+      { texture = Texture.BoundTexture {index = tex, texture = Texture.Texture {resolution = res}},
         region = reg
       }
     )
   (SpriteState {position = p, pivot = piv}) =
-    let Measure.Quad (a, b, c, d) = Measure.localToNdc ts reg piv p
+    let ts = Measure.pixelSizeToNdc res windowSize
+        Measure.Quad (a, b, c, d) = Measure.localToNdc ts reg piv p
         topLeft = mkVertex a tex
         topRight = mkVertex b tex
         bottomRight = mkVertex c tex
@@ -701,79 +684,6 @@ vertices
             bottomLeft,
             topLeft
           ]
-
-withImage :: Vma.Allocator -> Word32 -> Word32 -> Vk.Format -> Managed Vk.Image
-withImage allocator width height format = do
-  (image, _, _) <-
-    let dims =
-          Vk.Extent3D
-            { VkExtent3D.width = width,
-              VkExtent3D.height = height,
-              VkExtent3D.depth = 1
-            }
-        usage = Vk.IMAGE_USAGE_TRANSFER_SRC_BIT .|. Vk.IMAGE_USAGE_TRANSFER_DST_BIT .|. Vk.IMAGE_USAGE_SAMPLED_BIT .|. Vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT -- Put only what we actually need
-        imgInfo =
-          Vk.zero
-            { VkImageCreateInfo.imageType = Vk.IMAGE_TYPE_2D,
-              VkImageCreateInfo.extent = dims,
-              VkImageCreateInfo.mipLevels = 1,
-              VkImageCreateInfo.arrayLayers = 1,
-              VkImageCreateInfo.format = format,
-              VkImageCreateInfo.tiling = Vk.IMAGE_TILING_OPTIMAL,
-              VkImageCreateInfo.initialLayout = Vk.IMAGE_LAYOUT_UNDEFINED,
-              VkImageCreateInfo.usage = usage,
-              VkImageCreateInfo.samples = Vk.SAMPLE_COUNT_1_BIT
-            }
-        allocInfo =
-          Vk.zero
-            { VmaAllocationCreateInfo.usage = Vma.MEMORY_USAGE_AUTO,
-              VmaAllocationCreateInfo.flags = Vma.ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
-              VmaAllocationCreateInfo.priority = 1
-            }
-     in managed $ Vma.withImage allocator imgInfo allocInfo bracket
-  return image
-
-withImageAndView :: Vma.Allocator -> Vk.Device -> Word32 -> Word32 -> Vk.Format -> Managed (Vk.Image, Vk.ImageView)
-withImageAndView allocator device width height format = do
-  image <- withImage allocator width height format
-  view <- withImageView device image format
-  return (image, view)
-
-texture :: Vma.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> FilePath -> Managed Texture
-texture allocator device pool queue path = do
-  JP.ImageRGBA8 (JP.Image width height pixels) <- liftIO $ JP.readPng path >>= either (sayErr "Texture" . show) return
-  let size = width * height * 4
-      format = Vk.FORMAT_R8G8B8A8_SRGB
-  (image, view) <- withImageAndView allocator device (fromIntegral width) (fromIntegral height) format
-  do
-    (staging, mem) <- withHostBuffer allocator (fromIntegral size)
-    liftIO $ copy pixels mem size
-    copyBufferToImage device pool queue staging image width height
-    let res = Measure.pixelSize (fromIntegral width) (fromIntegral height)
-    return Texture {resolution = res, size = Measure.pixelSizeToNdc res windowSize, image = image, view = view}
-  where
-    copy pixels mem size =
-      let (src, _) = SV.unsafeToForeignPtr0 pixels
-          dst = castPtr mem
-       in withForeignPtr src $ \from -> copyArray dst from size
-
-withHostBuffer :: Vma.Allocator -> Vk.DeviceSize -> Managed (Vk.Buffer, Ptr ())
-withHostBuffer allocator size = do
-  (buffer, _, Vma.AllocationInfo {Vma.mappedData = mem}) <-
-    let bufferInfo =
-          Vk.zero
-            { VkBufferCreateInfo.size = size,
-              VkBufferCreateInfo.usage = Vk.BUFFER_USAGE_TRANSFER_SRC_BIT,
-              VkBufferCreateInfo.sharingMode = Vk.SHARING_MODE_EXCLUSIVE
-            }
-        vmaInfo =
-          Vk.zero
-            { VmaAllocationCreateInfo.usage = Vma.MEMORY_USAGE_AUTO,
-              VmaAllocationCreateInfo.flags = Vma.ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT .|. Vma.ALLOCATION_CREATE_MAPPED_BIT
-            }
-     in managed $ Vma.withBuffer allocator bufferInfo vmaInfo bracket
-  say "Vulkan" $ "Created host buffer (" ++ show size ++ " bytes)"
-  return (buffer, mem)
 
 withGPUBuffer :: Vma.Allocator -> Vk.DeviceSize -> Vk.BufferUsageFlagBits -> Managed Vk.Buffer
 withGPUBuffer allocator size flags = do
@@ -859,28 +769,6 @@ descriptorSet dev layout pool =
             VkDescriptorSetAllocateInfo.setLayouts = [layout]
           }
    in V.head <$> managed (Vk.withDescriptorSets dev info bracket)
-
-bindTextures :: Vk.Device -> Vk.DescriptorSet -> [Texture] -> Vk.Sampler -> Managed [BoundTexture]
-bindTextures dev set textures sampler = do
-  let info =
-        Vk.SomeStruct
-          Vk.zero
-            { VkWriteDescriptorSet.dstSet = set,
-              VkWriteDescriptorSet.dstBinding = 0, -- TODO magic number, use a configurable value
-              VkWriteDescriptorSet.descriptorType = Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-              VkWriteDescriptorSet.descriptorCount = fromIntegral $ length textures,
-              VkWriteDescriptorSet.imageInfo = V.fromList $ imageInfo <$> textures,
-              VkWriteDescriptorSet.dstArrayElement = 0
-            }
-   in Vk.updateDescriptorSets dev [info] []
-  return $ zipWith (\i t -> BoundTexture {index = i, texture = t}) [0 ..] textures
-  where
-    imageInfo (Texture {view = v}) =
-      Vk.zero
-        { VkDescriptorImageInfo.imageView = v,
-          VkDescriptorImageInfo.sampler = sampler,
-          VkDescriptorImageInfo.imageLayout = Vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-        }
 
 bindLights :: (MonadIO io) => Vk.Device -> Vk.DescriptorSet -> Vk.Buffer -> io ()
 bindLights dev set lights =
@@ -1123,24 +1011,6 @@ createSwapchain
       swapchain <- managed $ Vk.withSwapchainKHR dev info Nothing bracket
       (_, images) <- Vk.getSwapchainImagesKHR dev swapchain
       return (swapchain, extent, images)
-
-withImageView :: Vk.Device -> Vk.Image -> Vk.Format -> Managed Vk.ImageView
-withImageView dev img format =
-  let imageViewCreateInfo =
-        Vk.zero
-          { VkImageViewCreateInfo.image = img,
-            VkImageViewCreateInfo.viewType = Vk.IMAGE_VIEW_TYPE_2D,
-            VkImageViewCreateInfo.format = format,
-            VkImageViewCreateInfo.subresourceRange =
-              Vk.zero
-                { VkImageSubresourceRange.aspectMask = Vk.IMAGE_ASPECT_COLOR_BIT,
-                  VkImageSubresourceRange.baseMipLevel = 0,
-                  VkImageSubresourceRange.levelCount = 1,
-                  VkImageSubresourceRange.baseArrayLayer = 0,
-                  VkImageSubresourceRange.layerCount = 1
-                }
-          }
-   in managed $ Vk.withImageView dev imageViewCreateInfo Nothing bracket
 
 withDevice :: Vk.PhysicalDevice -> Word32 -> Word32 -> Bool -> Managed Vk.Device
 withDevice gpu gfx present portability =

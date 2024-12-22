@@ -15,6 +15,7 @@ executable atlas-parser
       Atlas
       Init
       Measure
+      Texture
       Utils
       Paths_Vulkan2DEngine
   hs-source-dirs:
@@ -52,6 +53,7 @@ executable vulkan2dengine
       Atlas
       Init
       Measure
+      Texture
       Utils
       Paths_Vulkan2DEngine
   hs-source-dirs:

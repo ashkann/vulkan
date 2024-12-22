@@ -1,5 +1,6 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 
 module Atlas
   ( atlas,
@@ -7,6 +8,8 @@ module Atlas
     lookupIndexed,
     Atlas (..),
     Key (..),
+
+    bindTextures,
   )
 where
 
@@ -14,14 +17,15 @@ import Control.Monad (when)
 import Control.Monad.Except (MonadError (throwError))
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Functor ((<&>))
-import qualified Data.Map.Strict as M
+import Data.Map.Strict qualified as M
 import Data.Word (Word32)
-import qualified Geomancy as G
+import Geomancy qualified as G
 import Measure
 import Text.Parsec (anyChar, char, digit, endOfLine, eof, many1, manyTill, optionMaybe, parse, string, (<?>))
 import Text.Parsec.Char (spaces)
 import Text.Parsec.String (Parser, parseFromFile)
 import Prelude hiding (lookup)
+import Texture(bindTextures)
 
 newtype Key = Key (String, Maybe Word32)
   deriving (Show)
@@ -30,9 +34,12 @@ newtype Key = Key (String, Maybe Word32)
 newtype Atlas = Atlas (M.Map Key TextureRegion) deriving (Show)
 
 mkRegion ::
-  PixelSize -> -- ^ Size of the atlas 
-  PixelPosition -> -- ^ Position of the region
-  PixelSize -> -- ^ Size of the region
+  -- | Size of the atlas
+  PixelSize ->
+  -- | Position of the region
+  PixelPosition ->
+  -- | Size of the region
+  PixelSize ->
   TextureRegion
 mkRegion (PixelWH sx sy) (PixelXY x y) (PixelWH w h) =
   TextureRegion $ G.vec4 (u x) (v y) (u $ x + w) (v $ y + h)

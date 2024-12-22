@@ -309,12 +309,12 @@ main = runManaged $ do
           worldEvent
           (world0 atlas)
 
-world0 :: Atlas.Atlas2 -> World
+world0 :: Atlas.Atlas -> World
 world0 atlas =
   let one = G.vec2 1 1
       mkRectObj index piv pos =
         Object
-          { sprite = Atlas.mkSpriteIndexed atlas "rectangle" index,
+          { sprite = Atlas.spriteIndexed atlas "rectangle" index,
             state = SpriteState {position = pos, pivot = piv, scale = one},
             vel = Measure.ndcSize 0.0 0.0,
             animation = Nothing
@@ -339,22 +339,22 @@ world0 atlas =
       globalLight = GlobalLight {intensity = 0.93, _padding1 = 0, _padding2 = 0, color = G.vec3 1.0 0.73 1.0}
       basketball =
         Object
-          { sprite = Atlas.mkSprite atlas "basketball",
+          { sprite = Atlas.sprite atlas "basketball",
             state = SpriteState {position = Measure.ndcCenter, pivot = Measure.texCenter, scale = one},
             vel = Measure.ndcSize (-0.0005) (-0.002),
             animation = Nothing
           }
       blueBall =
         Object
-          { sprite = Atlas.mkSprite atlas "blue_ball",
+          { sprite = Atlas.sprite atlas "blue_ball",
             state = SpriteState {position = Measure.ndcBottomLeft, pivot = Measure.texBottomLeft, scale = one},
             vel = Measure.ndcSize 0.001 0.002,
             animation = Nothing
           }
-      background = Atlas.mkSprite atlas "checkerboard"
+      background = Atlas.sprite atlas "checkerboard"
       lightSource =
         Object
-          { sprite = Atlas.mkSprite atlas "light_source",
+          { sprite = Atlas.sprite atlas "light_source",
             state = SpriteState {position = Measure.ndcCenter, pivot = Measure.texCenter, scale = one},
             vel = Measure.ndcSize 0.001 0.002,
             animation = Nothing

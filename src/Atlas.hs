@@ -4,16 +4,12 @@
 {-# LANGUAGE NoFieldSelectors #-}
 
 module Atlas
-  ( Atlas (..),
-    Atlas2 (..),
-    Key (..),
+  (
+    Atlas (..),
     Sprite (..),
-    atlas,
-    lookup,
-    lookupIndexed,
     withAtlas,
-    mkSprite,
-    mkSpriteIndexed,
+    sprite,
+    spriteIndexed,
   )
 where
 
@@ -39,7 +35,7 @@ newtype Key = Key (String, Maybe Word32)
   deriving (Show)
   deriving (Ord, Eq)
 
-newtype Atlas = Atlas (M.Map Key TextureRegion) deriving (Show)
+newtype Regions = Regions (M.Map Key TextureRegion) deriving (Show)
 
 mkRegion ::
   -- | Size of the atlas
@@ -55,20 +51,20 @@ mkRegion (PixelWH sx sy) (PixelXY x y) (PixelWH w h) =
     u x = fromIntegral x / fromIntegral sx
     v y = fromIntegral y / fromIntegral sy
 
-lookup :: Atlas -> String -> TextureRegion
-lookup (Atlas rs) name = rs M.! Key (name, Nothing)
+lookup :: Regions -> String -> TextureRegion
+lookup (Regions rs) name = rs M.! Key (name, Nothing)
 
-lookupIndexed :: Atlas -> String -> Word32 -> TextureRegion
-lookupIndexed (Atlas rs) name index = rs M.! Key (name, Just index)
+lookupIndexed :: Regions -> String -> Word32 -> TextureRegion
+lookupIndexed (Regions rs) name index = rs M.! Key (name, Just index)
 
-atlas :: (MonadError String m, MonadIO m) => FilePath -> m (FilePath, Atlas)
+atlas :: (MonadError String m, MonadIO m) => FilePath -> m (FilePath, Regions)
 atlas file = liftIO (parseFromFile atlasP file) >>= either (throwError . show) return
 
-atlasP :: Parser (FilePath, Atlas)
+atlasP :: Parser (FilePath, Regions)
 atlasP = do
   (fileName, s) <- headerP <?> "header"
   regions <- manyTill (regionP <&> \(k, xy, size) -> (k, mkRegion s xy size)) eof
-  return (fileName, Atlas $ M.fromList regions)
+  return (fileName, Regions $ M.fromList regions)
 
 -- | Parse the atlas header
 --
@@ -141,29 +137,29 @@ pixelSizeP = PixelSize <$> uvec2P
 pixelPositionP :: Parser PixelPosition
 pixelPositionP = PixelPosition <$> uvec2P
 
-data Atlas2 = Atlas2
+data Atlas = Atlas
   { texture :: Tex.BoundTexture,
-    atlas :: Atlas
+    atlas :: Regions
   }
 
-withAtlas :: Vk.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> Vk.DescriptorSet -> Vk.Sampler -> String -> Managed Atlas2
+withAtlas :: Vk.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> Vk.DescriptorSet -> Vk.Sampler -> String -> Managed Atlas
 withAtlas allocator device commandPool gfxQueue descSet sampler atlasFile = do
   (atlasTextureFile, atlas) <- either (sayErr "Atlas") return =<< runExceptT (atlas atlasFile)
   atlasTexture <- Tex.texture allocator device commandPool gfxQueue $ "out/" ++ atlasTextureFile -- TODO:: remove "out/""
   [boundAtlasTexture] <- Tex.bindTextures device descSet [atlasTexture] sampler
-  return $ Atlas2 { texture = boundAtlasTexture, atlas = atlas}
+  return $ Atlas { texture = boundAtlasTexture, atlas = atlas}
 
 data Sprite = Sprite
   { texture :: Tex.BoundTexture,
     region :: Measure.TextureRegion
   }
 
-mkSprite :: Atlas2 -> String -> Sprite
-mkSprite (Atlas2 {texture = atlasTexture, atlas = atlas}) name = Sprite {texture = atlasTexture, region = Atlas.lookup atlas name}
+sprite :: Atlas -> String -> Sprite
+sprite (Atlas {texture = tex, atlas = atlas}) name = Sprite {texture = tex, region = lookup atlas name}
 
-mkSpriteIndexed :: Atlas2 -> String -> Word32 -> Sprite
-mkSpriteIndexed (Atlas2 {texture = atlasTexture, atlas = atlas}) name index =
+spriteIndexed :: Atlas -> String -> Word32 -> Sprite
+spriteIndexed (Atlas {texture = tex, atlas = atlas}) name index =
   Sprite
-    { texture = atlasTexture,
-      region = Atlas.lookupIndexed atlas name index
+    { texture = tex,
+      region = lookupIndexed atlas name index
     }

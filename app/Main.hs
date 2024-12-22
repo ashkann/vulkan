@@ -131,14 +131,14 @@ newtype BoundTextureDescriptorIndex = BoundTextureDescriptorIndex Word32
 data BoundTexture = BoundTexture {index :: Word32, texture :: Texture}
 
 data Sprite = Sprite
-  { scale :: G.Vec2,
-    texture :: BoundTexture,
-    region :: Measure.TextureRegion,
-    pivot :: Measure.TexturePosition
+  { texture :: BoundTexture,
+    region :: Measure.TextureRegion
   }
 
 data SpriteState = SpriteState
-  { position :: Measure.NormalizedDevicePosition
+  { position :: Measure.NormalizedDevicePosition,
+    scale :: G.Vec2,
+    pivot :: Measure.TexturePosition
   }
 
 data Sheet = Sheet {texture :: BoundTexture, frames :: V.Vector G.Vec4}
@@ -337,22 +337,18 @@ world0 tex atlas =
   let one = G.vec2 1 1
       mkSprite name =
         Sprite
-          { scale = one,
-            texture = tex,
-            region = Atlas.lookup atlas name,
-            pivot = Measure.texTopLeft
+          { texture = tex,
+            region = Atlas.lookup atlas name
           }
       mkSpriteIndexed name index =
         Sprite
-          { scale = one,
-            texture = tex,
-            region = Atlas.lookupIndexed atlas name index,
-            pivot = Measure.texTopLeft
+          { texture = tex,
+            region = Atlas.lookupIndexed atlas name index
           }
       mkRectObj index piv pos =
         Object
-          { sprite = (mkSpriteIndexed "rectangle" index) {pivot = piv},
-            state = SpriteState {position = pos},
+          { sprite = mkSpriteIndexed "rectangle" index,
+            state = SpriteState {position = pos, pivot = piv, scale = one},
             vel = Measure.ndcSize 0.0 0.0,
             animation = Nothing
           }
@@ -376,15 +372,15 @@ world0 tex atlas =
       globalLight = GlobalLight {intensity = 0.93, _padding1 = 0, _padding2 = 0, color = G.vec3 1.0 0.73 1.0}
       basketball =
         Object
-          { sprite = (mkSprite "basketball") {pivot = Measure.texCenter},
-            state = SpriteState {position = Measure.ndcCenter},
+          { sprite = mkSprite "basketball",
+            state = SpriteState {position = Measure.ndcCenter, pivot = Measure.texCenter, scale = one},
             vel = Measure.ndcSize (-0.0005) (-0.002),
             animation = Nothing
           }
       blueBall =
         Object
-          { sprite = (mkSprite "blue_ball") {pivot = Measure.texBottomLeft},
-            state = SpriteState {position = Measure.ndcBottomLeft},
+          { sprite = mkSprite "blue_ball",
+            state = SpriteState {position = Measure.ndcBottomLeft, pivot = Measure.texBottomLeft, scale = one},
             vel = Measure.ndcSize 0.001 0.002,
             animation = Nothing
           }
@@ -392,7 +388,7 @@ world0 tex atlas =
       lightSource =
         Object
           { sprite = mkSprite "light_source",
-            state = SpriteState {position = Measure.ndcCenter},
+            state = SpriteState {position = Measure.ndcCenter, pivot = Measure.texCenter, scale = one},
             vel = Measure.ndcSize 0.001 0.002,
             animation = Nothing
           }
@@ -663,7 +659,7 @@ sprites World {background, pointer, objects} =
   (background, static) : (s <$> objects) ++ [s pointer]
   where
     s Object {sprite, state} = (sprite, state)
-    static = SpriteState {position = Measure.ndcTopLeft}
+    static = SpriteState {position = Measure.ndcTopLeft, pivot = Measure.texTopLeft, scale = G.vec2 1 1}
 
 withMemoryAllocator :: Vk.Instance -> Vk.PhysicalDevice -> Vk.Device -> Managed Vma.Allocator
 withMemoryAllocator vulkan gpu device =
@@ -688,11 +684,10 @@ vertices :: Sprite -> SpriteState -> SV.Vector Vertex
 vertices
   ( Sprite
       { texture = BoundTexture {index = tex, texture = Texture {size = ts}},
-        region = reg,
-        pivot = piv
+        region = reg
       }
     )
-  (SpriteState {position = p}) =
+  (SpriteState {position = p, pivot = piv}) =
     let Measure.Quad (a, b, c, d) = Measure.localToNdc ts reg piv p
         topLeft = mkVertex a tex
         topRight = mkVertex b tex

@@ -321,7 +321,7 @@ main = runManaged $ do
       -- animation = Animation {sheet = sheet, speed = 15.0}
       whiteLight = PointLight {position = G.vec2 0.0 0.0, color = G.vec3 1.0 1.0 0.7, intensity = 1.0}
       globalLight = GlobalLight {intensity = 0.93, _padding1 = 0, _padding2 = 0, color = G.vec3 1.0 0.73 1.0}
-      a =
+      basketball =
         Object
           { sprite = (mkSprite "basketball") {pos = Measure.ndcCenter, pivot = Measure.texCenter},
             vel = Measure.ndcSize (-0.0005) (-0.002),
@@ -333,9 +333,9 @@ main = runManaged $ do
       --       vel = G.vec2 0.0 0.0,
       --       animation = Just $ Animated animation 0.0
       --     }
-      c =
+      blueBall =
         Object
-          { sprite = mkSprite "blue_ball",
+          { sprite = (mkSprite "blue_ball") {pos = Measure.ndcBottomLeft, pivot = Measure.texBottomLeft},
             vel = Measure.ndcSize 0.001 0.002,
             animation = Nothing
           }
@@ -350,8 +350,7 @@ main = runManaged $ do
         World
           { background = background,
             pointer = lightSource {pos = Measure.ndcCenter, pivot = Measure.texCenter},
-            -- objects = [r1, r2, r3, r4, r5, a, b, c],
-            objects = [r1, r2, r3, r4, r5],
+            objects = [r1, r2, r3, r4, r5, basketball, blueBall],
             lights = [whiteLight],
             globalLight = globalLight
           }

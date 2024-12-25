@@ -1,19 +1,20 @@
-{-# LANGUAGE ImportQualifiedPost #-}
-{-# LANGUAGE OverloadedLists #-}
-{-# LANGUAGE NoFieldSelectors #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE ImportQualifiedPost #-}
+{-# LANGUAGE OverloadedLists #-}
+{-# LANGUAGE StrictData #-}
+{-# LANGUAGE NoFieldSelectors #-}
 
 module Texture
   ( Texture (..),
-    BoundTexture (..),
     DescriptorIndex,
+    Sprite (..),
     texture,
-    bindTextures,
+    bind,
     withHostBuffer,
     withImageView,
     withImage,
-    withImageAndView
+    withImageAndView,
   )
 where
 
@@ -26,6 +27,7 @@ import Data.Vector qualified as V
 import Data.Vector.Storable qualified as SV
 import Data.Word (Word32)
 import Foreign (Ptr, castPtr, copyArray, withForeignPtr)
+import Foreign.Storable (Storable)
 import Measure
 import Utils
 import Vulkan qualified as Vk
@@ -41,21 +43,26 @@ import Vulkan.Zero qualified as Vk
 import VulkanMemoryAllocator qualified as Vma
 import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCreateInfo (..))
 import Prelude hiding (init, lookup)
-import Foreign.Storable (Storable)
 
--- TODO: remove the Texture and put everything into BoundTexture and rename it to Texture
+-- | TODO: remove the Texture and put everything into BoundTexture and rename it to Texture
 data Texture = Texture
-  { resolution :: Measure.PixelSize,
+  { size :: Measure.PixelSize,
+    -- | TODO: Do we need to keep the image?
     image :: Vk.Image,
+    -- | TODO: Do we need to keep the view?
     view :: Vk.ImageView
   }
   deriving (Show)
 
-newtype DescriptorIndex = DescriptorIndex Word32 deriving Storable
+newtype DescriptorIndex = DescriptorIndex Word32 deriving (Storable)
 
-data BoundTexture = BoundTexture {index :: DescriptorIndex, texture :: Texture}
+data Sprite = Sprite
+  { texture :: DescriptorIndex,
+    region :: Measure.UVRegion,
+    size :: Measure.NormalizedDeviceSize
+  }
 
-texture :: Vma.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> FilePath -> Managed Texture
+texture :: Vma.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> FilePath -> Managed Vk.ImageView
 texture allocator device pool queue path = do
   JP.ImageRGBA8 (JP.Image width height pixels) <- liftIO $ JP.readPng path >>= either (sayErr "Texture" . show) return
   let size = width * height * 4
@@ -65,8 +72,7 @@ texture allocator device pool queue path = do
     (staging, mem) <- withHostBuffer allocator (fromIntegral size)
     liftIO $ copy pixels mem size
     copyBufferToImage device pool queue staging image width height
-    let res = Measure.pixelSize (fromIntegral width) (fromIntegral height)
-    return Texture {resolution = res, image = image, view = view}
+    return view
   where
     copy pixels mem size =
       let (src, _) = SV.unsafeToForeignPtr0 pixels
@@ -146,12 +152,12 @@ withHostBuffer allocator size = do
   say "Vulkan" $ "Created host buffer (" ++ show size ++ " bytes)"
   return (buffer, mem)
 
-bindTextures :: Vk.Device -> Vk.DescriptorSet -> [Texture] -> Vk.Sampler -> Managed [BoundTexture]
-bindTextures dev set textures sampler = do
+bind :: Vk.Device -> Vk.DescriptorSet -> [Vk.ImageView] -> Vk.Sampler -> Managed [DescriptorIndex]
+bind dev dst textures sampler = do
   let info =
         Vk.SomeStruct
           Vk.zero
-            { VkWriteDescriptorSet.dstSet = set,
+            { VkWriteDescriptorSet.dstSet = dst,
               VkWriteDescriptorSet.dstBinding = 0, -- TODO: magic number, use a configurable value
               VkWriteDescriptorSet.descriptorType = Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
               VkWriteDescriptorSet.descriptorCount = fromIntegral $ length textures,
@@ -159,9 +165,9 @@ bindTextures dev set textures sampler = do
               VkWriteDescriptorSet.dstArrayElement = 0
             }
    in Vk.updateDescriptorSets dev [info] []
-  return $ zipWith (\i t -> BoundTexture {index = DescriptorIndex i, texture = t}) [0 ..] textures
+  return $ zipWith (\i _ -> DescriptorIndex i) [0 ..] textures -- TODO: simplify
   where
-    imageInfo (Texture {view = v}) =
+    imageInfo v =
       Vk.zero
         { VkDescriptorImageInfo.imageView = v,
           VkDescriptorImageInfo.sampler = sampler,

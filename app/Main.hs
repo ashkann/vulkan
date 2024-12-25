@@ -23,7 +23,6 @@ import Atlas qualified
 import Control.Concurrent (threadDelay)
 import Control.Exception (bracket)
 import Control.Monad (when)
-import Control.Monad.Except (runExceptT)
 import Control.Monad.Managed (Managed, MonadIO (liftIO), managed, runManaged)
 import Data.Bits ((.|.))
 import Data.ByteString qualified as BS (readFile)
@@ -40,8 +39,7 @@ import Geomancy qualified as G
 import Init qualified
 import Measure qualified
 import SDL qualified
-import Texture (BoundTexture, DescriptorIndex)
-import Texture qualified
+import Texture qualified as Tex
 import Utils
 import Vulkan qualified as Vk
 import Vulkan qualified as VkBufferCreateInfo (BufferCreateInfo (..))
@@ -90,9 +88,9 @@ import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCre
 import VulkanMemoryAllocator qualified as VmaAllocatorCreateInfo (AllocatorCreateInfo (..))
 import Prelude hiding (init)
 
-data Vertex = Vertex {xy :: G.Vec2, uv :: G.Vec2, texture :: DescriptorIndex}
+data Vertex = Vertex {xy :: G.Vec2, uv :: G.Vec2, texture :: Tex.DescriptorIndex}
 
-mkVertex :: Measure.QuadCorner -> DescriptorIndex -> Vertex
+mkVertex :: Measure.QuadCorner -> Tex.DescriptorIndex -> Vertex
 mkVertex (Measure.Corner (pos, uv)) index = Vertex {xy = Measure.ndcVec pos, uv = Measure.texVec uv, texture = index}
 
 -- $(makeLenses ''Vertex)
@@ -112,14 +110,13 @@ instance Storable Vertex where
   peek = Store.peek vertexStore
   poke = Store.poke vertexStore
 
-
 data SpriteState = SpriteState
   { position :: Measure.NormalizedDevicePosition,
     scale :: G.Vec2,
-    pivot :: Measure.TexturePosition
+    origin :: Measure.TexturePosition
   }
 
-data Sheet = Sheet {texture :: BoundTexture, frames :: V.Vector G.Vec4}
+data Sheet = Sheet {texture :: Tex.DescriptorIndex, frames :: V.Vector G.Vec4}
 
 data Animation = Animation {sheet :: Sheet, speed :: Float}
 
@@ -194,14 +191,13 @@ instance Storable Viewport where
   poke = Store.poke viewportStore
 
 data Object = Object
-  { sprite :: Atlas.Sprite,
+  { sprite :: Tex.Sprite,
     state :: SpriteState,
-    vel :: Measure.NormalizedDeviceSize,
-    animation :: Maybe Animated
+    vel :: Measure.NormalizedDeviceSize
   }
 
 data World = World
-  { background :: Atlas.Sprite,
+  { background :: Tex.Sprite,
     pointer :: Object,
     objects :: [Object],
     globalLight :: GlobalLight,
@@ -314,10 +310,9 @@ world0 atlas =
   let one = G.vec2 1 1
       mkRectObj index piv pos =
         Object
-          { sprite = Atlas.spriteIndexed atlas "rectangle" index,
-            state = SpriteState {position = pos, pivot = piv, scale = one},
-            vel = Measure.ndcSize 0.0 0.0,
-            animation = Nothing
+          { sprite = Atlas.spriteIndexed atlas "rectangle" index windowSize,
+            state = SpriteState {position = pos, origin = piv, scale = one},
+            vel = Measure.ndcSize 0.0 0.0
           }
       -- sheet =
       --   Sheet
@@ -339,25 +334,22 @@ world0 atlas =
       globalLight = GlobalLight {intensity = 0.93, _padding1 = 0, _padding2 = 0, color = G.vec3 1.0 0.73 1.0}
       basketball =
         Object
-          { sprite = Atlas.sprite atlas "basketball",
-            state = SpriteState {position = Measure.ndcCenter, pivot = Measure.texCenter, scale = one},
-            vel = Measure.ndcSize (-0.0005) (-0.002),
-            animation = Nothing
+          { sprite = Atlas.sprite atlas "basketball" windowSize,
+            state = SpriteState {position = Measure.ndcCenter, origin = Measure.texCenter, scale = one},
+            vel = Measure.ndcSize (-0.0005) (-0.002)
           }
       blueBall =
         Object
-          { sprite = Atlas.sprite atlas "blue_ball",
-            state = SpriteState {position = Measure.ndcBottomLeft, pivot = Measure.texBottomLeft, scale = one},
-            vel = Measure.ndcSize 0.001 0.002,
-            animation = Nothing
+          { sprite = Atlas.sprite atlas "blue_ball" windowSize,
+            state = SpriteState {position = Measure.ndcBottomLeft, origin = Measure.texBottomLeft, scale = one},
+            vel = Measure.ndcSize 0.001 0.002
           }
-      background = Atlas.sprite atlas "checkerboard"
+      background = Atlas.sprite atlas "checkerboard" windowSize
       lightSource =
         Object
-          { sprite = Atlas.sprite atlas "light_source",
-            state = SpriteState {position = Measure.ndcCenter, pivot = Measure.texCenter, scale = one},
-            vel = Measure.ndcSize 0.001 0.002,
-            animation = Nothing
+          { sprite = Atlas.sprite atlas "light_source" windowSize,
+            state = SpriteState {position = Measure.ndcCenter, origin = Measure.texCenter, scale = one},
+            vel = Measure.ndcSize 0.001 0.002
           }
       r1 = mkRectObj 0 Measure.texTopLeft Measure.ndcTopLeft
       r2 = mkRectObj 1 Measure.texTopRight Measure.ndcTopRight
@@ -503,7 +495,7 @@ withFrames device gfx allocator stagingBufferSize vertexBufferSize lightBufferSi
                     Vk.commandBufferCount = 2
                   }
            in managed (Vk.withCommandBuffers device info bracket)
-        vertextStagingBuffer <- Texture.withHostBuffer allocator stagingBufferSize
+        vertextStagingBuffer <- Tex.withHostBuffer allocator stagingBufferSize
         imageAvailable <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
         renderFinished <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
         copyFinished <- managed $ Vk.withSemaphore device Vk.zero Nothing bracket
@@ -513,7 +505,7 @@ withFrames device gfx allocator stagingBufferSize vertexBufferSize lightBufferSi
         vertexBuffer <- withGPUBuffer allocator vertexBufferSize Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
         lightBuffer <- withGPUBuffer allocator lightBufferSize Vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT
         viewportBuffer <- withGPUBuffer allocator lightBufferSize Vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT
-        (image, view) <- Texture.withImageAndView allocator device windowWidth windowHeight Init.imageFormat
+        (image, view) <- Tex.withImageAndView allocator device windowWidth windowHeight Init.imageFormat
         return
           Frame
             { pool = pool,
@@ -621,12 +613,12 @@ windowHeight = 500
 windowSize :: Measure.PixelSize
 windowSize = Measure.pixelSize windowWidth windowHeight
 
-sprites :: World -> [(Atlas.Sprite, SpriteState)]
+sprites :: World -> [(Tex.Sprite, SpriteState)]
 sprites World {background, pointer, objects} =
   (background, static) : (s <$> objects) ++ [s pointer]
   where
     s Object {sprite, state} = (sprite, state)
-    static = SpriteState {position = Measure.ndcTopLeft, pivot = Measure.texTopLeft, scale = G.vec2 1 1}
+    static = SpriteState {position = Measure.ndcTopLeft, origin = Measure.texTopLeft, scale = G.vec2 1 1}
 
 withMemoryAllocator :: Vk.Instance -> Vk.PhysicalDevice -> Vk.Device -> Managed Vma.Allocator
 withMemoryAllocator vulkan gpu device =
@@ -647,16 +639,16 @@ withMemoryAllocator vulkan gpu device =
           }
    in managed $ Vma.withAllocator info bracket
 
-vertices :: Atlas.Sprite -> SpriteState -> SV.Vector Vertex
+vertices :: Tex.Sprite -> SpriteState -> SV.Vector Vertex
 vertices
-  ( Atlas.Sprite
-      { texture = Texture.BoundTexture {index = tex, texture = Texture.Texture {resolution = res}},
-        region = reg
+  ( Tex.Sprite
+      { texture = tex,
+        region = reg,
+        size = size
       }
     )
-  (SpriteState {position = p, pivot = piv}) =
-    let ts = Measure.pixelSizeToNdc res windowSize
-        Measure.Quad (a, b, c, d) = Measure.localToNdc ts reg piv p
+  (SpriteState {position = pos, origin = org}) =
+    let Measure.Quad (a, b, c, d) = Measure.quad size reg org pos
         topLeft = mkVertex a tex
         topRight = mkVertex b tex
         bottomRight = mkVertex c tex
@@ -973,9 +965,7 @@ createSwapchain
             Vk.Extent2D w h
               | w == maxBound,
                 h == maxBound ->
-                  Vk.Extent2D
-                    (fromIntegral width)
-                    (fromIntegral height)
+                  Vk.Extent2D width height
             e -> e
           info =
             Vk.zero

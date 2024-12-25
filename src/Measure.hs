@@ -3,7 +3,8 @@
 module Measure
   ( PixelPosition (..),
     PixelSize (..),
-    TextureRegion (..),
+    PixelRegion (..),
+    UVRegion (..),
     TexturePosition,
     TextureSize,
     NormalizedDevicePosition,
@@ -18,12 +19,13 @@ module Measure
     pixelSize,
     texSize,
     pixelSizeToNdc,
-    pattern TextureRegionXY,
     pattern TextureXY,
     pattern NormalizedDeviceWH,
     pattern NormalizedDeviceXY,
     pattern PixelXY,
     pattern PixelWH,
+    pattern PixelReg,
+    pattern UVReg,
     ndcTopLeft,
     ndcTopRight,
     ndcBottomLeft,
@@ -34,10 +36,12 @@ module Measure
     texBottomLeft,
     texBottomRight,
     texCenter,
-    localToNdc,
+    quad,
     ndcVec,
     texVec,
     pixelPosToTex,
+    pixelReg,
+    uvReg,
   )
 where
 
@@ -45,12 +49,12 @@ import Data.Word (Word32)
 import qualified Geomancy as G
 import Prelude hiding (lookup)
 
-newtype TextureRegion = TextureRegion G.Vec4 deriving (Show)
+-- data TextureRegion = TextureRegion {uv :: G.Vec4, pixels :: G.UVec4} deriving (Show)
 
-{-# COMPLETE TextureRegionXY #-}
+-- {-# COMPLETE TextureRegionXY #-}
 
-pattern TextureRegionXY :: Float -> Float -> Float -> Float -> TextureRegion
-pattern TextureRegionXY u1 v1 u2 v2 <- TextureRegion (G.WithVec4 u1 v1 u2 v2)
+-- pattern TextureRegionXY :: Float -> Float -> Float -> Float -> TextureRegion
+-- pattern TextureRegionXY u1 v1 u2 v2 <- TextureRegion (G.WithVec4 u1 v1 u2 v2)
 
 newtype PixelPosition = PixelPosition G.UVec2 deriving (Show)
 
@@ -71,6 +75,26 @@ pixelSize w h = PixelSize $ G.uvec2 w h
 
 pattern PixelWH :: Word32 -> Word32 -> PixelSize
 pattern PixelWH w h <- PixelSize (G.WithUVec2 w h)
+
+newtype PixelRegion = PixelRegion G.UVec4 deriving (Show)
+
+pixelReg :: Word32 -> Word32 -> Word32 -> Word32 -> PixelRegion
+pixelReg x1 y1 x2 y2 = PixelRegion $ G.uvec4 x1 y1 x2 y2
+
+{-# COMPLETE PixelReg #-}
+
+pattern PixelReg :: Word32 -> Word32 -> Word32 -> Word32 -> PixelRegion -- TODO: make it bidirectional
+pattern PixelReg x1 y1 x2 y2 <- PixelRegion (G.WithUVec4 x1 y1 x2 y2)
+
+newtype UVRegion = UVRegion G.Vec4 deriving (Show)
+
+uvReg :: Float -> Float -> Float -> Float -> UVRegion
+uvReg u1 v1 u2 v2 = UVRegion $ G.vec4 u1 v1 u2 v2
+
+{-# COMPLETE UVReg #-}
+
+pattern UVReg :: Float -> Float -> Float -> Float -> UVRegion -- TODO: make it bidirectional
+pattern UVReg u1 v1 u2 v2 <- UVRegion (G.WithVec4 u1 v1 u2 v2)
 
 newtype NormalizedDevicePosition = NormalizedDevicePosition G.Vec2 deriving (Show)
 
@@ -111,9 +135,9 @@ pixelPosToNdc (PixelXY x y) (PixelWH w h) =
    in ndcPos (nx - 1.0) (ny - 1.0)
 
 pixelSizeToNdc :: PixelSize -> PixelSize -> NormalizedDeviceSize
-pixelSizeToNdc (PixelWH w h) (PixelWH sw sh) =
-  let nw = fromIntegral w / fromIntegral sw
-      nh = fromIntegral h / fromIntegral sh
+pixelSizeToNdc (PixelWH w h) (PixelWH windowWidth windowHeight) =
+  let nw = fromIntegral w / fromIntegral windowWidth
+      nh = fromIntegral h / fromIntegral windowHeight
    in ndcSize (nw * 2.0) (nh * 2.0)
 
 newtype TexturePosition = TexturePosition G.Vec2 deriving (Show)
@@ -135,16 +159,16 @@ newtype QuadCorner = Corner (NormalizedDevicePosition, TexturePosition)
 
 newtype Quad = Quad (QuadCorner, QuadCorner, QuadCorner, QuadCorner)
 
--- | Create a quad in the NDC from local coordinates
-localToNdc ::
+-- | Create a quad in the NDC from local coordinates expressed in UV
+quad ::
   NormalizedDeviceSize ->
-  TextureRegion ->
+  UVRegion ->
   TexturePosition ->
   NormalizedDevicePosition ->
   Quad
-localToNdc (NormalizedDeviceWH w h) (TextureRegionXY u1 v1 u2 v2) (TextureXY x y) (NormalizedDeviceXY x' y') =
-  let (x1, x2) = toNdc w u1 u2 x x'
-      (y1, y2) = toNdc h v1 v2 y y'
+quad (NormalizedDeviceWH w h) (UVReg u1 v1 u2 v2) (TextureXY ox oy) (NormalizedDeviceXY x y) =
+  let (x1, x2) = localToNdc w u1 u2 ox x
+      (y1, y2) = localToNdc h v1 v2 oy y
    in Quad
         ( Corner (ndcPos x1 y1, texPos u1 v1),
           Corner (ndcPos x2 y1, texPos u2 v1),
@@ -152,9 +176,9 @@ localToNdc (NormalizedDeviceWH w h) (TextureRegionXY u1 v1 u2 v2) (TextureXY x y
           Corner (ndcPos x1 y2, texPos u1 v2)
         )
   where
-    toNdc w u1 u2 x x' =
+    localToNdc w u1 u2 ox x =
       let rw = w * (u2 - u1)
-          x1 = x' - rw * x
+          x1 = x - rw * ox
        in (x1, x1 + rw)
 
 ndcTopLeft :: NormalizedDevicePosition

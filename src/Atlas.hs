@@ -4,9 +4,8 @@
 {-# LANGUAGE NoFieldSelectors #-}
 
 module Atlas
-  (
+  ( atlas,
     Atlas (..),
-    Sprite (..),
     withAtlas,
     sprite,
     spriteIndexed,
@@ -35,7 +34,9 @@ newtype Key = Key (String, Maybe Word32)
   deriving (Show)
   deriving (Ord, Eq)
 
-newtype Regions = Regions (M.Map Key TextureRegion) deriving (Show)
+data Region = Region {region :: UVRegion, size :: PixelSize} deriving (Show)
+
+newtype Regions = Regions (M.Map Key Region) deriving (Show)
 
 mkRegion ::
   -- | Size of the atlas
@@ -44,17 +45,17 @@ mkRegion ::
   PixelPosition ->
   -- | Size of the region
   PixelSize ->
-  TextureRegion
-mkRegion (PixelWH sx sy) (PixelXY x y) (PixelWH w h) =
-  TextureRegion $ G.vec4 (u x) (v y) (u $ x + w) (v $ y + h)
+  Region
+mkRegion (PixelWH aw ah) (PixelXY rx ry) size@(PixelWH rw rh) =
+  Region {region = uvReg (u rx) (v ry) (u $ rx + rw) (v $ ry + rh), size = size}
   where
-    u x = fromIntegral x / fromIntegral sx
-    v y = fromIntegral y / fromIntegral sy
+    u x = fromIntegral x / fromIntegral aw
+    v y = fromIntegral y / fromIntegral ah
 
-lookup :: Regions -> String -> TextureRegion
+lookup :: Regions -> String -> Region
 lookup (Regions rs) name = rs M.! Key (name, Nothing)
 
-lookupIndexed :: Regions -> String -> Word32 -> TextureRegion
+lookupIndexed :: Regions -> String -> Word32 -> Region
 lookupIndexed (Regions rs) name index = rs M.! Key (name, Just index)
 
 atlas :: (MonadError String m, MonadIO m) => FilePath -> m (FilePath, Regions)
@@ -62,8 +63,8 @@ atlas file = liftIO (parseFromFile atlasP file) >>= either (throwError . show) r
 
 atlasP :: Parser (FilePath, Regions)
 atlasP = do
-  (fileName, s) <- headerP <?> "header"
-  regions <- manyTill (regionP <&> \(k, xy, size) -> (k, mkRegion s xy size)) eof
+  (fileName, atlasSize) <- headerP <?> "header"
+  regions <- manyTill (regionP <&> \(k, pos, size) -> (k, mkRegion atlasSize pos size)) eof
   return (fileName, Regions $ M.fromList regions)
 
 -- | Parse the atlas header
@@ -138,28 +139,32 @@ pixelPositionP :: Parser PixelPosition
 pixelPositionP = PixelPosition <$> uvec2P
 
 data Atlas = Atlas
-  { texture :: Tex.BoundTexture,
-    atlas :: Regions
+  { texture :: Tex.DescriptorIndex,
+    regions :: Regions
   }
 
+-- TODO: find a way to reduce parameter count
 withAtlas :: Vk.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> Vk.DescriptorSet -> Vk.Sampler -> String -> Managed Atlas
 withAtlas allocator device commandPool gfxQueue descSet sampler atlasFile = do
-  (atlasTextureFile, atlas) <- either (sayErr "Atlas") return =<< runExceptT (atlas atlasFile)
-  atlasTexture <- Tex.texture allocator device commandPool gfxQueue $ "out/" ++ atlasTextureFile -- TODO:: remove "out/""
-  [boundAtlasTexture] <- Tex.bindTextures device descSet [atlasTexture] sampler
-  return $ Atlas { texture = boundAtlasTexture, atlas = atlas}
+  (atlasTextureFile, regions) <- either (sayErr "Atlas") return =<< runExceptT (atlas atlasFile)
+  tex <- Tex.texture allocator device commandPool gfxQueue $ "out/" ++ atlasTextureFile -- TODO:: remove "out/""
+  [descIndex] <- Tex.bind device descSet [tex] sampler
+  return $ Atlas {texture = descIndex, regions = regions}
 
-data Sprite = Sprite
-  { texture :: Tex.BoundTexture,
-    region :: Measure.TextureRegion
-  }
+sprite :: Atlas -> String -> PixelSize -> Tex.Sprite
+sprite (Atlas {texture = tex, regions = atlas}) name windowSize =
+  let reg = lookup atlas name
+   in mkSprite tex reg windowSize
 
-sprite :: Atlas -> String -> Sprite
-sprite (Atlas {texture = tex, atlas = atlas}) name = Sprite {texture = tex, region = lookup atlas name}
+spriteIndexed :: Atlas -> String -> Word32 -> PixelSize -> Tex.Sprite
+spriteIndexed (Atlas {texture = tex, regions = atlas}) name index windowSize =
+  let reg = lookupIndexed atlas name index
+   in mkSprite tex reg windowSize
 
-spriteIndexed :: Atlas -> String -> Word32 -> Sprite
-spriteIndexed (Atlas {texture = tex, atlas = atlas}) name index =
-  Sprite
+mkSprite :: Tex.DescriptorIndex -> Region -> PixelSize -> Tex.Sprite
+mkSprite tex Region {region = reg, size = size} windowSize =
+  Tex.Sprite
     { texture = tex,
-      region = lookupIndexed atlas name index
+      region = reg,
+      size = Measure.pixelSizeToNdc size windowSize
     }

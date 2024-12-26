@@ -167,8 +167,10 @@ quad ::
   NormalizedDevicePosition ->
   Quad
 quad (NormalizedDeviceWH w h) (UVReg u1 v1 u2 v2) (TextureXY ox oy) (NormalizedDeviceXY x y) =
-  let (x1, x2) = localToNdc w u1 u2 ox x
-      (y1, y2) = localToNdc h v1 v2 oy y
+  let x1 = localToNdc w ox x
+      x2 = x1 + w
+      y1 = localToNdc h oy y
+      y2 = y1 + h
    in Quad
         ( Corner (ndcPos x1 y1, texPos u1 v1),
           Corner (ndcPos x2 y1, texPos u2 v1),
@@ -176,10 +178,8 @@ quad (NormalizedDeviceWH w h) (UVReg u1 v1 u2 v2) (TextureXY ox oy) (NormalizedD
           Corner (ndcPos x1 y2, texPos u1 v2)
         )
   where
-    localToNdc w u1 u2 ox x =
-      let rw = w * (u2 - u1)
-          x1 = x - rw * ox
-       in (x1, x1 + rw)
+    -- | Convert local coordinates to NDC
+    localToNdc ndcWidth factor x = x - ndcWidth * factor
 
 ndcTopLeft :: NormalizedDevicePosition
 ndcTopLeft = ndcPos (-1.0) (-1.0)

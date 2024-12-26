@@ -9,7 +9,7 @@ module Texture
   ( Texture (..),
     DescriptorIndex,
     Sprite (..),
-    texture,
+    fromRGBA8PngFile,
     bind,
     withHostBuffer,
     withImageView,
@@ -62,8 +62,8 @@ data Sprite = Sprite
     size :: Measure.NormalizedDeviceSize
   }
 
-texture :: Vma.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> FilePath -> Managed Vk.ImageView
-texture allocator device pool queue path = do
+fromRGBA8PngFile :: Vma.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> FilePath -> Managed Vk.ImageView
+fromRGBA8PngFile allocator device pool queue path = do
   JP.ImageRGBA8 (JP.Image width height pixels) <- liftIO $ JP.readPng path >>= either (sayErr "Texture" . show) return
   let size = width * height * 4
       format = Vk.FORMAT_R8G8B8A8_SRGB

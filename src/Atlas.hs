@@ -146,8 +146,8 @@ data Atlas = Atlas
 -- TODO: find a way to reduce parameter count
 withAtlas :: Vk.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> Vk.DescriptorSet -> Vk.Sampler -> String -> Managed Atlas
 withAtlas allocator device commandPool gfxQueue descSet sampler atlasFile = do
-  (atlasTextureFile, regions) <- either (sayErr "Atlas") return =<< runExceptT (atlas atlasFile)
-  tex <- Tex.texture allocator device commandPool gfxQueue $ "out/" ++ atlasTextureFile -- TODO:: remove "out/""
+  (textureFile, regions) <- either (sayErr "Atlas") return =<< runExceptT (atlas atlasFile)
+  tex <- Tex.fromRGBA8PngFile allocator device commandPool gfxQueue $ "out/" ++ textureFile -- TODO:: remove "out/""
   [descIndex] <- Tex.bind device descSet [tex] sampler
   return $ Atlas {texture = descIndex, regions = regions}
 

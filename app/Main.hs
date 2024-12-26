@@ -35,6 +35,7 @@ import Foreign.Storable (Storable (..), sizeOf)
 import Foreign.Storable.Record qualified as Store
 import Geomancy qualified as G
 import Init qualified
+import Measure (ndcTopLeft)
 import Measure qualified
 import SDL qualified
 import Texture qualified as Tex

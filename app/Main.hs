@@ -89,8 +89,8 @@ import Prelude hiding (init)
 
 data Vertex = Vertex {xy :: G.Vec2, uv :: G.Vec2, texture :: Tex.DescriptorIndex}
 
-mkVertex :: Measure.QuadCorner -> Tex.DescriptorIndex -> Vertex
-mkVertex (Measure.Corner (pos, uv)) index = Vertex {xy = Measure.ndcVec pos, uv = Measure.texVec uv, texture = index}
+mkVertex :: Measure.NormalizedDevicePosition -> Measure.TexturePosition -> Tex.DescriptorIndex -> Vertex
+mkVertex pos uv index = Vertex {xy = Measure.ndcVec pos, uv = Measure.texVec uv, texture = index}
 
 -- $(makeLenses ''Vertex)
 
@@ -642,16 +642,23 @@ vertices :: Tex.Sprite -> SpriteState -> SV.Vector Vertex
 vertices
   ( Tex.Sprite
       { texture = tex,
-        region = reg,
-        size = size
+        region = Measure.UVReg u1 v1 u2 v2,
+        size = size@(Measure.NormalizedDeviceWH w h)
       }
     )
   (SpriteState {position = pos, origin = org}) =
-    let Measure.Quad (a, b, c, d) = Measure.quad size reg org pos
-        topLeft = mkVertex a tex
-        topRight = mkVertex b tex
-        bottomRight = mkVertex c tex
-        bottomLeft = mkVertex d tex
+    let a@(Measure.NormalizedDeviceXY x y) = Measure.localPosToNdc size org pos
+        b = Measure.ndcPos (x + w) y
+        c = Measure.ndcPos (x + w) (y + h)
+        d = Measure.ndcPos x (y + h)
+        uva = Measure.texPos u1 v1
+        uvb = Measure.texPos u2 v1
+        uvc = Measure.texPos u2 v2
+        uvd = Measure.texPos u1 v2
+        topLeft = mkVertex a uva tex
+        topRight = mkVertex b uvb tex
+        bottomRight = mkVertex c uvc tex
+        bottomLeft = mkVertex d uvd tex
      in SV.fromList
           [ topLeft,
             topRight,

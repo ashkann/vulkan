@@ -9,8 +9,6 @@ module Measure
     TextureSize,
     NormalizedDevicePosition,
     NormalizedDeviceSize,
-    Quad (..),
-    QuadCorner (..),
     ndcPos,
     texPos,
     ndcSize,
@@ -36,12 +34,13 @@ module Measure
     texBottomLeft,
     texBottomRight,
     texCenter,
-    quad,
     ndcVec,
     texVec,
     pixelPosToTex,
     pixelReg,
     uvReg,
+    localToNdc,
+    localPosToNdc,
   )
 where
 
@@ -155,31 +154,14 @@ newtype TextureSize = TextureSize G.Vec2 deriving (Show)
 texSize :: Float -> Float -> TextureSize
 texSize w h = TextureSize $ G.vec2 w h
 
-newtype QuadCorner = Corner (NormalizedDevicePosition, TexturePosition)
-
-newtype Quad = Quad (QuadCorner, QuadCorner, QuadCorner, QuadCorner)
-
--- | Create a quad in the NDC from local coordinates expressed in UV
-quad ::
-  NormalizedDeviceSize ->
-  UVRegion ->
-  TexturePosition ->
-  NormalizedDevicePosition ->
-  Quad
-quad (NormalizedDeviceWH w h) (UVReg u1 v1 u2 v2) (TextureXY ox oy) (NormalizedDeviceXY x y) =
+localPosToNdc :: NormalizedDeviceSize -> TexturePosition -> NormalizedDevicePosition -> NormalizedDevicePosition
+localPosToNdc (NormalizedDeviceWH w h) (TextureXY ox oy) (NormalizedDeviceXY x y) =
   let x1 = localToNdc w ox x
-      x2 = x1 + w
       y1 = localToNdc h oy y
-      y2 = y1 + h
-   in Quad
-        ( Corner (ndcPos x1 y1, texPos u1 v1),
-          Corner (ndcPos x2 y1, texPos u2 v1),
-          Corner (ndcPos x2 y2, texPos u2 v2),
-          Corner (ndcPos x1 y2, texPos u1 v2)
-        )
-  where
-    -- | Convert local coordinates to NDC
-    localToNdc ndcWidth factor x = x - ndcWidth * factor
+   in ndcPos x1 y1
+
+localToNdc :: Float -> Float -> Float -> Float
+localToNdc ndcWidth factor x = x - ndcWidth * factor
 
 ndcTopLeft :: NormalizedDevicePosition
 ndcTopLeft = ndcPos (-1.0) (-1.0)

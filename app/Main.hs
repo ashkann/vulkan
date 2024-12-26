@@ -110,9 +110,7 @@ instance Storable Vertex where
   poke = Store.poke vertexStore
 
 data SpriteState = SpriteState
-  { position :: Measure.NormalizedDevicePosition,
-    scale :: G.Vec2,
-    origin :: Measure.TexturePosition
+  { position :: Measure.NormalizedDevicePosition
   }
 
 data Sheet = Sheet {texture :: Tex.DescriptorIndex, frames :: V.Vector G.Vec4}
@@ -309,8 +307,8 @@ world0 atlas =
   let one = G.vec2 1 1
       mkRectObj index piv pos =
         Object
-          { sprite = Atlas.spriteIndexed atlas "rectangle" index windowSize,
-            state = SpriteState {position = pos, origin = piv, scale = one},
+          { sprite = Atlas.spriteIndexed atlas "rectangle" index piv windowSize,
+            state = SpriteState {position = pos},
             vel = Measure.ndcSize 0.0 0.0
           }
       -- sheet =
@@ -333,21 +331,21 @@ world0 atlas =
       globalLight = GlobalLight {intensity = 0.93, _padding1 = 0, _padding2 = 0, color = G.vec3 1.0 0.73 1.0}
       basketball =
         Object
-          { sprite = Atlas.sprite atlas "basketball" windowSize,
-            state = SpriteState {position = Measure.ndcCenter, origin = Measure.texCenter, scale = one},
+          { sprite = Atlas.sprite atlas "basketball" Measure.texCenter windowSize,
+            state = SpriteState {position = Measure.ndcCenter},
             vel = Measure.ndcSize (-0.0005) (-0.002)
           }
       blueBall =
         Object
-          { sprite = Atlas.sprite atlas "blue_ball" windowSize,
-            state = SpriteState {position = Measure.ndcBottomLeft, origin = Measure.texBottomLeft, scale = one},
+          { sprite = Atlas.sprite atlas "blue_ball" Measure.texBottomLeft windowSize,
+            state = SpriteState {position = Measure.ndcBottomLeft},
             vel = Measure.ndcSize 0.001 0.002
           }
-      background = Atlas.sprite atlas "checkerboard" windowSize
+      background = Atlas.sprite atlas "checkerboard" Measure.texTopLeft windowSize
       lightSource =
         Object
-          { sprite = Atlas.sprite atlas "light_source" windowSize,
-            state = SpriteState {position = Measure.ndcCenter, origin = Measure.texCenter, scale = one},
+          { sprite = Atlas.sprite atlas "light_source" Measure.texCenter windowSize,
+            state = SpriteState {position = Measure.ndcCenter},
             vel = Measure.ndcSize 0.001 0.002
           }
       r1 = mkRectObj 0 Measure.texTopLeft Measure.ndcTopLeft
@@ -617,7 +615,7 @@ sprites World {background, pointer, objects} =
   (background, static) : (s <$> objects) ++ [s pointer]
   where
     s Object {sprite, state} = (sprite, state)
-    static = SpriteState {position = Measure.ndcTopLeft, origin = Measure.texTopLeft, scale = G.vec2 1 1}
+    static = SpriteState {position = Measure.ndcTopLeft}
 
 withMemoryAllocator :: Vk.Instance -> Vk.PhysicalDevice -> Vk.Device -> Managed Vma.Allocator
 withMemoryAllocator vulkan gpu device =
@@ -640,21 +638,16 @@ withMemoryAllocator vulkan gpu device =
 
 vertices :: Tex.Sprite -> SpriteState -> SV.Vector Vertex
 vertices
-  ( Tex.Sprite
-      { texture = tex,
-        region = Measure.UVReg u1 v1 u2 v2,
-        size = size@(Measure.NormalizedDeviceWH w h)
-      }
-    )
-  (SpriteState {position = pos, origin = org}) =
+  (Tex.Sprite {texture = tex, region = Measure.UVReg u1 v1 u2 v2, size = size@(Measure.NormalizedDeviceWH w h), origin = org})
+  (SpriteState {position = pos}) =
     let a@(Measure.NormalizedDeviceXY x y) = Measure.localPosToNdc size org pos
         b = Measure.ndcPos (x + w) y
         c = Measure.ndcPos (x + w) (y + h)
         d = Measure.ndcPos x (y + h)
-        uva = Measure.texPos u1 v1
-        uvb = Measure.texPos u2 v1
-        uvc = Measure.texPos u2 v2
-        uvd = Measure.texPos u1 v2
+        uva = Measure.uvPos u1 v1
+        uvb = Measure.uvPos u2 v1
+        uvc = Measure.uvPos u2 v2
+        uvd = Measure.uvPos u1 v2
         topLeft = mkVertex a uva tex
         topRight = mkVertex b uvb tex
         bottomRight = mkVertex c uvc tex

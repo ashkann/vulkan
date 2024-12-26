@@ -59,7 +59,8 @@ newtype DescriptorIndex = DescriptorIndex Word32 deriving (Storable)
 data Sprite = Sprite
   { texture :: DescriptorIndex,
     region :: Measure.UVRegion,
-    size :: Measure.NormalizedDeviceSize
+    size :: Measure.NormalizedDeviceSize,
+    origin :: Measure.TexturePosition
   }
 
 fromRGBA8PngFile :: Vma.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> FilePath -> Managed Vk.ImageView

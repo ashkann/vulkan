@@ -151,20 +151,21 @@ withAtlas allocator device commandPool gfxQueue descSet sampler atlasFile = do
   [descIndex] <- Tex.bind device descSet [tex] sampler
   return $ Atlas {texture = descIndex, regions = regions}
 
-sprite :: Atlas -> String -> PixelSize -> Tex.Sprite
-sprite (Atlas {texture = tex, regions = atlas}) name windowSize =
+sprite :: Atlas -> String -> TexturePosition -> PixelSize -> Tex.Sprite
+sprite (Atlas {texture = tex, regions = atlas}) name origin windowSize =
   let reg = lookup atlas name
-   in mkSprite tex reg windowSize
+   in mkSprite tex reg origin windowSize
 
-spriteIndexed :: Atlas -> String -> Word32 -> PixelSize -> Tex.Sprite
-spriteIndexed (Atlas {texture = tex, regions = atlas}) name index windowSize =
+spriteIndexed :: Atlas -> String -> Word32 -> TexturePosition -> PixelSize -> Tex.Sprite
+spriteIndexed (Atlas {texture = tex, regions = atlas}) name index origin windowSize =
   let reg = lookupIndexed atlas name index
-   in mkSprite tex reg windowSize
+   in mkSprite tex reg origin windowSize
 
-mkSprite :: Tex.DescriptorIndex -> Region -> PixelSize -> Tex.Sprite
-mkSprite tex Region {region = reg, size = size} windowSize =
+mkSprite :: Tex.DescriptorIndex -> Region -> TexturePosition -> PixelSize -> Tex.Sprite
+mkSprite tex Region {region = reg, size = size} origin windowSize =
   Tex.Sprite
     { texture = tex,
       region = reg,
-      size = Measure.pixelSizeToNdc size windowSize
+      size = Measure.pixelSizeToNdc size windowSize,
+      origin = origin
     }

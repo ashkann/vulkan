@@ -1,7 +1,18 @@
 # Vulkan 2D Engine
 Trying to learn vulkan and Haskell hand in hand by doing a 2D engine.
+
+# How to
+Compile the shaders, generate the atlas and run:
 ```
 ./run.sh
+```
+Compile the shaders:
+```
+./compile_shaders.sh
+```
+Generate the atlas
+```
+./generate_atlas.sh
 ```
 ![Screenshot](screenshot.png)
 ## TODO (doubling as a roadmap)
@@ -15,7 +26,7 @@ Trying to learn vulkan and Haskell hand in hand by doing a 2D engine.
 - [x] Basic texture support
 - [x] Make the use of required feaures explicit
 - [x] Multiple sprites using different textures in one frame
-- [ ] Use a texture atlas probably? Not sure yet
+- [x] Use a texture atlas probably? Not sure yet
 - [x] Investigate sampler2DArray 
 - [x] Sprite back-to-front sorting
 - [x] Alpha blending?

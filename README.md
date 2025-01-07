@@ -1,5 +1,5 @@
 # Vulkan 2D Engine
-Trying to learn vulkan and Haskell hand in hand by doing a 2D engine.
+Trying to learn Vulkan and Haskell hand in hand by doing a 2D engine.
 
 # How to
 Compile the shaders, generate the atlas and run:

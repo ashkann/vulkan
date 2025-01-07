@@ -35,11 +35,11 @@ import Foreign.Storable (Storable (..), sizeOf)
 import Foreign.Storable.Record qualified as Store
 import Geomancy qualified as G
 import Init qualified
-import Measure (ndcTopLeft)
 import Measure qualified
 import SDL qualified
 import Texture qualified as Tex
 import Utils
+import Vertex qualified as Vert
 import Vulkan qualified as Vk
 import Vulkan qualified as VkBufferCreateInfo (BufferCreateInfo (..))
 import Vulkan qualified as VkCommandPoolCreateInfo (CommandPoolCreateInfo (..))
@@ -87,27 +87,19 @@ import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCre
 import VulkanMemoryAllocator qualified as VmaAllocatorCreateInfo (AllocatorCreateInfo (..))
 import Prelude hiding (init)
 
-data Vertex = Vertex {xy :: G.Vec2, uv :: G.Vec2, texture :: Tex.DescriptorIndex}
+newtype DeltaTime = DeltaTime Word32
 
-mkVertex :: Measure.NormalizedDevicePosition -> Measure.TexturePosition -> Tex.DescriptorIndex -> Vertex
-mkVertex pos uv index = Vertex {xy = Measure.ndcVec pos, uv = Measure.texVec uv, texture = index}
+newtype SpriteStateUpdate s = SpriteStateUpdate {update :: DeltaTime -> s -> SpriteState -> (SpriteState, s)}
 
--- $(makeLenses ''Vertex)
+spriteBouncingMotion :: SpriteStateUpdate G.Vec2
+spriteBouncingMotion = SpriteStateUpdate $ \(DeltaTime dt) v@(G.WithVec2 vx vy) state ->
+  let p1@(Measure.NormalizedDeviceXY x1 y1) = Measure.ndcTranslate (v G.^* fromIntegral dt) state.position
+      vx1 = if x1 >= 1.0 || x1 <= -1.0 then -vx else vx
+      vy1 = if y1 >= 1.0 || y1 <= -1.0 then -vy else vy
+   in (state {position = p1}, G.vec2 vx1 vy1)
 
-vertexStore :: Store.Dictionary Vertex
-vertexStore =
-  Store.run $
-    Vertex
-      <$> Store.element (.xy)
-      <*> Store.element (.uv)
-      <*> Store.element (.texture)
-
--- TODO: automate the layout according to Vulkan spec
-instance Storable Vertex where
-  sizeOf = Store.sizeOf vertexStore
-  alignment = Store.alignment vertexStore
-  peek = Store.peek vertexStore
-  poke = Store.poke vertexStore
+spriteNoMotion :: SpriteStateUpdate ()
+spriteNoMotion = SpriteStateUpdate $ \_ _ state -> (state, ())
 
 data SpriteState = SpriteState
   { position :: Measure.NormalizedDevicePosition
@@ -169,8 +161,7 @@ instance Storable GlobalLight where
 
 data Viewport = Viewport
   { viewportSize :: G.UVec2,
-    _padding :: Word64, -- TODO: remove and make the Storable instance handle it
-    globalLight :: GlobalLight
+    _padding :: Word64 -- TODO: remove and make the Storable instance handle it
   }
 
 viewportStore :: Store.Dictionary Viewport
@@ -179,7 +170,6 @@ viewportStore =
     Viewport
       <$> Store.element (.viewportSize)
       <*> Store.element (const 0)
-      <*> Store.element (.globalLight)
 
 instance Storable Viewport where
   sizeOf = Store.sizeOf viewportStore
@@ -187,26 +177,24 @@ instance Storable Viewport where
   peek = Store.peek viewportStore
   poke = Store.poke viewportStore
 
-data Object = Object
+data Object s = Object
   { sprite :: Tex.Sprite,
     state :: SpriteState,
-    vel :: Measure.NormalizedDeviceSize
+    update :: SpriteStateUpdate s
   }
 
-data World = World
+data World s = World
   { background :: Tex.Sprite,
-    pointer :: Object,
-    objects :: [Object],
-    globalLight :: GlobalLight,
-    lights :: [PointLight]
+    pointer :: Object (),
+    objects :: [Object s],
+    ss :: [s]
   }
 
-frameData :: World -> FrameData
+frameData :: World s -> FrameData
 frameData world =
   FrameData
     { verts = mconcat $ uncurry vertices <$> sprites world,
-      lights = SV.fromList world.lights,
-      viewport = Viewport {viewportSize = G.uvec2 windowWidth windowHeight, _padding = 0, globalLight = world.globalLight}
+      viewport = Viewport {viewportSize = G.uvec2 windowWidth windowHeight, _padding = 0}
     }
 
 -- instance MonadError String Managed where
@@ -281,13 +269,10 @@ main = runManaged $ do
 
   let stagingBufferSize = 1048576
       maxVertCount = 1000
-      vertexBufferSize = fromIntegral $ sizeOf (undefined :: Vertex) * maxVertCount
+      vertexBufferSize = fromIntegral $ sizeOf (undefined :: Vert.Vertex) * maxVertCount
       lightBufferSize = 1024
   frames <- withFrames device gfx allocator stagingBufferSize vertexBufferSize lightBufferSize frameCount
-  let shutdown =
-        do
-          say "Engine" "Shutting down ..."
-          Vk.deviceWaitIdle device
+  let shutdown = say "Engine" "Shutting down ..." *> Vk.deviceWaitIdle device
    in say "Engine" "Entering the main loop"
         *> mainLoop
           shutdown
@@ -298,55 +283,40 @@ main = runManaged $ do
                     f = frames ! n
                  in frame device gfxQueue presentQueue pipeline pipelineLayout swapchain descSet f frameData
           )
-          worldTime
+          worldTime2
           worldEvent
           (world0 atlas)
 
-world0 :: Atlas.Atlas -> World
+world0 :: Atlas.Atlas -> World G.Vec2
 world0 atlas =
-  let one = G.vec2 1 1
-      mkRectObj index piv pos =
+  let mkRectObj index piv pos =
         Object
           { sprite = Atlas.spriteIndexed atlas "rectangle" index piv windowSize,
             state = SpriteState {position = pos},
-            vel = Measure.ndcSize 0.0 0.0
+            update = spriteNoMotion
           }
-      -- sheet =
-      --   Sheet
-      --     { texture = runningMan,
-      --       frames =
-      --         V.fromList
-      --           [ let width = 0.143
-      --                 height = 0.25
-      --                 row = frameNumber `mod` 7
-      --                 col = frameNumber `mod` 4
-      --                 x = fromIntegral col * 0.143
-      --                 y = fromIntegral row * 0.25
-      --              in G.vec4 x y (x + width) (y + height)
-      --             | frameNumber <- [0 .. 26 :: Int]
-      --           ]
-      --     }
-      -- animation = Animation {sheet = sheet, speed = 15.0}
-      whiteLight = PointLight {position = G.vec2 0.0 0.0, color = G.vec3 1.0 1.0 0.7, intensity = 1.0}
-      globalLight = GlobalLight {intensity = 0.93, _padding1 = 0, _padding2 = 0, color = G.vec3 1.0 0.73 1.0}
       basketball =
         Object
           { sprite = Atlas.sprite atlas "basketball" Measure.texCenter windowSize,
             state = SpriteState {position = Measure.ndcCenter},
-            vel = Measure.ndcSize (-0.0005) (-0.002)
+            update = spriteBouncingMotion
           }
+      -- \$ G.vec2 0.1 0.2 G.^/ 1000
+
       blueBall =
         Object
           { sprite = Atlas.sprite atlas "blue_ball" Measure.texBottomLeft windowSize,
-            state = SpriteState {position = Measure.ndcBottomLeft},
-            vel = Measure.ndcSize 0.001 0.002
+            state = SpriteState {position = Measure.ndcCenter},
+            update = spriteBouncingMotion
           }
+      -- \$ G.vec2 0.2 0.1 G.^/ 1000
+
       background = Atlas.sprite atlas "checkerboard" Measure.texTopLeft windowSize
       lightSource =
         Object
           { sprite = Atlas.sprite atlas "light_source" Measure.texCenter windowSize,
             state = SpriteState {position = Measure.ndcCenter},
-            vel = Measure.ndcSize 0.001 0.002
+            update = spriteNoMotion
           }
       r1 = mkRectObj 0 Measure.texTopLeft Measure.ndcTopLeft
       r2 = mkRectObj 1 Measure.texTopRight Measure.ndcTopRight
@@ -356,14 +326,13 @@ world0 atlas =
    in World
         { background = background,
           pointer = lightSource,
-          objects = [r1, r2, r3, r4, r5, basketball, blueBall],
-          lights = [whiteLight],
-          globalLight = globalLight
+          -- objects = [r1, r2, r3, r4, r5, basketball, blueBall],
+          objects = [basketball, blueBall],
+          ss = [G.vec2 0.1 0.2 G.^/ 1000, G.vec2 0.2 0.1 G.^/ 1000]
         }
 
 data FrameData = FrameData
-  { verts :: SV.Vector Vertex,
-    lights :: SV.Vector PointLight,
+  { verts :: SV.Vector Vert.Vertex,
     viewport :: Viewport
   }
 
@@ -395,12 +364,11 @@ frame device gfxQueue presentQueue pipeline pipelineLayout swp descSet f frameDa
           targetImage,
           targetView
         } = f
-      FrameData {verts, lights, viewport = viewport'} = frameData
+      FrameData {verts, viewport = viewport'} = frameData
       (swapchain, swapchainExtent, swapchainImages) = swp
   waitForFrame device f
   liftIO $ copyToGpu2 device pool gfxQueue viewport staging viewport'
   liftIO $ copyToGpu device pool gfxQueue vertex staging verts
-  liftIO $ copyToGpu device pool gfxQueue light staging lights
   -- say "Global light" $ show viewport'.globalLight
   recordRender renderCmd vertex light viewport (targetImage, targetView) swapchainExtent (fromIntegral $ SV.length verts)
   index <- Vk.acquireNextImageKHR device swapchain maxBound imageAvailable Vk.zero >>= \(r, index) -> checkSwapchainIsOld r $> index
@@ -529,14 +497,14 @@ mainLoop ::
   io () ->
   (w -> FrameData) ->
   (Int -> FrameData -> io ()) ->
-  (Word32 -> w -> io w) ->
+  (DeltaTime -> w -> io w) ->
   (SDL.Event -> w -> io w) ->
   w ->
   io ()
-mainLoop shutdown frameData frame worldTime worldEvent world0 =
+mainLoop shutdown frameData frame worldTime worldEvent w0 =
   do
     t0 <- SDL.ticks
-    go 0 t0 world0
+    go 0 t0 w0
   where
     lockFrameRate fps t1 =
       do
@@ -544,22 +512,19 @@ mainLoop shutdown frameData frame worldTime worldEvent world0 =
         let dt = t - t1
             minIdle = 1000 `div` fps
         if dt < minIdle then (liftIO . threadDelay $ 1000 * fromIntegral (minIdle - dt)) *> SDL.ticks else pure t
-    go frameNumber t w = do
+    go n t w = do
       -- es <- ImGui.pollEventsWithImGui
       es <- SDL.pollEvents
       if any isQuitEvent es
         then shutdown
         else do
-          frame frameNumber $ frameData w
+          frame n $ frameData w
           w2 <- foldlM (flip worldEvent) w es
           t2 <- lockFrameRate 60 t
-          w3 <- worldTime (t2 - t) w2
-          go (frameNumber + 1) t2 w3
+          w3 <- worldTime (DeltaTime (t2 - t)) w2
+          go (n + 1) t2 w3
 
-whiteLight :: G.Vec2 -> PointLight
-whiteLight pos = PointLight {position = pos, color = G.vec3 1.0 1.0 1.0, intensity = 1.0}
-
-worldEvent :: (Monad io) => SDL.Event -> World -> io World
+worldEvent :: (Monad io) => SDL.Event -> World s -> io (World s)
 worldEvent e w@(World {pointer = pointer@Object {state = state@SpriteState {position = pos}}}) =
   -- return let p = f pos e; w1 = w {pointer = pointer {pos = p}, lights = [whiteLight p]} in w1
   return let p = f pos e; w1 = w {pointer = pointer {state = state {position = p}}} in w1
@@ -568,24 +533,31 @@ worldEvent e w@(World {pointer = pointer@Object {state = state@SpriteState {posi
       Measure.pixelPosToNdc (Measure.pixelPos (fromIntegral x) (fromIntegral y)) (Measure.pixelSize windowWidth windowHeight)
     f p _ = p
 
-worldTime :: (Monad io) => Word32 -> World -> io World
-worldTime 0 w = return w
-worldTime dt w@(World {objects}) = return w {objects = update <$> objects}
+worldTime2 :: (Monad io) => DeltaTime -> World G.Vec2 -> io (World G.Vec2)
+worldTime2 dt w = do
+  (os, ss) <- unzip <$> worldTime dt (zip w.ss w.objects)
+  return w {objects = os, ss = ss}
+
+worldTime :: (Monad io) => DeltaTime -> [(s, Object s)] -> io [(Object s, s)]
+worldTime dt = traverse (uncurry (update dt))
   where
-    update = id
-    -- update obj@Object {sprite = sprite@Sprite {pos = p0}, vel = v0, animation = _} =
-    --   let p1 = p0 + (v0 G.^* fromIntegral dt)
-    --       v1 = G.emap2 (\vi pos -> if pos >= 1.0 || pos <= -1.0 then -vi else vi) v0 p1
-    --    in obj {sprite = sprite {pos = p1}, vel = v1}
-    -- update obj@Object {sprite, animation = Just ani} =
-    --   let ani2 = animatedProgress ani
-    --    in obj {sprite = sprite {region = animatedFrame ani2}, animation = Just ani2}
-    animatedFrame :: Animated -> G.Vec4
-    animatedFrame ani = ani.animation.sheet.frames ! floor ani.frameIndex
-    animatedProgress ani =
-      let new fi = fi + ani.animation.speed * fromIntegral dt / 1000
-          loop fi = if floor fi >= V.length ani.animation.sheet.frames then 0 else fi
-       in ani {frameIndex = loop (new ani.frameIndex)}
+    update dt s obj =
+      let (state1, s1) = obj.update.update dt s obj.state
+       in return (obj {state = state1}, s1)
+
+-- update obj@Object {sprite = sprite@Sprite {pos = p0}, vel = v0, animation = _} =
+--   let p1 = p0 + (v0 G.^* fromIntegral dt)
+--       v1 = G.emap2 (\vi pos -> if pos >= 1.0 || pos <= -1.0 then -vi else vi) v0 p1
+--    in obj {sprite = sprite {pos = p1}, vel = v1}
+-- update obj@Object {sprite, animation = Just ani} =
+--   let ani2 = animatedProgress ani
+--    in obj {sprite = sprite {region = animatedFrame ani2}, animation = Just ani2}
+-- animatedFrame :: Animated -> G.Vec4
+-- animatedFrame ani = ani.animation.sheet.frames ! floor ani.frameIndex
+-- animatedProgress ani =
+--   let new fi = fi + ani.animation.speed * fromIntegral dt / 1000
+--       loop fi = if floor fi >= V.length ani.animation.sheet.frames then 0 else fi
+--    in ani {frameIndex = loop (new ani.frameIndex)}
 
 repeatingSampler :: Vk.Device -> Managed Vk.Sampler
 repeatingSampler device =
@@ -610,7 +582,7 @@ windowHeight = 500
 windowSize :: Measure.PixelSize
 windowSize = Measure.pixelSize windowWidth windowHeight
 
-sprites :: World -> [(Tex.Sprite, SpriteState)]
+sprites :: World s -> [(Tex.Sprite, SpriteState)]
 sprites World {background, pointer, objects} =
   (background, static) : (s <$> objects) ++ [s pointer]
   where
@@ -636,7 +608,7 @@ withMemoryAllocator vulkan gpu device =
           }
    in managed $ Vma.withAllocator info bracket
 
-vertices :: Tex.Sprite -> SpriteState -> SV.Vector Vertex
+vertices :: Tex.Sprite -> SpriteState -> SV.Vector Vert.Vertex
 vertices
   (Tex.Sprite {texture = tex, region = Measure.UVReg u1 v1 u2 v2, size = size@(Measure.NormalizedDeviceWH w h), origin = org})
   (SpriteState {position = pos}) =
@@ -648,10 +620,10 @@ vertices
         uvb = Measure.uvPos u2 v1
         uvc = Measure.uvPos u2 v2
         uvd = Measure.uvPos u1 v2
-        topLeft = mkVertex a uva tex
-        topRight = mkVertex b uvb tex
-        bottomRight = mkVertex c uvc tex
-        bottomLeft = mkVertex d uvd tex
+        topLeft = Vert.mkVertex a uva tex
+        topRight = Vert.mkVertex b uvb tex
+        bottomRight = Vert.mkVertex c uvc tex
+        bottomLeft = Vert.mkVertex d uvd tex
      in SV.fromList
           [ topLeft,
             topRight,
@@ -817,7 +789,7 @@ createPipeline dev extent layout = do
                 { VkPipelineVertexInputStateCreateInfo.vertexBindingDescriptions =
                     [ Vk.zero
                         { VkVertexInputBindingDescription.binding = 0,
-                          VkVertexInputBindingDescription.stride = fromIntegral $ sizeOf (undefined :: Vertex),
+                          VkVertexInputBindingDescription.stride = fromIntegral $ sizeOf (undefined :: Vert.Vertex),
                           VkVertexInputBindingDescription.inputRate = Vk.VERTEX_INPUT_RATE_VERTEX
                         }
                     ],

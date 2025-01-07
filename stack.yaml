@@ -59,8 +59,8 @@ packages:
 # arch: x86_64
 #
 # Extra directories used by Stack for building
-extra-include-dirs: [/Users/A.Nazary/Haskell/vulkan/imgui]
-extra-lib-dirs: [/Users/A.Nazary/Haskell/vulkan/imgui]
+# extra-include-dirs: [/Users/A.Nazary/Haskell/vulkan/imgui]
+# extra-lib-dirs: [/Users/A.Nazary/Haskell/vulkan/imgui]
 #
 # Allow a newer minor version of GHC than the snapshot specifies
 # compiler-check: newer-minor

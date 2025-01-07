@@ -41,6 +41,7 @@ module Measure
     uvReg,
     localToNdc,
     localPosToNdc,
+    ndcTranslate,
   )
 where
 
@@ -104,6 +105,9 @@ ndcVec (NormalizedDevicePosition v) = v
 
 pattern NormalizedDeviceXY :: Float -> Float -> NormalizedDevicePosition
 pattern NormalizedDeviceXY x y <- NormalizedDevicePosition (G.WithVec2 x y)
+
+ndcTranslate :: G.Vec2 -> NormalizedDevicePosition -> NormalizedDevicePosition
+ndcTranslate d (NormalizedDevicePosition p)  = NormalizedDevicePosition $ p + d
 
 texVec :: TexturePosition -> G.Vec2
 texVec (TexturePosition v) = v

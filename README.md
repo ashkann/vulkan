@@ -14,7 +14,7 @@ Generate the atlas
 ```
 ./generate_atlas.sh
 ```
-![Screenshot](screenshot.png)
+![Screenshot](screenshot.gif)
 ## TODO (doubling as a roadmap)
 - [x] Separate vertex buffer
 - [x] Sepaerate sempaphores per frame

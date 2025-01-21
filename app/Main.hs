@@ -337,7 +337,7 @@ world0 atlas =
       xy2 =
         Object
           { sprite = Atlas.sprite atlas "xy" Measure.texCenter windowSize,
-            transformation = SpriteState {position = Measure.ndcPos 0.5 0.5, rotation = 0, scale = one},
+            transformation = SpriteState {position = Measure.ndcPos (-0.6) (-0.4), rotation = 0, scale = one},
             update = spriteScale,
             s = G.vec2 1.0 0.5
           }
@@ -560,7 +560,7 @@ mainLoop shutdown frameData frame worldTime worldEvent w0 =
         else do
           frame n $ frameData w
           w2 <- foldlM (flip worldEvent) w es
-          t2 <- lockFrameRate 60 t
+          t2 <- lockFrameRate 120 t
           w3 <- let dt = fromIntegral (t2 - t) in worldTime (DeltaTime (dt / 1000)) w2
           go (n + 1) t2 w3
 
@@ -645,19 +645,19 @@ withMemoryAllocator vulkan gpu device =
                   }
           }
    in managed $ Vma.withAllocator info bracket
-
+ 
 vertices :: Tex.Sprite -> SpriteTransformation -> SV.Vector Vert.Vertex
 vertices
   (Tex.Sprite {texture = tex, region = Measure.UVReg u1 v1 u2 v2, size = size@(Measure.NormalizedDeviceWH w h), origin = org})
-  (SpriteState {position = pos, rotation = rot, scale = G.WithVec2 sx sy}) =
-    let a@(Measure.NormalizedDeviceXY x y) = Measure.localPosToNdc size org pos
+  (SpriteState {position = Measure.NormalizedDeviceXY px py, rotation = rot, scale = G.WithVec2 sx sy}) =
+    let a@(Measure.NormalizedDeviceXY x y) = Measure.localPosToNdc size org (Measure.ndcPos 0 0) -- TODO: improve ndc (0,0)
         b = Measure.ndcPos (x + w) y
         c = Measure.ndcPos (x + w) (y + h)
         d = Measure.ndcPos x (y + h)
-        a2 = rotate a
-        b2 = rotate b
-        c2 = rotate c
-        d2 = rotate d
+        a2 = transform a
+        b2 = transform b
+        c2 = transform c
+        d2 = transform d
         uva = Measure.uvPos u1 v1
         uvb = Measure.uvPos u2 v1
         uvc = Measure.uvPos u2 v2
@@ -675,10 +675,11 @@ vertices
             topLeft
           ]
     where
-      rotate (Measure.NormalizedDeviceXY x y) =
-        let mat2 = G.scaleXY sx sy
-            mat = G.rotateZ rot
-            G.WithVec3 x2 y2 _ = mat2 G.!. (mat G.!. G.vec3 x y 0)
+      transform (Measure.NormalizedDeviceXY x y) =
+        let translate = G.translate px py 0
+            scale = G.scaleXY sx sy
+            rotate = G.rotateZ rot
+            G.WithVec3 x2 y2 _ = translate G.!. (scale G.!. (rotate G.!. G.vec3 x y 0)) -- TODO: order of transformations matter
          in Measure.ndcPos x2 y2
 
 withGPUBuffer :: Vma.Allocator -> Vk.DeviceSize -> Vk.BufferUsageFlagBits -> Managed Vk.Buffer

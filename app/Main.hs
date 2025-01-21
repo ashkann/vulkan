@@ -35,6 +35,7 @@ import Foreign.Ptr (castFunPtr)
 import Foreign.Storable (Storable (..), sizeOf)
 import Foreign.Storable.Record qualified as Store
 import Geomancy qualified as G
+import Geomancy.Transform qualified as G
 import Init qualified
 import Measure qualified
 import SDL qualified
@@ -87,35 +88,34 @@ import VulkanMemoryAllocator qualified as Vma
 import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCreateInfo (..))
 import VulkanMemoryAllocator qualified as VmaAllocatorCreateInfo (AllocatorCreateInfo (..))
 import Prelude hiding (init)
-import qualified Geomancy.Transform as G
 
-newtype DeltaTime = DeltaTime Word32
+newtype DeltaTime = DeltaTime Float
 
 newtype SpriteStateUpdate s = SpriteStateUpdate {update :: DeltaTime -> s -> SpriteState -> (SpriteState, s)}
 
 spriteBouncingMotion :: SpriteStateUpdate G.Vec2 -- TODO: use a type for Velocity in NDC
-spriteBouncingMotion = SpriteStateUpdate $ \(DeltaTime dt) v@(G.WithVec2 vx vy) state ->
-  let p1@(Measure.NormalizedDeviceXY x1 y1) = Measure.ndcTranslate (v G.^* fromIntegral dt) state.position
+spriteBouncingMotion = SpriteStateUpdate $ \(DeltaTime dt) v@(G.WithVec2 vx vy) s ->
+  let p1@(Measure.NormalizedDeviceXY x1 y1) = Measure.ndcTranslate (v G.^* dt) s.position
       vx1 = if x1 >= 1.0 || x1 <= -1.0 then -vx else vx
       vy1 = if y1 >= 1.0 || y1 <= -1.0 then -vy else vy
-   in (state {position = p1}, G.vec2 vx1 vy1)
+   in (s {position = p1}, G.vec2 vx1 vy1)
 
 spriteNoMotion :: SpriteStateUpdate s
 spriteNoMotion = SpriteStateUpdate $ \_ s state -> (state, s)
 
 spriteRotation :: Float -> SpriteStateUpdate Float
-spriteRotation w = SpriteStateUpdate $ \(DeltaTime dt) r state -> let r2 = r + w * fromIntegral dt in (state {rotation = r2}, r2)
+spriteRotation w = SpriteStateUpdate $ \(DeltaTime dt) r state -> let r2 = r + w * dt in (state {rotation = r2}, r2)
 
 data SpriteState = SpriteState
   { position :: Measure.NormalizedDevicePosition,
     rotation :: Float
   }
 
-data Sheet = Sheet {texture :: Tex.DescriptorIndex, frames :: V.Vector G.Vec4}
+-- data Sheet = Sheet {texture :: Tex.DescriptorIndex, frames :: V.Vector G.Vec4}
 
-data Animation = Animation {sheet :: Sheet, speed :: Float}
+-- data Animation = Animation {sheet :: Sheet, speed :: Float}
 
-data Animated = Animated {animation :: Animation, frameIndex :: Float}
+-- data Animated = Animated {animation :: Animation, frameIndex :: Float}
 
 -- $(makeLenses ''Animated)
 
@@ -320,7 +320,7 @@ world0 atlas =
         Object
           { sprite = Atlas.sprite atlas "xy" Measure.texCenter windowSize,
             state = SpriteState {position = Measure.ndcCenter, rotation = pi / 4},
-            update = spriteRotation $ pi / (4 * 1000)
+            update = spriteRotation $ pi / 4 * 10
           }
 
       background = Atlas.sprite atlas "checkerboard" Measure.texTopLeft windowSize
@@ -340,8 +340,8 @@ world0 atlas =
           pointer = lightSource,
           -- objects = [r1, r2, r3, r4, r5, basketball, blueBall],
           objects =
-            [ ObjectAndState basketball (G.vec2 0.1 0.2 G.^/ 1000),
-              ObjectAndState blueBall (G.vec2 0.2 0.1 G.^/ 1000),
+            [ ObjectAndState basketball (G.vec2 0.1 0.2),
+              ObjectAndState blueBall (G.vec2 0.2 0.1),
               ObjectAndState xy 0
             ]
         }
@@ -536,7 +536,7 @@ mainLoop shutdown frameData frame worldTime worldEvent w0 =
           frame n $ frameData w
           w2 <- foldlM (flip worldEvent) w es
           t2 <- lockFrameRate 60 t
-          w3 <- worldTime (DeltaTime (t2 - t)) w2
+          w3 <- let dt = fromIntegral (t2 - t) in worldTime (DeltaTime (dt / 1000)) w2
           go (n + 1) t2 w3
 
 worldEvent :: (Monad io) => SDL.Event -> World -> io World

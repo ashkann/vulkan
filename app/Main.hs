@@ -95,9 +95,15 @@ newtype SpriteStateUpdate s = SpriteStateUpdate {update :: DeltaTime -> s -> Spr
 
 spriteBouncingMotion :: SpriteStateUpdate G.Vec2 -- TODO: use a type for Velocity in NDC
 spriteBouncingMotion = SpriteStateUpdate $ \(DeltaTime dt) v@(G.WithVec2 vx vy) s ->
-  let p1@(Measure.NormalizedDeviceXY x1 y1) = Measure.ndcTranslate (v G.^* dt) s.position
+  let position2@(Measure.NormalizedDeviceXY x1 y1) = Measure.ndcTranslate (v G.^* dt) s.position
       f x v = if x >= 1.0 || x <= -1.0 then -v else v
-   in (s {position = p1}, G.vec2 (f x1 vx) (f y1 vy))
+   in (s {position = position2}, G.vec2 (f x1 vx) (f y1 vy))
+
+spriteScale :: SpriteStateUpdate G.Vec2
+spriteScale = SpriteStateUpdate $ \(DeltaTime dt) v@(G.WithVec2 vx vy) s ->
+  let scale2@(G.WithVec2 sx sy) = s.scale + (v G.^* dt)
+      f s v = if s >= 2.0 || s <= -2.0 then -v else v
+   in (s {scale = scale2}, G.vec2 (f sx vx) (f sy vy))
 
 spriteNoMotion :: SpriteStateUpdate s
 spriteNoMotion = SpriteStateUpdate $ \_ s state -> (state, s)
@@ -107,7 +113,8 @@ spriteRotation w = SpriteStateUpdate $ \(DeltaTime dt) r state -> let r2 = r + w
 
 data SpriteTransformation = SpriteState
   { position :: Measure.NormalizedDevicePosition,
-    rotation :: Float
+    rotation :: Float,
+    scale :: G.Vec2
   }
 
 -- data Sheet = Sheet {texture :: Tex.DescriptorIndex, frames :: V.Vector G.Vec4}
@@ -296,17 +303,18 @@ main = runManaged $ do
 
 world0 :: Atlas.Atlas -> World
 world0 atlas =
-  let mkRectObj index piv pos =
+  let one = G.vec2 1.0 1.0
+      rect index piv pos =
         Object
           { sprite = Atlas.spriteIndexed atlas "rectangle" index piv windowSize,
-            transformation = SpriteState {position = pos, rotation = 0},
+            transformation = SpriteState {position = pos, rotation = 0, scale = one},
             update = spriteNoMotion,
             s = ()
           }
       basketball =
         Object
           { sprite = Atlas.sprite atlas "basketball" Measure.texCenter windowSize,
-            transformation = SpriteState {position = Measure.ndcCenter, rotation = 0},
+            transformation = SpriteState {position = Measure.ndcCenter, rotation = 0, scale = one},
             update = spriteBouncingMotion,
             s = G.vec2 0.1 0.2
           }
@@ -314,7 +322,7 @@ world0 atlas =
       blueBall =
         Object
           { sprite = Atlas.sprite atlas "blue_ball" Measure.texBottomLeft windowSize,
-            transformation = SpriteState {position = Measure.ndcCenter, rotation = 0},
+            transformation = SpriteState {position = Measure.ndcCenter, rotation = 0, scale = one},
             update = spriteBouncingMotion,
             s = G.vec2 0.2 0.1
           }
@@ -322,32 +330,44 @@ world0 atlas =
       xy =
         Object
           { sprite = Atlas.sprite atlas "xy" Measure.texCenter windowSize,
-            transformation = SpriteState {position = Measure.ndcCenter, rotation = pi / 4},
+            transformation = SpriteState {position = Measure.ndcPos 0.5 0.5, rotation = 0, scale = one},
             update = spriteRotation $ pi / 4 * 10,
             s = 0
+          }
+      xy2 =
+        Object
+          { sprite = Atlas.sprite atlas "xy" Measure.texCenter windowSize,
+            transformation = SpriteState {position = Measure.ndcPos 0.5 0.5, rotation = 0, scale = one},
+            update = spriteScale,
+            s = G.vec2 1.0 0.5
           }
 
       background = Atlas.sprite atlas "checkerboard" Measure.texTopLeft windowSize
       lightSource =
         Object
           { sprite = Atlas.sprite atlas "light_source" Measure.texCenter windowSize,
-            transformation = SpriteState {position = Measure.ndcCenter, rotation = 0},
+            transformation = SpriteState {position = Measure.ndcCenter, rotation = 0, scale = one},
             update = spriteNoMotion,
             s = ()
           }
-      r1 = mkRectObj 0 Measure.texTopLeft Measure.ndcTopLeft
-      r2 = mkRectObj 1 Measure.texTopRight Measure.ndcTopRight
-      r3 = mkRectObj 2 Measure.texBottomLeft Measure.ndcBottomLeft
-      r4 = mkRectObj 3 Measure.texBottomRight Measure.ndcBottomRight
-      r5 = mkRectObj 4 Measure.texCenter Measure.ndcCenter
+      r1 = rect 0 Measure.texTopLeft Measure.ndcTopLeft
+      r2 = rect 1 Measure.texTopRight Measure.ndcTopRight
+      r3 = rect 2 Measure.texBottomLeft Measure.ndcBottomLeft
+      r4 = rect 3 Measure.texBottomRight Measure.ndcBottomRight
+      r5 = rect 4 Measure.texCenter Measure.ndcCenter
    in World
         { background = background,
           pointer = lightSource,
-          -- objects = [r1, r2, r3, r4, r5, basketball, blueBall],
           objects =
-            [ Box basketball,
+            [ Box r1,
+              Box r2,
+              Box r3,
+              Box r4,
+              Box r5,
+              Box basketball,
               Box blueBall,
-              Box xy
+              Box xy,
+              Box xy2
             ]
         }
 
@@ -605,7 +625,7 @@ sprites World {background, pointer, objects} =
   (background, static) : (f <$> objects) ++ [(pointer.sprite, pointer.transformation)]
   where
     f (Box obj) = (obj.sprite, obj.transformation)
-    static = SpriteState {position = Measure.ndcTopLeft, rotation = 0}
+    static = SpriteState {position = Measure.ndcTopLeft, rotation = 0, scale = G.vec2 1.0 1.0}
 
 withMemoryAllocator :: Vk.Instance -> Vk.PhysicalDevice -> Vk.Device -> Managed Vma.Allocator
 withMemoryAllocator vulkan gpu device =
@@ -629,7 +649,7 @@ withMemoryAllocator vulkan gpu device =
 vertices :: Tex.Sprite -> SpriteTransformation -> SV.Vector Vert.Vertex
 vertices
   (Tex.Sprite {texture = tex, region = Measure.UVReg u1 v1 u2 v2, size = size@(Measure.NormalizedDeviceWH w h), origin = org})
-  (SpriteState {position = pos, rotation = rot}) =
+  (SpriteState {position = pos, rotation = rot, scale = G.WithVec2 sx sy}) =
     let a@(Measure.NormalizedDeviceXY x y) = Measure.localPosToNdc size org pos
         b = Measure.ndcPos (x + w) y
         c = Measure.ndcPos (x + w) (y + h)
@@ -656,8 +676,9 @@ vertices
           ]
     where
       rotate (Measure.NormalizedDeviceXY x y) =
-        let mat = G.rotateZ rot
-            G.WithVec3 x2 y2 _ = mat G.!. G.vec3 x y 0
+        let mat2 = G.scaleXY sx sy
+            mat = G.rotateZ rot
+            G.WithVec3 x2 y2 _ = mat2 G.!. (mat G.!. G.vec3 x y 0)
          in Measure.ndcPos x2 y2
 
 withGPUBuffer :: Vma.Allocator -> Vk.DeviceSize -> Vk.BufferUsageFlagBits -> Managed Vk.Buffer

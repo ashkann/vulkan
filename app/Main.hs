@@ -111,7 +111,7 @@ spriteNoMotion = SpriteStateUpdate $ \_ s state -> (state, s)
 spriteRotation :: Float -> SpriteStateUpdate Float
 spriteRotation w = SpriteStateUpdate $ \(DeltaTime dt) r state -> let r2 = r + w * dt in (state {rotation = r2}, r2)
 
-data SpriteTransformation = SpriteState
+data SpriteTransformation = SpriteTransformation
   { position :: Measure.NormalizedDevicePosition,
     rotation :: Float,
     scale :: G.Vec2
@@ -307,14 +307,14 @@ world0 atlas =
       rect index piv pos =
         Object
           { sprite = Atlas.spriteIndexed atlas "rectangle" index piv windowSize,
-            transformation = SpriteState {position = pos, rotation = 0, scale = one},
+            transformation = SpriteTransformation {position = pos, rotation = 0, scale = one},
             update = spriteNoMotion,
             s = ()
           }
       basketball =
         Object
           { sprite = Atlas.sprite atlas "basketball" Measure.texCenter windowSize,
-            transformation = SpriteState {position = Measure.ndcCenter, rotation = 0, scale = one},
+            transformation = SpriteTransformation {position = Measure.ndcCenter, rotation = 0, scale = one},
             update = spriteBouncingMotion,
             s = G.vec2 0.1 0.2
           }
@@ -322,7 +322,7 @@ world0 atlas =
       blueBall =
         Object
           { sprite = Atlas.sprite atlas "blue_ball" Measure.texBottomLeft windowSize,
-            transformation = SpriteState {position = Measure.ndcCenter, rotation = 0, scale = one},
+            transformation = SpriteTransformation {position = Measure.ndcCenter, rotation = 0, scale = one},
             update = spriteBouncingMotion,
             s = G.vec2 0.2 0.1
           }
@@ -330,14 +330,14 @@ world0 atlas =
       xy =
         Object
           { sprite = Atlas.sprite atlas "xy" Measure.texCenter windowSize,
-            transformation = SpriteState {position = Measure.ndcPos 0.5 0.5, rotation = 0, scale = one},
+            transformation = SpriteTransformation {position = Measure.ndcPos 0.5 0.5, rotation = 0, scale = one},
             update = spriteRotation $ pi / 4 * 10,
             s = 0
           }
       xy2 =
         Object
           { sprite = Atlas.sprite atlas "xy" Measure.texCenter windowSize,
-            transformation = SpriteState {position = Measure.ndcPos (-0.6) (-0.4), rotation = 0, scale = one},
+            transformation = SpriteTransformation {position = Measure.ndcPos (-0.6) (-0.4), rotation = 0, scale = one},
             update = spriteScale,
             s = G.vec2 1.0 0.5
           }
@@ -346,7 +346,7 @@ world0 atlas =
       lightSource =
         Object
           { sprite = Atlas.sprite atlas "light_source" Measure.texCenter windowSize,
-            transformation = SpriteState {position = Measure.ndcCenter, rotation = 0, scale = one},
+            transformation = SpriteTransformation {position = Measure.ndcCenter, rotation = 0, scale = one},
             update = spriteNoMotion,
             s = ()
           }
@@ -565,7 +565,7 @@ mainLoop shutdown frameData frame worldTime worldEvent w0 =
           go (n + 1) t2 w3
 
 worldEvent :: (Monad io) => SDL.Event -> World -> io World
-worldEvent e w@(World {pointer = pointer@Object {transformation = state@SpriteState {position = pos}}}) =
+worldEvent e w@(World {pointer = pointer@Object {transformation = state@SpriteTransformation {position = pos}}}) =
   return let p = f pos e; w1 = w {pointer = pointer {transformation = state {position = p}}} in w1
   where
     f _ (SDL.Event _ (SDL.MouseMotionEvent (SDL.MouseMotionEventData {mouseMotionEventPos = SDL.P (SDL.V2 x y)}))) =
@@ -625,7 +625,7 @@ sprites World {background, pointer, objects} =
   (background, static) : (f <$> objects) ++ [(pointer.sprite, pointer.transformation)]
   where
     f (Box obj) = (obj.sprite, obj.transformation)
-    static = SpriteState {position = Measure.ndcTopLeft, rotation = 0, scale = G.vec2 1.0 1.0}
+    static = SpriteTransformation {position = Measure.ndcTopLeft, rotation = 0, scale = G.vec2 1.0 1.0}
 
 withMemoryAllocator :: Vk.Instance -> Vk.PhysicalDevice -> Vk.Device -> Managed Vma.Allocator
 withMemoryAllocator vulkan gpu device =
@@ -649,7 +649,7 @@ withMemoryAllocator vulkan gpu device =
 vertices :: Tex.Sprite -> SpriteTransformation -> SV.Vector Vert.Vertex
 vertices
   (Tex.Sprite {texture = tex, region = Measure.UVReg u1 v1 u2 v2, size = size@(Measure.NormalizedDeviceWH w h), origin = org})
-  (SpriteState {position = Measure.NormalizedDeviceXY px py, rotation = rot, scale = G.WithVec2 sx sy}) =
+  (SpriteTransformation {position = Measure.NormalizedDeviceXY px py, rotation = rot, scale = G.WithVec2 sx sy}) =
     let a@(Measure.NormalizedDeviceXY x y) = Measure.localPosToNdc size org (Measure.ndcPos 0 0) -- TODO: improve ndc (0,0)
         b = Measure.ndcPos (x + w) y
         c = Measure.ndcPos (x + w) (y + h)

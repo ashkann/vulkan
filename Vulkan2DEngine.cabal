@@ -22,7 +22,46 @@ executable atlas-parser
   hs-source-dirs:
       atlas-parser
       src
-  ghc-options: -Wall -Wcompat -Widentities -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -Wambiguous-fields -Wno-name-shadowing -optl-Wl,-rpath,/usr/local/lib
+  ghc-options: -Wall -Wcompat -Widentities -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -Wambiguous-fields -Wno-name-shadowing -optl-Wl,-rpath,/usr/local/lib -fprof-auto -rtsopts -with-rtsopts=-xc
+  build-depends:
+      JuicyPixels
+    , VulkanMemoryAllocator
+    , base
+    , bytestring
+    , containers
+    , dear-imgui
+    , extra
+    , geomancy
+    , inline-c
+    , inline-c-cpp
+    , lens
+    , lens-tutorial
+    , managed
+    , mtl
+    , parsec
+    , sdl2
+    , storable-record
+    , text
+    , transformers
+    , vector
+    , vulkan
+    , vulkan-utils
+  default-language: Haskell2010
+
+executable minesweeper
+  main-is: Main.hs
+  other-modules:
+      Atlas
+      Init
+      Measure
+      Texture
+      Utils
+      Vertex
+      Paths_Vulkan2DEngine
+  hs-source-dirs:
+      minesweeper
+      src
+  ghc-options: -Wall -Wcompat -Widentities -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -Wambiguous-fields -Wno-name-shadowing -optl-Wl,-rpath,/usr/local/lib -fprof-auto -rtsopts -with-rtsopts=-xc
   build-depends:
       JuicyPixels
     , VulkanMemoryAllocator
@@ -61,7 +100,7 @@ executable vulkan2dengine
   hs-source-dirs:
       app
       src
-  ghc-options: -Wall -Wcompat -Widentities -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -Wambiguous-fields -Wno-name-shadowing -optl-Wl,-rpath,/usr/local/lib
+  ghc-options: -Wall -Wcompat -Widentities -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -Wambiguous-fields -Wno-name-shadowing -optl-Wl,-rpath,/usr/local/lib -fprof-auto -rtsopts -with-rtsopts=-xc
   build-depends:
       JuicyPixels
     , VulkanMemoryAllocator

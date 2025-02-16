@@ -52,8 +52,8 @@ mkRegion (PixelWH aw ah) (PixelXY rx ry) size@(PixelWH rw rh) =
     u x = fromIntegral x / fromIntegral aw
     v y = fromIntegral y / fromIntegral ah
 
-lookup :: Regions -> String -> Region
-lookup (Regions rs) name = rs M.! Key (name, Nothing)
+lookup :: Regions -> String -> Maybe Region
+lookup (Regions rs) name = let key = Key (name, Nothing) in M.lookup key rs
 
 lookupIndexed :: Regions -> String -> Word32 -> Region
 lookupIndexed (Regions rs) name index = rs M.! Key (name, Just index)
@@ -145,16 +145,19 @@ data Atlas = Atlas
 
 -- TODO: find a way to reduce parameter count
 withAtlas :: Vk.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> Vk.DescriptorSet -> Vk.Sampler -> String -> Managed Atlas
-withAtlas allocator device commandPool gfxQueue descSet sampler atlasFile = do
-  (textureFile, regions) <- either (sayErr "Atlas") return =<< runExceptT (atlas atlasFile)
-  tex <- Tex.fromRGBA8PngFile allocator device commandPool gfxQueue $ "out/" ++ textureFile -- TODO:: remove "out/""
+withAtlas allocator device commandPool gfxQueue descSet sampler atlasDir = do
+  (textureFile, regions) <- either (sayErr "Atlas") return =<< runExceptT (atlas $ atlasDir ++ "/atlas.atlas")
+  tex <- Tex.fromRGBA8PngFile allocator device commandPool gfxQueue $ atlasDir ++ "/" ++ textureFile -- TODO:: remove "out/""
   [descIndex] <- Tex.bind device descSet [tex] sampler
   return $ Atlas {texture = descIndex, regions = regions}
 
 sprite :: Atlas -> String -> TexturePosition -> PixelSize -> Tex.Sprite
-sprite (Atlas {texture = tex, regions = atlas}) name origin windowSize =
-  let reg = lookup atlas name
-   in mkSprite tex reg origin windowSize
+sprite atlas name origin windowSize = maybe (notFound name) mk maybeReg
+  where
+    notFound name = error $ "Can't find region " ++ name ++ " in atlas"
+    (Atlas {texture = tex, regions = regs}) = atlas
+    maybeReg = lookup regs name
+    mk reg = mkSprite tex reg origin windowSize
 
 spriteIndexed :: Atlas -> String -> Word32 -> TexturePosition -> PixelSize -> Tex.Sprite
 spriteIndexed (Atlas {texture = tex, regions = atlas}) name index origin windowSize =

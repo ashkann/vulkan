@@ -5,4 +5,5 @@ if [ ! -e "$file" ]; then
     curl "https://libgdx-nightlies.s3.amazonaws.com/libgdx-runnables/$file" --output "$file"
     echo "Download complete."
 fi
-java -cp "$file" com.badlogic.gdx.tools.texturepacker.TexturePacker textures out atlas
+# java -cp "$file" com.badlogic.gdx.tools.texturepacker.TexturePacker textures out atlas
+java -cp "$file" com.badlogic.gdx.tools.texturepacker.TexturePacker textures/minesweeper out/minesweeper atlas

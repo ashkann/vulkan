@@ -27,6 +27,7 @@ import Data.Bits ((.|.))
 import Data.ByteString qualified as BS (readFile)
 import Data.Foldable (foldlM)
 import Data.Functor (($>))
+import Data.Map.Strict qualified as Map
 import Data.Vector ((!))
 import Data.Vector qualified as V
 import Data.Vector.Storable qualified as SV
@@ -300,16 +301,82 @@ main = runManaged $ do
           worldEvent
           (world0 atlas)
 
+data Digit = D0 | D1 | D2 | D3 | D4 | D5 | D6 | D7 | D8 | D9 deriving (Eq, Ord, Enum)
+
+newtype Score = Score (Digit, Digit, Digit)
+
+mkScore :: Int -> Maybe Score
+mkScore n
+  | n >= 0 && n <= 999 = Just $ Score (toEnum $ n `div` 100, toEnum $ (n `div` 10) `mod` 10, toEnum $ n `mod` 10)
+  | otherwise = Nothing
+
+spriteTranslation :: Measure.NormalizedDevicePosition -> SpriteTransformation
+spriteTranslation ndc = SpriteTransformation {position = ndc, rotation = 0, scale = G.vec2 1.0 1.0}
+
+ashkan :: Atlas.Atlas -> Int -> [Object ()]
+ashkan atlas n =
+  let digits = Map.fromList [(d, Atlas.spriteIndexed atlas "digit" (fromIntegral . fromEnum $ d) Measure.texCenter windowSize) | d <- [D0 .. D9]]
+      score (Score (a, b, c)) = [x, y, z] :: [Object ()]
+        where
+          x =
+            Object
+              { sprite = digits Map.! a,
+                transformation = spriteTranslation Measure.ndcCenter,
+                update = spriteNoMotion,
+                s = ()
+              }
+          w1 = let Measure.NormalizedDeviceWH w _ = (digits Map.! a).size in Measure.ndcSize w 0
+          y1 = Measure.translate w1 Measure.ndcCenter
+          y =
+            Object
+              { sprite = digits Map.! b,
+                transformation = spriteTranslation y1,
+                update = spriteNoMotion,
+                s = ()
+              }
+          w2 = let Measure.NormalizedDeviceWH w _ = (digits Map.! b).size in Measure.ndcSize w 0
+          y2 = Measure.translate w2 y1
+          z =
+            Object
+              { sprite = digits Map.! c,
+                transformation = spriteTranslation y2,
+                update = spriteNoMotion,
+                s = ()
+              }
+   in maybe [] score $ mkScore n
+
 world0 :: Atlas.Atlas -> World
 world0 atlas =
-  let one = G.vec2 1.0 1.0
-      digit1 =
-        Object
-          { sprite = Atlas.spriteIndexed atlas "digit" 0 Measure.texCenter windowSize,
-            transformation = SpriteTransformation {position = Measure.ndcCenter, rotation = 0, scale = one},
-            update = spriteNoMotion,
-            s = ()
-          }
+  let digits = Map.fromList [(d, Atlas.spriteIndexed atlas "digit" (fromIntegral . fromEnum $ d) Measure.texCenter windowSize) | d <- [D0 .. D9]]
+      score (Score (a, b, c)) = [x, y, z] :: [Object ()]
+        where
+          x =
+            Object
+              { sprite = digits Map.! a,
+                transformation = spriteTranslation Measure.ndcCenter,
+                update = spriteNoMotion,
+                s = ()
+              }
+          w1 = let Measure.NormalizedDeviceWH w _ = (digits Map.! a).size in Measure.ndcSize w 0
+          y1 = Measure.translate w1 Measure.ndcCenter
+          y =
+            Object
+              { sprite = digits Map.! b,
+                transformation = spriteTranslation y1,
+                update = spriteNoMotion,
+                s = ()
+              }
+          w2 = let Measure.NormalizedDeviceWH w _ = (digits Map.! b).size in Measure.ndcSize w 0
+          y2 = Measure.translate w2 y1
+          z =
+            Object
+              { sprite = digits Map.! c,
+                transformation = spriteTranslation y2,
+                update = spriteNoMotion,
+                s = ()
+              }
+
+      one = G.vec2 1.0 1.0
       -- rect index piv pos =
       --   Object
       --     { sprite = Atlas.spriteIndexed atlas "rectangle" index piv windowSize,
@@ -363,9 +430,7 @@ world0 atlas =
       -- r5 = rect 4 Measure.texCenter Measure.ndcCenter
       World
         { pointer = pointer,
-          objects =
-            [ Box digit1
-            ]
+          objects = []
         }
 
 data FrameData = FrameData

@@ -39,7 +39,7 @@ ghc-options:
   - -optl-Wl,-rpath,/usr/local/lib
   - -fprof-auto
   - -rtsopts
-  - -with-rtsopts=-xc  
+  # - -with-rtsopts=-xc
 
 executables:
   vulkan2dengine:
@@ -56,4 +56,9 @@ executables:
     main: Main.hs
     source-dirs:
       - minesweeper
+      - src
+  memory:
+    main: Main.hs
+    source-dirs:
+      - memory
       - src

@@ -190,19 +190,13 @@ instance Storable Viewport where
   peek = Store.peek viewportStore
   poke = Store.poke viewportStore
 
-data Object s = Object
+data Object = Object
   { sprite :: Tex.Sprite,
-    transformation :: SpriteTransformation,
-    update :: SpriteStateUpdate s,
-    s :: s
+    transformation :: SpriteTransformation
   }
 
-data Box = forall s. Box (Object s)
-
 data World = World
-  { pointer :: Object (),
-    objects :: [Box],
-    counter :: Int,
+  { pointer :: Object,
     atlas :: Atlas.Atlas
   }
 
@@ -256,7 +250,7 @@ main = runManaged $ do
   sampler <- repeatingSampler device
   gfxQueue <- Vk.getDeviceQueue device gfx 0 <* say "Vulkan" "Got graphics queue"
 
-  atlas <- Atlas.withAtlas allocator device commandPool gfxQueue descSet sampler "out/minesweeper"
+  atlas <- Atlas.withAtlas allocator device commandPool gfxQueue descSet sampler "out/memory"
   say "Engine" "Atlas loaded"
 
   SDL.showWindow window <* say "SDL" "Show window"
@@ -297,7 +291,7 @@ main = runManaged $ do
                     f = frames ! n
                  in frame device gfxQueue presentQueue pipeline pipelineLayout swapchain descSet f frameData
           )
-          worldTime2
+          worldTime
           worldEvent
           (world0 atlas)
 
@@ -313,35 +307,29 @@ mkScore n
 spriteTranslation :: Measure.NormalizedDevicePosition -> SpriteTransformation
 spriteTranslation ndc = SpriteTransformation {position = ndc, rotation = 0, scale = G.vec2 1.0 1.0}
 
-ashkan :: Atlas.Atlas -> Int -> [Object ()]
+ashkan :: Atlas.Atlas -> Int -> [Object ]
 ashkan atlas n =
   let digits = Map.fromList [(d, Atlas.spriteIndexed atlas "digit" (fromIntegral . fromEnum $ d) Measure.texCenter windowSize) | d <- [D0 .. D9]]
-      score (Score (a, b, c)) = [x, y, z] :: [Object ()]
+      score (Score (a, b, c)) = [x, y, z]
         where
           x =
             Object
               { sprite = digits Map.! a,
-                transformation = spriteTranslation Measure.ndcCenter,
-                update = spriteNoMotion,
-                s = ()
+                transformation = spriteTranslation Measure.ndcCenter
               }
           w1 = let Measure.NormalizedDeviceWH w _ = (digits Map.! a).size in Measure.ndcSize w 0
           y1 = Measure.translate w1 Measure.ndcCenter
           y =
             Object
               { sprite = digits Map.! b,
-                transformation = spriteTranslation y1,
-                update = spriteNoMotion,
-                s = ()
+                transformation = spriteTranslation y1
               }
           w2 = let Measure.NormalizedDeviceWH w _ = (digits Map.! b).size in Measure.ndcSize w 0
           y2 = Measure.translate w2 y1
           z =
             Object
               { sprite = digits Map.! c,
-                transformation = spriteTranslation y2,
-                update = spriteNoMotion,
-                s = ()
+                transformation = spriteTranslation y2
               }
    in maybe [] score $ mkScore n
 
@@ -350,15 +338,11 @@ world0 atlas =
   let one = G.vec2 1.0 1.0
       pointer =
         Object
-          { sprite = Atlas.sprite atlas "pointer" Measure.texCenter windowSize,
-            transformation = SpriteTransformation {position = Measure.ndcCenter, rotation = 0, scale = one},
-            update = spriteNoMotion,
-            s = ()
+          { sprite = Atlas.sprite atlas "pointer" Measure.texTopLeft windowSize,
+            transformation = SpriteTransformation {position = Measure.ndcCenter, rotation = 0, scale = one}
           }
    in World
         { pointer = pointer,
-          objects = [],
-          counter = 0,
           atlas = atlas
         }
 
@@ -563,16 +547,8 @@ worldEvent e w@(World {pointer = pointer@Object {transformation = state@SpriteTr
       Measure.pixelPosToNdc (Measure.pixelPos (fromIntegral x) (fromIntegral y)) (Measure.pixelSize windowWidth windowHeight)
     f p _ = p
 
-worldTime2 :: (Monad io) => DeltaTime -> World -> io World -- TODO: redundant?
-worldTime2 dt w = do
-  obj <- worldTime dt w.objects
-  return w {objects = obj, counter = if w.counter >= 999 then 0 else w.counter + 1 }
-
-worldTime :: (Monad io) => DeltaTime -> [Box] -> io [Box]
-worldTime dt = traverse (update dt)
-  where
-    transform dt obj = obj.update.update dt obj.s obj.transformation
-    update dt (Box obj) = let (ss1, s1) = transform dt obj in return $ Box obj {transformation = ss1, s = s1}
+worldTime :: (Monad io) => DeltaTime -> World -> io World -- TODO: redundant?
+worldTime _ = return
 
 -- update obj@Object {sprite = sprite@Sprite {pos = p0}, vel = v0, animation = _} =
 --   let p1 = p0 + (v0 G.^* fromIntegral dt)
@@ -603,20 +579,38 @@ repeatingSampler device =
    in managed $ Vk.withSampler device info Nothing bracket
 
 windowWidth :: Word32
-windowWidth = 500
+windowWidth = 1000
 
 windowHeight :: Word32
-windowHeight = 500
+windowHeight = 700
 
 windowSize :: Measure.PixelSize
 windowSize = Measure.pixelSize windowWidth windowHeight
 
 sprites :: World -> [(Tex.Sprite, SpriteTransformation)]
-sprites World {pointer, objects, counter, atlas} =
-  (f <$> objects) ++ (f . Box <$> ashkan atlas (counter `div` 4)) ++ [(pointer.sprite, pointer.transformation)]
+sprites World {pointer, atlas} =
+  let p = Object {sprite = pointer.sprite, transformation = pointer.transformation}
+      faceDown = Atlas.sprite atlas "back-side" Measure.texTopLeft windowSize
+      gridTopLeft = Measure.ndcTopLeft
+      mkCard = Object {sprite = faceDown, transformation = spriteTranslation gridTopLeft}
+      faceDownCard = mkCard
+      grid = [putAt r c faceDownCard | r <- [0 .. 5], c <- [0 .. 5]]
+   in -- cards = Atlas.sprite atlas "card-back" Measure.texTopLeft windowSize
+      (f <$> grid ++ [p])
   where
-    
-    f (Box obj) = (obj.sprite, obj.transformation)
+    f obj = (obj.sprite, obj.transformation)
+    putAt r c obj =
+      let pos = G.vec2 (c * (w + hPadding) + left) (r * (h + vPadding) + top)
+       in obj {transformation = obj.transformation {position = Measure.ndcTranslate pos obj.transformation.position}}
+      where
+        faceDown = Atlas.sprite atlas "back-side" Measure.texTopLeft windowSize
+        Measure.NormalizedDeviceWH w h = faceDown.size
+        top = 0.05
+        left = 0.05
+        hPadding = 0.02
+        vPadding = 0.02
+
+-- pos :: Object s -> Measure.NormalizedDevicePosition
 
 withMemoryAllocator :: Vk.Instance -> Vk.PhysicalDevice -> Vk.Device -> Managed Vma.Allocator
 withMemoryAllocator vulkan gpu device =

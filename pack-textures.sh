@@ -6,4 +6,5 @@ if [ ! -e "$file" ]; then
     echo "Download complete."
 fi
 # java -cp "$file" com.badlogic.gdx.tools.texturepacker.TexturePacker textures out atlas
-java -cp "$file" com.badlogic.gdx.tools.texturepacker.TexturePacker textures/minesweeper out/minesweeper atlas
+# java -cp "$file" com.badlogic.gdx.tools.texturepacker.TexturePacker textures/minesweeper out/minesweeper atlas
+java -cp "$file" com.badlogic.gdx.tools.texturepacker.TexturePacker textures/memory out/memory atlas

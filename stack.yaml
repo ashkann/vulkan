@@ -81,8 +81,8 @@ extra-deps:
   - ptrdiff-0
   - lens-tutorial-1.0.5
 
-build:
-  executable-profiling: true  
+# build:
+#   executable-profiling: true  
 
 flags:
   dear-imgui:

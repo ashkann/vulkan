@@ -25,6 +25,7 @@ dependencies:
   - lens
   - lens-tutorial
   - parsec
+  - random
 
 ghc-options:
   - -Wall

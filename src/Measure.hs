@@ -1,5 +1,5 @@
-{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 module Measure
   ( PixelPosition (..),
@@ -43,7 +43,7 @@ module Measure
     localToNdc,
     localPosToNdc,
     ndcTranslate,
-    translate
+    translate,
   )
 where
 
@@ -110,14 +110,18 @@ pattern NormalizedDeviceXY x y <- NormalizedDevicePosition (G.WithVec2 x y)
 
 class Translate a b where
   translate :: a -> b -> b
+
 instance Translate G.Vec2 NormalizedDevicePosition where
   translate d (NormalizedDevicePosition p) = NormalizedDevicePosition $ p + d
 
 instance Translate NormalizedDeviceSize NormalizedDevicePosition where
-  translate (NormalizedDeviceSize wh) = translate wh
+  translate (NormalizedDeviceSize s) = translate s
+
+instance Translate NormalizedDevicePosition NormalizedDevicePosition where
+  translate (NormalizedDevicePosition a) (NormalizedDevicePosition b) = NormalizedDevicePosition $ a + b
 
 ndcTranslate :: G.Vec2 -> NormalizedDevicePosition -> NormalizedDevicePosition
-ndcTranslate d (NormalizedDevicePosition p)  = translate d (NormalizedDevicePosition p)
+ndcTranslate d (NormalizedDevicePosition p) = translate d (NormalizedDevicePosition p)
 
 texVec :: TexturePosition -> G.Vec2
 texVec (TexturePosition v) = v

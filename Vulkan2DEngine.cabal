@@ -39,6 +39,7 @@ executable atlas-parser
     , managed
     , mtl
     , parsec
+    , random
     , sdl2
     , storable-record
     , text
@@ -78,6 +79,7 @@ executable memory
     , managed
     , mtl
     , parsec
+    , random
     , sdl2
     , storable-record
     , text
@@ -117,6 +119,7 @@ executable minesweeper
     , managed
     , mtl
     , parsec
+    , random
     , sdl2
     , storable-record
     , text
@@ -156,6 +159,7 @@ executable vulkan2dengine
     , managed
     , mtl
     , parsec
+    , random
     , sdl2
     , storable-record
     , text

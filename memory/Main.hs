@@ -30,6 +30,7 @@ import Data.Functor (($>))
 import Data.Map.Strict qualified as Map
 import Data.Vector ((!))
 import Data.Vector qualified as V
+import Data.Vector.Mutable qualified as MV
 import Data.Vector.Storable qualified as SV
 import Foreign (Ptr, Storable, Word32, Word64)
 import Foreign.Ptr (castFunPtr)
@@ -40,6 +41,7 @@ import Geomancy.Transform qualified as G
 import Init qualified
 import Measure qualified
 import SDL qualified
+import System.Random qualified as Random
 import Texture qualified as Tex
 import Utils
 import Vertex qualified as Vert
@@ -195,11 +197,6 @@ data Object = Object
     transformation :: SpriteTransformation
   }
 
-data World = World
-  { pointer :: Object,
-    atlas :: Atlas.Atlas
-  }
-
 frameData :: World -> FrameData
 frameData world =
   FrameData
@@ -280,6 +277,7 @@ main = runManaged $ do
       vertexBufferSize = fromIntegral $ sizeOf (undefined :: Vert.Vertex) * maxVertCount
       lightBufferSize = 1024
   frames <- withFrames device gfx allocator stagingBufferSize vertexBufferSize lightBufferSize frameCount
+  w0 <- liftIO $ world0 atlas
   let shutdown = say "Engine" "Shutting down ..." *> Vk.deviceWaitIdle device
    in say "Engine" "Entering the main loop"
         *> mainLoop
@@ -293,7 +291,7 @@ main = runManaged $ do
           )
           worldTime
           worldEvent
-          (world0 atlas)
+          w0
 
 data Digit = D0 | D1 | D2 | D3 | D4 | D5 | D6 | D7 | D8 | D9 deriving (Eq, Ord, Enum)
 
@@ -307,7 +305,7 @@ mkScore n
 spriteTranslation :: Measure.NormalizedDevicePosition -> SpriteTransformation
 spriteTranslation ndc = SpriteTransformation {position = ndc, rotation = 0, scale = G.vec2 1.0 1.0}
 
-ashkan :: Atlas.Atlas -> Int -> [Object ]
+ashkan :: Atlas.Atlas -> Int -> [Object]
 ashkan atlas n =
   let digits = Map.fromList [(d, Atlas.spriteIndexed atlas "digit" (fromIntegral . fromEnum $ d) Measure.texCenter windowSize) | d <- [D0 .. D9]]
       score (Score (a, b, c)) = [x, y, z]
@@ -333,18 +331,83 @@ ashkan atlas n =
               }
    in maybe [] score $ mkScore n
 
-world0 :: Atlas.Atlas -> World
-world0 atlas =
+newtype Row = Row Int deriving (Eq, Ord)
+
+newtype Column = Column Int deriving (Eq, Ord)
+
+newtype Spot = Spot (Row, Column) deriving (Eq, Ord)
+
+data Face = FaceUp | FaceDown deriving (Eq)
+
+newtype CardName = CardName String
+
+data Card = Card CardName Face
+
+newtype Grid = Grid (Map.Map Spot Card)
+
+data GridStuff = GridStuff
+  { top :: Float,
+    left :: Float,
+    hPadding :: Float,
+    vPadding :: Float,
+    cardSize :: Measure.NormalizedDeviceSize
+  }
+
+data World = World
+  { pointer :: Object,
+    atlas :: Atlas.Atlas,
+    grid :: Grid,
+    gridSuff :: GridStuff
+  }
+
+mkSuffeledDeck :: Int -> IO (V.Vector CardName)
+mkSuffeledDeck n = do
+  g <- Random.initStdGen
+  v <- MV.generate (2 * n) (\i -> (i `mod` n) + 1)
+  deck <- shuffle g v
+  return $ CardName . show <$> deck
+
+shuffle :: Random.StdGen -> MV.MVector (MV.PrimState IO) Int -> IO (V.Vector Int)
+shuffle g0 init = do
+  out <- go g0 (MV.length init) init
+  V.freeze out
+  where
+    go _ n v | n <= 1 = return v
+    go g n v = do
+      let (i, g') = Random.uniformR (0, n - 2) g
+      MV.swap v i (n - 1)
+      go g' (n - 1) v
+
+mkGrid :: [CardName] -> Grid
+mkGrid deck = Grid . Map.fromList $ zipWith f spots deck
+  where
+    spots = [Spot (Row r, Column c) | r <- [0 .. 5], c <- [0 .. 5]]
+    f spot name = (spot, Card name FaceDown)
+
+world0 :: (MonadIO io) => Atlas.Atlas -> io World
+world0 atlas = do
+  deck <- liftIO $ mkSuffeledDeck 18
   let one = G.vec2 1.0 1.0
       pointer =
         Object
           { sprite = Atlas.sprite atlas "pointer" Measure.texTopLeft windowSize,
             transformation = SpriteTransformation {position = Measure.ndcCenter, rotation = 0, scale = one}
           }
-   in World
-        { pointer = pointer,
-          atlas = atlas
-        }
+      faceDown = Atlas.sprite atlas "back-side" Measure.texTopLeft windowSize
+   in return $
+        World
+          { pointer = pointer,
+            atlas = atlas,
+            grid = mkGrid (V.toList deck),
+            gridSuff =
+              GridStuff
+                { top = 0.05,
+                  left = 0.05,
+                  hPadding = 0.02,
+                  vPadding = 0.02,
+                  cardSize = faceDown.size
+                }
+          }
 
 data FrameData = FrameData
   { verts :: SV.Vector Vert.Vertex,
@@ -540,12 +603,35 @@ mainLoop shutdown frameData frame worldTime worldEvent w0 =
           go (n + 1) t2 w3
 
 worldEvent :: (Monad io) => SDL.Event -> World -> io World
-worldEvent e w@(World {pointer = pointer@Object {transformation = state@SpriteTransformation {position = pos}}}) =
-  return let p = f pos e; w1 = w {pointer = pointer {transformation = state {position = p}}} in w1
+worldEvent e w@(World {pointer = pointer, grid = grid, gridSuff = gridStuff}) =
+  return $
+    let Object {transformation = state@SpriteTransformation {position = pointerPosition}} = pointer
+        p = f pointerPosition e
+        w1 = w {pointer = pointer {transformation = state {position = p}}, grid = if mouseClicked then flip pointerPosition else grid}
+     in w1
   where
+    flip pos
+      | Just spot <- spot pos = gridFlip spot grid
+      | otherwise = grid
+    spot pos =
+      let Measure.NormalizedDeviceXY x y = Measure.translate (G.vec2 (-gridStuff.left) (-gridStuff.top)) pos
+          Measure.NormalizedDeviceWH w h = gridStuff.cardSize
+          r = floor $ (y + 1) / (h + gridStuff.vPadding)
+          c = floor $ (x + 1) / (w + gridStuff.hPadding)
+       in Just (Spot (Row r, Column c))
+    mouseClicked
+      | SDL.Event _ (SDL.MouseButtonEvent (SDL.MouseButtonEventData _ SDL.Released _ SDL.ButtonLeft _ _)) <- e = True
+      | otherwise = False
     f _ (SDL.Event _ (SDL.MouseMotionEvent (SDL.MouseMotionEventData {mouseMotionEventPos = SDL.P (SDL.V2 x y)}))) =
       Measure.pixelPosToNdc (Measure.pixelPos (fromIntegral x) (fromIntegral y)) (Measure.pixelSize windowWidth windowHeight)
     f p _ = p
+
+gridFlip :: Spot -> Grid -> Grid
+gridFlip spot (Grid m) = Grid $ Map.adjust cardFlip spot m
+
+cardFlip :: Card -> Card
+cardFlip (Card name FaceUp) = Card name FaceDown
+cardFlip (Card name FaceDown) = Card name FaceUp
 
 worldTime :: (Monad io) => DeltaTime -> World -> io World -- TODO: redundant?
 worldTime _ = return
@@ -588,27 +674,22 @@ windowSize :: Measure.PixelSize
 windowSize = Measure.pixelSize windowWidth windowHeight
 
 sprites :: World -> [(Tex.Sprite, SpriteTransformation)]
-sprites World {pointer, atlas} =
+sprites World {pointer, atlas, grid, gridSuff} =
   let p = Object {sprite = pointer.sprite, transformation = pointer.transformation}
-      faceDown = Atlas.sprite atlas "back-side" Measure.texTopLeft windowSize
-      gridTopLeft = Measure.ndcTopLeft
-      mkCard = Object {sprite = faceDown, transformation = spriteTranslation gridTopLeft}
-      faceDownCard = mkCard
-      grid = [putAt r c faceDownCard | r <- [0 .. 5], c <- [0 .. 5]]
-   in -- cards = Atlas.sprite atlas "card-back" Measure.texTopLeft windowSize
-      (f <$> grid ++ [p])
+   in (f <$> grd grid ++ [p])
   where
     f obj = (obj.sprite, obj.transformation)
-    putAt r c obj =
-      let pos = G.vec2 (c * (w + hPadding) + left) (r * (h + vPadding) + top)
-       in obj {transformation = obj.transformation {position = Measure.ndcTranslate pos obj.transformation.position}}
+    grd (Grid m) = uncurry putAt <$> Map.toList m
+    putAt spot crd =
+      let obj = Object {sprite = card crd, transformation = spriteTranslation Measure.ndcTopLeft}
+       in obj {transformation = obj.transformation {position = Measure.ndcTranslate (pos spot) obj.transformation.position}}
       where
+        card (Card (CardName name) FaceUp) = Atlas.sprite atlas name Measure.texTopLeft windowSize
+        card (Card _ FaceDown) = faceDown
+        GridStuff {top, left, hPadding, vPadding} = gridSuff
+        pos (Spot (Row r, Column c)) = G.vec2 (fromIntegral c * (w + hPadding) + left) (fromIntegral r * (h + vPadding) + top)
         faceDown = Atlas.sprite atlas "back-side" Measure.texTopLeft windowSize
         Measure.NormalizedDeviceWH w h = faceDown.size
-        top = 0.05
-        left = 0.05
-        hPadding = 0.02
-        vPadding = 0.02
 
 -- pos :: Object s -> Measure.NormalizedDevicePosition
 

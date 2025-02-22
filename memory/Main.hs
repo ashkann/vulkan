@@ -94,85 +94,11 @@ import Prelude hiding (init)
 
 newtype DeltaTime = DeltaTime Float
 
-newtype SpriteStateUpdate s = SpriteStateUpdate {update :: DeltaTime -> s -> SpriteTransformation -> (SpriteTransformation, s)}
-
-spriteBouncingMotion :: SpriteStateUpdate G.Vec2 -- TODO: use a type for Velocity in NDC
-spriteBouncingMotion = SpriteStateUpdate $ \(DeltaTime dt) v@(G.WithVec2 vx vy) s ->
-  let position2@(Measure.NormalizedDeviceXY x1 y1) = Measure.ndcTranslate (v G.^* dt) s.position
-      f x v = if x >= 1.0 || x <= -1.0 then -v else v
-   in (s {position = position2}, G.vec2 (f x1 vx) (f y1 vy))
-
-spriteScale :: SpriteStateUpdate G.Vec2
-spriteScale = SpriteStateUpdate $ \(DeltaTime dt) v@(G.WithVec2 vx vy) s ->
-  let scale2@(G.WithVec2 sx sy) = s.scale + (v G.^* dt)
-      f s v = if s >= 2.0 || s <= -2.0 then -v else v
-   in (s {scale = scale2}, G.vec2 (f sx vx) (f sy vy))
-
-spriteNoMotion :: SpriteStateUpdate s
-spriteNoMotion = SpriteStateUpdate $ \_ s state -> (state, s)
-
-spriteRotation :: Float -> SpriteStateUpdate Float
-spriteRotation w = SpriteStateUpdate $ \(DeltaTime dt) r state -> let r2 = r + w * dt in (state {rotation = r2}, r2)
-
 data SpriteTransformation = SpriteTransformation
   { position :: Measure.NormalizedDevicePosition,
     rotation :: Float,
     scale :: G.Vec2
   }
-
--- data Sheet = Sheet {texture :: Tex.DescriptorIndex, frames :: V.Vector G.Vec4}
-
--- data Animation = Animation {sheet :: Sheet, speed :: Float}
-
--- data Animated = Animated {animation :: Animation, frameIndex :: Float}
-
--- $(makeLenses ''Animated)
-
--- loopAnimate :: Animated -> Word32 -> Animated
--- loopAnimate ani dt =
---   let new fi = fi + (ani ^. animation . speed * fromIntegral dt) / 1000
---       loop fi = if floor fi >= (ani ^. animation . sheet . frames . to V.length) then 0 else fi
---    in over frameIndex (loop . new) ani
-
--- TODO: reordering the fields apparently breaks the alignment. why?
-data PointLight = PointLight {intensity :: Float, position :: G.Vec2, color :: G.Vec3} deriving (Show)
-
-pointLightStore :: Store.Dictionary PointLight
-pointLightStore =
-  Store.run $
-    PointLight
-      <$> Store.element (.intensity)
-      <*> Store.element (.position)
-      <*> Store.element (.color)
-
-instance Storable PointLight where
-  sizeOf = Store.sizeOf pointLightStore
-  alignment = Store.alignment pointLightStore
-  peek = Store.peek pointLightStore
-  poke = Store.poke pointLightStore
-
-data GlobalLight = GlobalLight
-  { intensity :: Float,
-    _padding1 :: Word64, -- TODO: remove and make the Storable instance handle it
-    _padding2 :: Word32,
-    color :: G.Vec3
-  }
-  deriving (Show)
-
-globalLightStore :: Store.Dictionary GlobalLight
-globalLightStore =
-  Store.run $
-    GlobalLight
-      <$> Store.element (.intensity)
-      <*> Store.element (const 0)
-      <*> Store.element (const 0)
-      <*> Store.element (.color)
-
-instance Storable GlobalLight where
-  sizeOf = Store.sizeOf globalLightStore
-  alignment = Store.alignment globalLightStore
-  peek = Store.peek globalLightStore
-  poke = Store.poke globalLightStore
 
 data Viewport = Viewport
   { viewportSize :: G.UVec2,
@@ -635,20 +561,6 @@ cardFlip (Card name FaceDown) = Card name FaceUp
 
 worldTime :: (Monad io) => DeltaTime -> World -> io World -- TODO: redundant?
 worldTime _ = return
-
--- update obj@Object {sprite = sprite@Sprite {pos = p0}, vel = v0, animation = _} =
---   let p1 = p0 + (v0 G.^* fromIntegral dt)
---       v1 = G.emap2 (\vi pos -> if pos >= 1.0 || pos <= -1.0 then -vi else vi) v0 p1
---    in obj {sprite = sprite {pos = p1}, vel = v1}
--- update obj@Object {sprite, animation = Just ani} =
---   let ani2 = animatedProgress ani
---    in obj {sprite = sprite {region = animatedFrame ani2}, animation = Just ani2}
--- animatedFrame :: Animated -> G.Vec4
--- animatedFrame ani = ani.animation.sheet.frames ! floor ani.frameIndex
--- animatedProgress ani =
---   let new fi = fi + ani.animation.speed * fromIntegral dt / 1000
---       loop fi = if floor fi >= V.length ani.animation.sheet.frames then 0 else fi
---    in ani {frameIndex = loop (new ani.frameIndex)}
 
 repeatingSampler :: Vk.Device -> Managed Vk.Sampler
 repeatingSampler device =

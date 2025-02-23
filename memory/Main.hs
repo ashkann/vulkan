@@ -28,6 +28,7 @@ import Data.ByteString qualified as BS (readFile)
 import Data.Foldable (foldlM)
 import Data.Functor (($>))
 import Data.Map.Strict qualified as Map
+import Data.Maybe (fromMaybe, maybeToList)
 import Data.Vector ((!))
 import Data.Vector qualified as V
 import Data.Vector.Mutable qualified as MV
@@ -73,11 +74,8 @@ import Vulkan qualified as VkPresentInfoKHR (PresentInfoKHR (..))
 import Vulkan qualified as VkRect2D (Rect2D (..))
 import Vulkan qualified as VkRenderingAttachmentInfo (RenderingAttachmentInfo (..))
 import Vulkan qualified as VkRenderingInfo (RenderingInfo (..))
-import Vulkan qualified as VkSamplerCreateInfo (SamplerCreateInfo (..))
 import Vulkan qualified as VkShaderModuleCreateInfo (ShaderModuleCreateInfo (..))
 import Vulkan qualified as VkSubmitInfo (SubmitInfo (..))
-import Vulkan qualified as VkSurfaceCaps (SurfaceCapabilitiesKHR (..))
-import Vulkan qualified as VkSwapchainCreateInfo (SwapchainCreateInfoKHR (..))
 import Vulkan qualified as VkVPipelineMultisampleStateCreateInfo (PipelineMultisampleStateCreateInfo (..))
 import Vulkan qualified as VkVertexInputAttributeDescription (VertexInputAttributeDescription (..))
 import Vulkan qualified as VkVertexInputBindingDescription (VertexInputBindingDescription (..))
@@ -120,14 +118,14 @@ instance Storable Viewport where
 
 data Object = Object
   { sprite :: Tex.Sprite,
-    transformation :: SpriteTransformation
+    transform :: SpriteTransformation
   }
 
 frameData :: World -> FrameData
 frameData world =
   FrameData
-    { verts = mconcat $ uncurry vertices <$> sprites world,
-      viewport = Viewport {viewportSize = G.uvec2 windowWidth windowHeight, _padding = 0}
+    { verts = mconcat $ uncurry tranformSprite <$> sprites world,
+      viewport = Viewport {viewportSize = G.uvec2 windowWidth windowHeight, _padding = 0} -- TODO: remove _padding = 0
     }
 
 data Frame = Frame
@@ -150,10 +148,10 @@ data Frame = Frame
 main :: IO ()
 main = runManaged $ do
   withSDL
-  window <- withWindow (fromIntegral windowWidth) (fromIntegral windowHeight)
-  vulkan <- withVulkan window
-  _ <- withDebug vulkan
-  surface <- withSurface window vulkan
+  window <- Utils.withWindow (fromIntegral windowWidth) (fromIntegral windowHeight)
+  vulkan <- Utils.withVulkan window
+  _ <- Utils.withDebug vulkan
+  surface <- Utils.withSurface window vulkan
   (gpu, gfx, present, portability, gpuName) <- Init.pickGPU vulkan surface
   say "Vulkan" $ "Picked GPU \"" ++ gpuName ++ "\", present queue " ++ show present ++ ", graphics queue " ++ show gfx
   device <- withDevice gpu present gfx portability <* say "Vulkan" "Created device"
@@ -164,13 +162,12 @@ main = runManaged $ do
               VkCommandPoolCreateInfo.flags = Vk.COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT
             }
      in managed $ Vk.withCommandPool device info Nothing bracket
-  say "Vulkan" "Created swapchain"
   allocator <- withMemoryAllocator vulkan gpu device <* say "Vulkan" "Created VMA allocator"
   let descriptorCount = 16
   descSetLayout <- descriptorSetLayout device descriptorCount
   descPool <- descriptorPool device 1000
   descSet <- descriptorSet device descSetLayout descPool
-  sampler <- repeatingSampler device
+  sampler <- Utils.repeatingSampler device
   gfxQueue <- Vk.getDeviceQueue device gfx 0 <* say "Vulkan" "Got graphics queue"
 
   atlas <- Atlas.withAtlas allocator device commandPool gfxQueue descSet sampler "out/memory"
@@ -181,7 +178,7 @@ main = runManaged $ do
   (SDL.cursorVisible SDL.$= False) <* say "SDL" "Dsiable cursor"
 
   swapchain@(_, swapchainExtent, swapchainImages) <-
-    createSwapchain
+    Init.withSwapChain
       gpu
       device
       surface
@@ -190,6 +187,8 @@ main = runManaged $ do
       windowWidth
       windowHeight
   let frameCount = V.length swapchainImages
+  say "Vulkan" "Created swapchain"
+
   say "Engine" $ "Frame count is " ++ show frameCount
 
   pipelineLayout <-
@@ -219,43 +218,46 @@ main = runManaged $ do
           worldEvent
           w0
 
-data Digit = D0 | D1 | D2 | D3 | D4 | D5 | D6 | D7 | D8 | D9 deriving (Eq, Ord, Enum)
+-- data Digit = D0 | D1 | D2 | D3 | D4 | D5 | D6 | D7 | D8 | D9 deriving (Eq, Ord, Enum)
 
-newtype Score = Score (Digit, Digit, Digit)
+-- newtype Score = Score (Digit, Digit, Digit)
 
-mkScore :: Int -> Maybe Score
-mkScore n
-  | n >= 0 && n <= 999 = Just $ Score (toEnum $ n `div` 100, toEnum $ (n `div` 10) `mod` 10, toEnum $ n `mod` 10)
-  | otherwise = Nothing
+-- mkScore :: Int -> Maybe Score
+-- mkScore n
+--   | n >= 0 && n <= 999 = Just $ Score (toEnum $ n `div` 100, toEnum $ (n `div` 10) `mod` 10, toEnum $ n `mod` 10)
+--   | otherwise = Nothing
 
 spriteTranslation :: Measure.NormalizedDevicePosition -> SpriteTransformation
 spriteTranslation ndc = SpriteTransformation {position = ndc, rotation = 0, scale = G.vec2 1.0 1.0}
 
-ashkan :: Atlas.Atlas -> Int -> [Object]
-ashkan atlas n =
-  let digits = Map.fromList [(d, Atlas.spriteIndexed atlas "digit" (fromIntegral . fromEnum $ d) Measure.texCenter windowSize) | d <- [D0 .. D9]]
-      score (Score (a, b, c)) = [x, y, z]
-        where
-          x =
-            Object
-              { sprite = digits Map.! a,
-                transformation = spriteTranslation Measure.ndcCenter
-              }
-          w1 = let Measure.NormalizedDeviceWH w _ = (digits Map.! a).size in Measure.ndcSize w 0
-          y1 = Measure.translate w1 Measure.ndcCenter
-          y =
-            Object
-              { sprite = digits Map.! b,
-                transformation = spriteTranslation y1
-              }
-          w2 = let Measure.NormalizedDeviceWH w _ = (digits Map.! b).size in Measure.ndcSize w 0
-          y2 = Measure.translate w2 y1
-          z =
-            Object
-              { sprite = digits Map.! c,
-                transformation = spriteTranslation y2
-              }
-   in maybe [] score $ mkScore n
+-- ashkan :: Atlas.Atlas -> Int -> [Object]
+-- ashkan atlas n =
+--   let digits = Map.fromList [(d, Atlas.spriteIndexed atlas "digit" (fromIntegral . fromEnum $ d) Measure.texCenter windowSize) | d <- [D0 .. D9]]
+--       score (Score (a, b, c)) = [x, y, z]
+--         where
+--           x =
+--             Object
+--               { sprite = digits Map.! a,
+--                 transform = spriteTranslation Measure.ndcCenter,
+--                 tr = G.translate 0 0 0
+--               }
+--           w1 = let Measure.NormalizedDeviceWH w _ = (digits Map.! a).size in Measure.ndcSize w 0
+--           y1 = Measure.translate w1 Measure.ndcCenter
+--           y =
+--             Object
+--               { sprite = digits Map.! b,
+--                 transform = spriteTranslation y1,
+--                 tr = G.translate 0 0 0
+--               }
+--           w2 = let Measure.NormalizedDeviceWH w _ = (digits Map.! b).size in Measure.ndcSize w 0
+--           y2 = Measure.translate w2 y1
+--           z =
+--             Object
+--               { sprite = digits Map.! c,
+--                 transform = spriteTranslation y2,
+--                 tr = G.translate 0 0 0
+--               }
+--    in maybe [] score $ mkScore n
 
 newtype Row = Row Int deriving (Eq, Ord)
 
@@ -280,10 +282,10 @@ data GridStuff = GridStuff
   }
 
 data World = World
-  { pointer :: Object,
+  { pointerPosition :: Measure.PixelPosition,
     atlas :: Atlas.Atlas,
     grid :: Grid,
-    gridSuff :: GridStuff
+    gridStuff :: GridStuff
   }
 
 mkSuffeledDeck :: Int -> IO (V.Vector CardName)
@@ -313,19 +315,14 @@ mkGrid deck = Grid . Map.fromList $ zipWith f spots deck
 world0 :: (MonadIO io) => Atlas.Atlas -> io World
 world0 atlas = do
   deck <- liftIO $ mkSuffeledDeck 18
-  let one = G.vec2 1.0 1.0
-      pointer =
-        Object
-          { sprite = Atlas.sprite atlas "pointer" Measure.texTopLeft windowSize,
-            transformation = SpriteTransformation {position = Measure.ndcCenter, rotation = 0, scale = one}
-          }
+  let
       faceDown = Atlas.sprite atlas "back-side" Measure.texTopLeft windowSize
    in return $
         World
-          { pointer = pointer,
+          { pointerPosition = Measure.pixelPos 0 0,
             atlas = atlas,
             grid = mkGrid (V.toList deck),
-            gridSuff =
+            gridStuff =
               GridStuff
                 { top = 0.05,
                   left = 0.05,
@@ -529,11 +526,11 @@ mainLoop shutdown frameData frame worldTime worldEvent w0 =
           go (n + 1) t2 w3
 
 worldEvent :: (Monad io) => SDL.Event -> World -> io World
-worldEvent e w@(World {pointer = pointer, grid = grid, gridSuff = gridStuff}) =
+worldEvent e w@(World {grid = grid, gridStuff = gridStuff, pointerPosition = pointerPosition}) =
   return $
-    let Object {transformation = state@SpriteTransformation {position = pointerPosition}} = pointer
-        p = f pointerPosition e
-        w1 = w {pointer = pointer {transformation = state {position = p}}, grid = if mouseClicked then flip pointerPosition else grid}
+    let
+        ndcPointerPosition = Measure.pixelPosToNdc pointerPosition (Measure.pixelSize windowWidth windowHeight)
+        w1 = w {grid = if mouseClicked then flip ndcPointerPosition else grid, pointerPosition = fromMaybe w.pointerPosition mouseMoved}
      in w1
   where
     flip pos
@@ -548,9 +545,9 @@ worldEvent e w@(World {pointer = pointer, grid = grid, gridSuff = gridStuff}) =
     mouseClicked
       | SDL.Event _ (SDL.MouseButtonEvent (SDL.MouseButtonEventData _ SDL.Released _ SDL.ButtonLeft _ _)) <- e = True
       | otherwise = False
-    f _ (SDL.Event _ (SDL.MouseMotionEvent (SDL.MouseMotionEventData {mouseMotionEventPos = SDL.P (SDL.V2 x y)}))) =
-      Measure.pixelPosToNdc (Measure.pixelPos (fromIntegral x) (fromIntegral y)) (Measure.pixelSize windowWidth windowHeight)
-    f p _ = p
+    mouseMoved
+      | (SDL.Event _ (SDL.MouseMotionEvent (SDL.MouseMotionEventData {mouseMotionEventPos = SDL.P (SDL.V2 x y)}))) <- e = Just $ Measure.pixelPos (fromIntegral x) (fromIntegral y)
+      | otherwise = Nothing  
 
 gridFlip :: Spot -> Grid -> Grid
 gridFlip spot (Grid m) = Grid $ Map.adjust cardFlip spot m
@@ -562,20 +559,6 @@ cardFlip (Card name FaceDown) = Card name FaceUp
 worldTime :: (Monad io) => DeltaTime -> World -> io World -- TODO: redundant?
 worldTime _ = return
 
-repeatingSampler :: Vk.Device -> Managed Vk.Sampler
-repeatingSampler device =
-  let info =
-        Vk.zero
-          { VkSamplerCreateInfo.magFilter = Vk.FILTER_LINEAR,
-            VkSamplerCreateInfo.minFilter = Vk.FILTER_LINEAR,
-            VkSamplerCreateInfo.addressModeU = Vk.SAMPLER_ADDRESS_MODE_REPEAT,
-            VkSamplerCreateInfo.addressModeV = Vk.SAMPLER_ADDRESS_MODE_REPEAT,
-            VkSamplerCreateInfo.addressModeW = Vk.SAMPLER_ADDRESS_MODE_REPEAT,
-            VkSamplerCreateInfo.unnormalizedCoordinates = False,
-            VkSamplerCreateInfo.borderColor = Vk.BORDER_COLOR_INT_OPAQUE_WHITE
-          }
-   in managed $ Vk.withSampler device info Nothing bracket
-
 windowWidth :: Word32
 windowWidth = 1000
 
@@ -585,23 +568,40 @@ windowHeight = 700
 windowSize :: Measure.PixelSize
 windowSize = Measure.pixelSize windowWidth windowHeight
 
-sprites :: World -> [(Tex.Sprite, SpriteTransformation)]
-sprites World {pointer, atlas, grid, gridSuff} =
-  let p = Object {sprite = pointer.sprite, transformation = pointer.transformation}
-   in (f <$> grd grid ++ [p])
+sprites :: World -> [(Tex.Sprite, G.Transform)]
+sprites World {atlas, grid, gridStuff, pointerPosition} =
+  grd grid ++ maybeToList (highlight <$> spot pointerPos) ++ [(pointer, Measure.transform pointerPos)]
   where
-    f obj = (obj.sprite, obj.transformation)
+    pointer = Atlas.sprite atlas "pointer" Measure.texTopLeft windowSize
+    pointerPos = Measure.pixelPosToNdc pointerPosition (Measure.pixelSize windowWidth windowHeight)
+    spot pos =
+      let Measure.NormalizedDeviceXY x y = Measure.translate (G.vec2 (-gridStuff.left) (-gridStuff.top)) pos
+          Measure.NormalizedDeviceWH w h = gridStuff.cardSize
+          r = floor $ (y + 1) / (h + gridStuff.vPadding)
+          c = floor $ (x + 1) / (w + gridStuff.hPadding)
+       in if (0 <= r && r <= 5) && (0 <= c && c <= 5) then Just (Spot (Row r, Column c)) else Nothing -- TODO: hardcoded "5"
     grd (Grid m) = uncurry putAt <$> Map.toList m
+    highlight spot =
+      let tr = Measure.transform $ Measure.ndcTranslate (pos spot) Measure.ndcTopLeft
+          sprite = border
+       in (sprite, tr)
+      where
+        GridStuff {top, left, hPadding, vPadding} = gridStuff
+        pos (Spot (Row r, Column c)) = G.vec2 (fromIntegral c * (w + hPadding) + left) (fromIntegral r * (h + vPadding) + top)
+        border = Atlas.sprite atlas "border" Measure.texTopLeft windowSize
+        Measure.NormalizedDeviceWH w h = faceDown.size
     putAt spot crd =
-      let obj = Object {sprite = card crd, transformation = spriteTranslation Measure.ndcTopLeft}
-       in obj {transformation = obj.transformation {position = Measure.ndcTranslate (pos spot) obj.transformation.position}}
+      let position = Measure.ndcTranslate (pos spot) Measure.ndcTopLeft
+          tr = Measure.transform position
+          sprite = card crd
+       in (sprite, tr)
       where
         card (Card (CardName name) FaceUp) = Atlas.sprite atlas name Measure.texTopLeft windowSize
         card (Card _ FaceDown) = faceDown
-        GridStuff {top, left, hPadding, vPadding} = gridSuff
+        GridStuff {top, left, hPadding, vPadding} = gridStuff
         pos (Spot (Row r, Column c)) = G.vec2 (fromIntegral c * (w + hPadding) + left) (fromIntegral r * (h + vPadding) + top)
-        faceDown = Atlas.sprite atlas "back-side" Measure.texTopLeft windowSize
         Measure.NormalizedDeviceWH w h = faceDown.size
+    faceDown = Atlas.sprite atlas "back-side" Measure.texTopLeft windowSize
 
 -- pos :: Object s -> Measure.NormalizedDevicePosition
 
@@ -624,10 +624,10 @@ withMemoryAllocator vulkan gpu device =
           }
    in managed $ Vma.withAllocator info bracket
 
-vertices :: Tex.Sprite -> SpriteTransformation -> SV.Vector Vert.Vertex
-vertices
+tranformSprite :: Tex.Sprite -> G.Transform -> SV.Vector Vert.Vertex
+tranformSprite
   (Tex.Sprite {texture = tex, region = Measure.UVReg u1 v1 u2 v2, size = size@(Measure.NormalizedDeviceWH w h), origin = org})
-  (SpriteTransformation {position = Measure.NormalizedDeviceXY px py, rotation = rot, scale = G.WithVec2 sx sy}) =
+  tr =
     let a@(Measure.NormalizedDeviceXY x y) = Measure.localPosToNdc size org (Measure.ndcPos 0 0) -- TODO: improve ndc (0,0)
         b = Measure.ndcPos (x + w) y
         c = Measure.ndcPos (x + w) (y + h)
@@ -653,12 +653,7 @@ vertices
             topLeft
           ]
     where
-      transform (Measure.NormalizedDeviceXY x y) =
-        let translate = G.translate px py 0
-            scale = G.scaleXY sx sy
-            rotate = G.rotateZ rot
-            G.WithVec3 x2 y2 _ = translate G.!. (scale G.!. (rotate G.!. G.vec3 x y 0)) -- TODO: order of transformations matter
-         in Measure.ndcPos x2 y2
+      transform (Measure.NormalizedDeviceXY x y) = let G.WithVec3 x2 y2 _ = G.apply (G.vec3 x y 1) tr in Measure.ndcPos x2 y2
 
 withGPUBuffer :: Vma.Allocator -> Vk.DeviceSize -> Vk.BufferUsageFlagBits -> Managed Vk.Buffer
 withGPUBuffer allocator size flags = do
@@ -933,57 +928,6 @@ createShaders dev =
 
 clearColor :: Vk.ClearValue
 clearColor = Vk.Color (Vk.Float32 1.0 0.0 1.0 0)
-
-createSwapchain ::
-  Vk.PhysicalDevice ->
-  Vk.Device ->
-  Vk.SurfaceKHR ->
-  Word32 ->
-  Word32 ->
-  Word32 ->
-  Word32 ->
-  Managed (Vk.SwapchainKHR, Vk.Extent2D, V.Vector Vk.Image)
-createSwapchain
-  gpu
-  dev
-  surface
-  gfx
-  present
-  width
-  height =
-    do
-      surcafeCaps <- Vk.getPhysicalDeviceSurfaceCapabilitiesKHR gpu surface
-      let minImageCount = VkSurfaceCaps.minImageCount surcafeCaps
-          transform = VkSurfaceCaps.currentTransform surcafeCaps
-          (sharingMode, queues) =
-            if gfx == present
-              then (Vk.SHARING_MODE_EXCLUSIVE, [])
-              else (Vk.SHARING_MODE_CONCURRENT, [gfx, present])
-          extent = case VkSurfaceCaps.currentExtent surcafeCaps of
-            Vk.Extent2D w h
-              | w == maxBound,
-                h == maxBound ->
-                  Vk.Extent2D width height
-            e -> e
-          info =
-            Vk.zero
-              { VkSwapchainCreateInfo.surface = surface,
-                VkSwapchainCreateInfo.minImageCount = minImageCount + 1,
-                VkSwapchainCreateInfo.imageFormat = Init.imageFormat,
-                VkSwapchainCreateInfo.imageColorSpace = Init.colorSpace,
-                VkSwapchainCreateInfo.imageExtent = extent,
-                VkSwapchainCreateInfo.imageArrayLayers = 1,
-                VkSwapchainCreateInfo.imageUsage = Vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT .|. Vk.IMAGE_USAGE_TRANSFER_DST_BIT,
-                VkSwapchainCreateInfo.imageSharingMode = sharingMode,
-                VkSwapchainCreateInfo.queueFamilyIndices = queues,
-                VkSwapchainCreateInfo.preTransform = transform,
-                VkSwapchainCreateInfo.compositeAlpha = Vk.COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
-                VkSwapchainCreateInfo.presentMode = Init.presentMode,
-                VkSwapchainCreateInfo.clipped = True
-              }
-      swapchain <- managed $ Vk.withSwapchainKHR dev info Nothing bracket
-      (_, images) <- Vk.getSwapchainImagesKHR dev swapchain
-      return (swapchain, extent, images)
 
 withDevice :: Vk.PhysicalDevice -> Word32 -> Word32 -> Bool -> Managed Vk.Device
 withDevice gpu gfx present portability =

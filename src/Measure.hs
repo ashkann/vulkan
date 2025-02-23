@@ -44,12 +44,14 @@ module Measure
     localPosToNdc,
     ndcTranslate,
     translate,
+    transform
   )
 where
 
 import Data.Word (Word32)
 import qualified Geomancy as G
 import Prelude hiding (lookup)
+import qualified Geomancy.Transform as G
 
 -- data TextureRegion = TextureRegion {uv :: G.Vec4, pixels :: G.UVec4} deriving (Show)
 
@@ -98,7 +100,15 @@ uvReg u1 v1 u2 v2 = UVRegion $ G.vec4 u1 v1 u2 v2
 pattern UVReg :: Float -> Float -> Float -> Float -> UVRegion -- TODO: make it bidirectional
 pattern UVReg u1 v1 u2 v2 <- UVRegion (G.WithVec4 u1 v1 u2 v2)
 
+class Transform a where
+  transform :: a -> G.Transform
+
 newtype NormalizedDevicePosition = NormalizedDevicePosition G.Vec2 deriving (Show)
+
+instance Transform NormalizedDevicePosition where
+  transform (NormalizedDeviceXY x y) = G.translate x y 1
+
+{-# COMPLETE NormalizedDeviceXY #-}
 
 ndcVec :: NormalizedDevicePosition -> G.Vec2
 ndcVec (NormalizedDevicePosition v) = v

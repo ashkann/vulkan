@@ -1,15 +1,17 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StrictData #-}
 
-module Init (pickGPU, presentMode, imageFormat, colorSpace) where
+module Init (pickGPU, presentMode, imageFormat, colorSpace, withSwapChain) where
 
+import Control.Exception (bracket)
 import Control.Monad.Except (MonadError (catchError, throwError), forM_)
 import Control.Monad.Managed
 import Control.Monad.Trans.Except (ExceptT, runExceptT, throwE)
 import Control.Monad.Trans.Maybe (MaybeT (MaybeT, runMaybeT))
-import Data.Bits (Bits (zeroBits), (.&.))
+import Data.Bits (Bits (zeroBits), (.&.), (.|.))
 import Data.Coerce (coerce)
 import Data.Monoid (Alt (Alt, getAlt))
 import Data.Text (unpack)
@@ -20,7 +22,10 @@ import Utils (say, sayErr)
 import qualified Vulkan as Ft (PhysicalDeviceVulkan12Features (..))
 import qualified Vulkan as Vk
 import qualified Vulkan as VkPhysicalDeviceFeatures2 (PhysicalDeviceFeatures2 (..))
+import qualified Vulkan as VkSurfaceCaps (SurfaceCapabilitiesKHR (..))
 import qualified Vulkan as VkSurfaceFormat (SurfaceFormatKHR (..))
+import qualified Vulkan as VkSwapchainCreateInfo (SwapchainCreateInfoKHR (..))
+import qualified Vulkan.Zero as Vk
 
 -- newtype QueueFamilyIndex = QueueFamilyIndex Word32
 
@@ -144,3 +149,54 @@ queues gpu surface = do
     notGood NoneFound = throwError ["No graphics or present queue families found"]
     notGood (GfxFound _) = throwError ["No graphics queue families found"]
     notGood (PresentFound _) = throwError ["No present queue families found"]
+
+withSwapChain ::
+  Vk.PhysicalDevice ->
+  Vk.Device ->
+  Vk.SurfaceKHR ->
+  Word32 ->
+  Word32 ->
+  Word32 ->
+  Word32 ->
+  Managed (Vk.SwapchainKHR, Vk.Extent2D, V.Vector Vk.Image)
+withSwapChain
+  gpu
+  dev
+  surface
+  gfx
+  present
+  width
+  height =
+    do
+      surcafeCaps <- Vk.getPhysicalDeviceSurfaceCapabilitiesKHR gpu surface
+      let minImageCount = VkSurfaceCaps.minImageCount surcafeCaps
+          transform = VkSurfaceCaps.currentTransform surcafeCaps
+          (sharingMode, queues) =
+            if gfx == present
+              then (Vk.SHARING_MODE_EXCLUSIVE, [])
+              else (Vk.SHARING_MODE_CONCURRENT, V.fromList [gfx, present])
+          extent = case VkSurfaceCaps.currentExtent surcafeCaps of
+            Vk.Extent2D w h
+              | w == maxBound,
+                h == maxBound ->
+                  Vk.Extent2D width height
+            e -> e
+          info =
+            Vk.zero
+              { VkSwapchainCreateInfo.surface = surface,
+                VkSwapchainCreateInfo.minImageCount = minImageCount + 1,
+                VkSwapchainCreateInfo.imageFormat = Init.imageFormat,
+                VkSwapchainCreateInfo.imageColorSpace = Init.colorSpace,
+                VkSwapchainCreateInfo.imageExtent = extent,
+                VkSwapchainCreateInfo.imageArrayLayers = 1,
+                VkSwapchainCreateInfo.imageUsage = Vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT .|. Vk.IMAGE_USAGE_TRANSFER_DST_BIT,
+                VkSwapchainCreateInfo.imageSharingMode = sharingMode,
+                VkSwapchainCreateInfo.queueFamilyIndices = queues,
+                VkSwapchainCreateInfo.preTransform = transform,
+                VkSwapchainCreateInfo.compositeAlpha = Vk.COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+                VkSwapchainCreateInfo.presentMode = Init.presentMode,
+                VkSwapchainCreateInfo.clipped = True
+              }
+      swapchain <- managed $ Vk.withSwapchainKHR dev info Nothing bracket
+      (_, images) <- Vk.getSwapchainImagesKHR dev swapchain
+      return (swapchain, extent, images)

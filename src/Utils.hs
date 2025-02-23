@@ -26,6 +26,7 @@ module Utils
     copyToGpu,
     copyToGpu2,
     copyImageToImage,
+    repeatingSampler,
   )
 where
 
@@ -59,6 +60,7 @@ import Vulkan qualified as VkImageSubresourceLayers (ImageSubresourceLayers (..)
 import Vulkan qualified as VkImageSubresourceRange (ImageSubresourceRange (..))
 import Vulkan qualified as VkInstanceCreateInfo (InstanceCreateInfo (..))
 import Vulkan qualified as VkOffset3D (Offset3D (..))
+import Vulkan qualified as VkSamplerCreateInfo (SamplerCreateInfo (..))
 import Vulkan qualified as VkSubmitInfo (SubmitInfo (..))
 import Vulkan.CStruct.Extends (pattern (:&), pattern (::&))
 import Vulkan.CStruct.Extends qualified as Vk
@@ -116,7 +118,7 @@ debugUtilsMessengerCreateInfo =
     { Vk.messageSeverity =
         Vk.DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
           .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
-          -- .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
+      -- .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
       Vk.messageType =
         Vk.DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
           .|. Vk.DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
@@ -424,6 +426,20 @@ copyImageToImage cmd source destination extent =
       srcLayout = Vk.IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
       dstLayout = Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
    in Vk.cmdCopyImage cmd source srcLayout destination dstLayout [region]
+
+repeatingSampler :: Vk.Device -> Managed Vk.Sampler
+repeatingSampler device =
+  let info =
+        Vk.zero
+          { VkSamplerCreateInfo.magFilter = Vk.FILTER_LINEAR,
+            VkSamplerCreateInfo.minFilter = Vk.FILTER_LINEAR,
+            VkSamplerCreateInfo.addressModeU = Vk.SAMPLER_ADDRESS_MODE_REPEAT,
+            VkSamplerCreateInfo.addressModeV = Vk.SAMPLER_ADDRESS_MODE_REPEAT,
+            VkSamplerCreateInfo.addressModeW = Vk.SAMPLER_ADDRESS_MODE_REPEAT,
+            VkSamplerCreateInfo.unnormalizedCoordinates = False,
+            VkSamplerCreateInfo.borderColor = Vk.BORDER_COLOR_INT_OPAQUE_WHITE
+          }
+   in managed $ Vk.withSampler device info Nothing bracket
 
 -- import DearImGui qualified as ImGui
 -- import DearImGui.SDL.Vulkan qualified as ImGui

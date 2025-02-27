@@ -66,12 +66,15 @@ data Sprite = Sprite
 fromRGBA8PngFile :: Vma.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> FilePath -> Managed Vk.ImageView
 fromRGBA8PngFile allocator device pool queue path = do
   JP.ImageRGBA8 (JP.Image width height pixels) <- liftIO $ JP.readPng path >>= either (sayErr "Texture" . show) return
-  let size = width * height * 4
+  let w = fromIntegral width
+      h = fromIntegral height
+      size = w * h * 4
       format = Vk.FORMAT_R8G8B8A8_SRGB
-  (image, view) <- withImageAndView allocator device (fromIntegral width) (fromIntegral height) format
+      imageSize = Measure.pixelSize w h
+  (image, view) <- withImageAndView allocator device imageSize format
   do
     (staging, mem) <- withHostBuffer allocator (fromIntegral size)
-    liftIO $ copy pixels mem size
+    liftIO $ copy pixels mem (fromIntegral size)
     copyBufferToImage device pool queue staging image width height
     return view
   where
@@ -80,14 +83,14 @@ fromRGBA8PngFile allocator device pool queue path = do
           dst = castPtr mem
        in withForeignPtr src $ \from -> copyArray dst from size
 
-withImageAndView :: Vma.Allocator -> Vk.Device -> Word32 -> Word32 -> Vk.Format -> Managed (Vk.Image, Vk.ImageView)
-withImageAndView allocator device width height format = do
-  image <- withImage allocator width height format
+withImageAndView :: Vma.Allocator -> Vk.Device -> Measure.PixelSize -> Vk.Format -> Managed (Vk.Image, Vk.ImageView)
+withImageAndView allocator device size format = do
+  image <- withImage allocator size format
   view <- withImageView device image format
   return (image, view)
 
-withImage :: Vma.Allocator -> Word32 -> Word32 -> Vk.Format -> Managed Vk.Image
-withImage allocator width height format = do
+withImage :: Vma.Allocator -> Measure.PixelSize -> Vk.Format -> Managed Vk.Image
+withImage allocator (Measure.PixelWH width height) format = do
   (image, _, _) <-
     let dims =
           Vk.Extent3D

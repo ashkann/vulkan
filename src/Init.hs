@@ -1,10 +1,22 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE OverloadedLists #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StrictData #-}
+{-# LANGUAGE NoFieldSelectors #-}
 
-module Init (pickGPU, presentMode, imageFormat, colorSpace, withSwapChain) where
+module Init
+  ( pickGPU,
+    presentMode,
+    imageFormat,
+    colorSpace,
+    withSwapChain,
+    withDevice,
+    QueueFamilyIndex (..),
+  )
+where
 
 import Control.Exception (bracket)
 import Control.Monad.Except (MonadError (catchError, throwError), forM_)
@@ -18,14 +30,24 @@ import Data.Text (unpack)
 import Data.Text.Encoding (decodeUtf8)
 import qualified Data.Vector as V
 import Data.Word (Word32)
-import Utils (say, sayErr)
+import qualified Measure
+import Utils
 import qualified Vulkan as Ft (PhysicalDeviceVulkan12Features (..))
 import qualified Vulkan as Vk
+import qualified Vulkan as VkDeviceCreateInfo (DeviceCreateInfo (..))
+import qualified Vulkan as VkDeviceQueueCreateInfo (DeviceQueueCreateInfo (..))
+import qualified Vulkan as VkPhysicalDeviceDynamicRenderingFeatures (PhysicalDeviceDynamicRenderingFeatures (..))
 import qualified Vulkan as VkPhysicalDeviceFeatures2 (PhysicalDeviceFeatures2 (..))
+import qualified Vulkan as VkPhysicalDeviceVulkan12Features (PhysicalDeviceVulkan12Features (..))
 import qualified Vulkan as VkSurfaceCaps (SurfaceCapabilitiesKHR (..))
 import qualified Vulkan as VkSurfaceFormat (SurfaceFormatKHR (..))
 import qualified Vulkan as VkSwapchainCreateInfo (SwapchainCreateInfoKHR (..))
+import Vulkan.CStruct.Extends (pattern (:&), pattern (::&))
+import qualified Vulkan.CStruct.Extends as Vk
 import qualified Vulkan.Zero as Vk
+import Prelude hiding (init)
+
+-- import Vulkan.CStruct.Extends ((:&),(::&))
 
 -- newtype QueueFamilyIndex = QueueFamilyIndex Word32
 
@@ -44,19 +66,18 @@ pickGPU ::
   (MonadIO io) =>
   Vk.Instance ->
   Vk.SurfaceKHR ->
-  io (Vk.PhysicalDevice, Word32, Word32, Bool, String)
+  io (Vk.PhysicalDevice, QueueFamilyIndex Graphics, QueueFamilyIndex Present, Bool, String)
 pickGPU vulkan surface = do
   (_, gpus) <- Vk.enumeratePhysicalDevices vulkan
-  maybeGpu <- runMaybeT . getAlt $ V.foldMap (Alt . check) gpus
+  maybeGpu <- runMaybeT . getAlt $ V.foldMap (Alt . isGood) gpus
   maybe (sayErr "Vulkan" "No suitable GPU found") pure maybeGpu
   where
-    check :: Vk.PhysicalDevice -> MaybeT io (Vk.PhysicalDevice, Word32, Word32, Bool, String)
-    check gpu = do
+    isGood gpu = do
       name <- unpack . decodeUtf8 . Vk.deviceName <$> Vk.getPhysicalDeviceProperties gpu
       say "Vulkan" $ "Checking GPU \"" ++ name ++ "\" for requirements"
       outcome <- runExceptT $ suitable gpu surface
       (gfx, present, portability) <- either (notGood name) pure outcome
-      return (gpu, gfx, present, portability, name)
+      return (gpu, QueueFamilyIndex gfx, QueueFamilyIndex present, portability, name)
     notGood name es = forM_ (reverse $ "Not suitable" : es) (say name) *> MaybeT (pure Nothing)
 
 -- | Checks if the GPU has the required features
@@ -154,28 +175,26 @@ withSwapChain ::
   Vk.PhysicalDevice ->
   Vk.Device ->
   Vk.SurfaceKHR ->
-  Word32 ->
-  Word32 ->
-  Word32 ->
-  Word32 ->
+  QueueFamilyIndex Graphics ->
+  QueueFamilyIndex Present ->
+  Measure.PixelSize ->
   Managed (Vk.SwapchainKHR, Vk.Extent2D, V.Vector Vk.Image)
 withSwapChain
   gpu
   dev
   surface
-  gfx
-  present
-  width
-  height =
+  (QueueFamilyIndex gfx)
+  (QueueFamilyIndex present)
+  (Measure.PixelWH width height) =
     do
-      surcafeCaps <- Vk.getPhysicalDeviceSurfaceCapabilitiesKHR gpu surface
-      let minImageCount = VkSurfaceCaps.minImageCount surcafeCaps
-          transform = VkSurfaceCaps.currentTransform surcafeCaps
+      caps <- Vk.getPhysicalDeviceSurfaceCapabilitiesKHR gpu surface
+      let minImageCount = VkSurfaceCaps.minImageCount caps
+          transform = VkSurfaceCaps.currentTransform caps
           (sharingMode, queues) =
             if gfx == present
               then (Vk.SHARING_MODE_EXCLUSIVE, [])
               else (Vk.SHARING_MODE_CONCURRENT, V.fromList [gfx, present])
-          extent = case VkSurfaceCaps.currentExtent surcafeCaps of
+          extent = case VkSurfaceCaps.currentExtent caps of
             Vk.Extent2D w h
               | w == maxBound,
                 h == maxBound ->
@@ -200,3 +219,39 @@ withSwapChain
       swapchain <- managed $ Vk.withSwapchainKHR dev info Nothing bracket
       (_, images) <- Vk.getSwapchainImagesKHR dev swapchain
       return (swapchain, extent, images)
+
+data QueueFamily = Graphics | Present
+
+newtype QueueFamilyIndex (f :: QueueFamily) = QueueFamilyIndex {index :: Word32} deriving (Show, Eq)
+
+withDevice :: Vk.PhysicalDevice -> QueueFamilyIndex Graphics -> QueueFamilyIndex Present -> Bool -> Managed Vk.Device
+withDevice gpu (QueueFamilyIndex gfx) (QueueFamilyIndex present) portability =
+  let exts =
+        Vk.KHR_DYNAMIC_RENDERING_EXTENSION_NAME
+          : Vk.KHR_SWAPCHAIN_EXTENSION_NAME
+          : Vk.KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME
+          : ([Vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME | portability])
+      dynamicRendering = Vk.zero {VkPhysicalDeviceDynamicRenderingFeatures.dynamicRendering = True}
+      bindlessDescriptors =
+        Vk.zero
+          { VkPhysicalDeviceVulkan12Features.runtimeDescriptorArray = True,
+            VkPhysicalDeviceVulkan12Features.descriptorBindingPartiallyBound = True,
+            VkPhysicalDeviceVulkan12Features.descriptorBindingSampledImageUpdateAfterBind = True,
+            VkPhysicalDeviceVulkan12Features.descriptorBindingUniformBufferUpdateAfterBind = True
+          }
+      info =
+        Vk.zero
+          { VkDeviceCreateInfo.queueCreateInfos = V.fromList $ inf gfx : ([inf present | gfx /= present]),
+            VkDeviceCreateInfo.enabledExtensionNames = V.fromList exts
+          }
+          ::& dynamicRendering
+            :& bindlessDescriptors
+            :& ()
+   in managed $ Vk.withDevice gpu info Nothing bracket
+  where
+    inf i =
+      Vk.SomeStruct $
+        Vk.zero
+          { VkDeviceQueueCreateInfo.queueFamilyIndex = i,
+            VkDeviceQueueCreateInfo.queuePriorities = [1.0]
+          }

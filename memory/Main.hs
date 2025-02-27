@@ -57,14 +57,10 @@ import Vulkan qualified as VkDescriptorSetLayoutBinding (DescriptorSetLayoutBind
 import Vulkan qualified as VkDescriptorSetLayoutBindingFlagsCreateInfo (DescriptorSetLayoutBindingFlagsCreateInfo (..))
 import Vulkan qualified as VkDescriptorSetLayoutCreateInfo (DescriptorSetLayoutCreateInfo (..))
 import Vulkan qualified as VkDevice (Device (..))
-import Vulkan qualified as VkDeviceCreateInfo (DeviceCreateInfo (..))
-import Vulkan qualified as VkDeviceQueueCreateInfo (DeviceQueueCreateInfo (..))
 import Vulkan qualified as VkExtent2D (Extent2D (..))
 import Vulkan qualified as VkFenceCreateInfo (FenceCreateInfo (..))
 import Vulkan qualified as VkGraphicsPipelineCreateInfo (GraphicsPipelineCreateInfo (..))
 import Vulkan qualified as VkInstance (Instance (..))
-import Vulkan qualified as VkPhysicalDeviceDynamicRenderingFeatures (PhysicalDeviceDynamicRenderingFeatures (..))
-import Vulkan qualified as VkPhysicalDeviceVulkan12Features (PhysicalDeviceVulkan12Features (..))
 import Vulkan qualified as VkPipelineColorBlendStateCreateInfo (PipelineColorBlendStateCreateInfo (..))
 import Vulkan qualified as VkPipelineLayoutCreateInfo (PipelineLayoutCreateInfo (..))
 import Vulkan qualified as VkPipelineRenderingCreateInfo (PipelineRenderingCreateInfo (..))
@@ -92,12 +88,6 @@ import Prelude hiding (init)
 
 newtype DeltaTime = DeltaTime Float
 
-data SpriteTransformation = SpriteTransformation
-  { position :: Measure.NormalizedDevicePosition,
-    rotation :: Float,
-    scale :: G.Vec2
-  }
-
 data Viewport = Viewport
   { viewportSize :: G.UVec2,
     _padding :: Word64 -- TODO: remove and make the Storable instance handle it
@@ -116,16 +106,11 @@ instance Storable Viewport where
   peek = Store.peek viewportStore
   poke = Store.poke viewportStore
 
-data Object = Object
-  { sprite :: Tex.Sprite,
-    transform :: SpriteTransformation
-  }
-
 frameData :: World -> FrameData
 frameData world =
   FrameData
     { verts = mconcat $ uncurry tranformSprite <$> sprites world,
-      viewport = Viewport {viewportSize = G.uvec2 windowWidth windowHeight, _padding = 0} -- TODO: remove _padding = 0
+      viewport = Viewport {viewportSize = windowSize.vec, _padding = 0} -- TODO: remove _padding = 0
     }
 
 data Frame = Frame
@@ -148,17 +133,17 @@ data Frame = Frame
 main :: IO ()
 main = runManaged $ do
   withSDL
-  window <- Utils.withWindow (fromIntegral windowWidth) (fromIntegral windowHeight)
+  window <- Utils.withWindow windowSize
   vulkan <- Utils.withVulkan window
   _ <- Utils.withDebug vulkan
   surface <- Utils.withSurface window vulkan
   (gpu, gfx, present, portability, gpuName) <- Init.pickGPU vulkan surface
   say "Vulkan" $ "Picked GPU \"" ++ gpuName ++ "\", present queue " ++ show present ++ ", graphics queue " ++ show gfx
-  device <- withDevice gpu present gfx portability <* say "Vulkan" "Created device"
+  device <- Init.withDevice gpu gfx present portability <* say "Vulkan" "Created device"
   commandPool <-
     let info =
           Vk.zero
-            { VkCommandPoolCreateInfo.queueFamilyIndex = gfx,
+            { VkCommandPoolCreateInfo.queueFamilyIndex = gfx.index,
               VkCommandPoolCreateInfo.flags = Vk.COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT
             }
      in managed $ Vk.withCommandPool device info Nothing bracket
@@ -168,7 +153,7 @@ main = runManaged $ do
   descPool <- descriptorPool device 1000
   descSet <- descriptorSet device descSetLayout descPool
   sampler <- Utils.repeatingSampler device
-  gfxQueue <- Vk.getDeviceQueue device gfx 0 <* say "Vulkan" "Got graphics queue"
+  gfxQueue <- Vk.getDeviceQueue device gfx.index 0 <* say "Vulkan" "Got graphics queue"
 
   atlas <- Atlas.withAtlas allocator device commandPool gfxQueue descSet sampler "out/memory"
   say "Engine" "Atlas loaded"
@@ -184,8 +169,7 @@ main = runManaged $ do
       surface
       gfx
       present
-      windowWidth
-      windowHeight
+      windowSize
   let frameCount = V.length swapchainImages
   say "Vulkan" "Created swapchain"
 
@@ -195,13 +179,13 @@ main = runManaged $ do
     let info = Vk.zero {VkPipelineLayoutCreateInfo.setLayouts = [descSetLayout]}
      in managed $ Vk.withPipelineLayout device info Nothing bracket
   pipeline <- createPipeline device swapchainExtent pipelineLayout
-  presentQueue <- Vk.getDeviceQueue device present 0 <* say "Vulkan" "Got present queue"
+  presentQueue <- Vk.getDeviceQueue device present.index 0 <* say "Vulkan" "Got present queue"
 
   let stagingBufferSize = 1048576
       maxVertCount = 1000
       vertexBufferSize = fromIntegral $ sizeOf (undefined :: Vert.Vertex) * maxVertCount
       lightBufferSize = 1024
-  frames <- withFrames device gfx allocator stagingBufferSize vertexBufferSize lightBufferSize frameCount
+  frames <- withFrames device gfx.index allocator stagingBufferSize vertexBufferSize lightBufferSize frameCount
   w0 <- liftIO $ world0 atlas
   let shutdown = say "Engine" "Shutting down ..." *> Vk.deviceWaitIdle device
    in say "Engine" "Entering the main loop"
@@ -226,9 +210,6 @@ main = runManaged $ do
 -- mkScore n
 --   | n >= 0 && n <= 999 = Just $ Score (toEnum $ n `div` 100, toEnum $ (n `div` 10) `mod` 10, toEnum $ n `mod` 10)
 --   | otherwise = Nothing
-
-spriteTranslation :: Measure.NormalizedDevicePosition -> SpriteTransformation
-spriteTranslation ndc = SpriteTransformation {position = ndc, rotation = 0, scale = G.vec2 1.0 1.0}
 
 -- ashkan :: Atlas.Atlas -> Int -> [Object]
 -- ashkan atlas n =
@@ -315,8 +296,7 @@ mkGrid deck = Grid . Map.fromList $ zipWith f spots deck
 world0 :: (MonadIO io) => Atlas.Atlas -> io World
 world0 atlas = do
   deck <- liftIO $ mkSuffeledDeck 18
-  let
-      faceDown = Atlas.sprite atlas "back-side" Measure.texTopLeft windowSize
+  let faceDown = Atlas.sprite atlas "back-side" Measure.texTopLeft windowSize
    in return $
         World
           { pointerPosition = Measure.pixelPos 0 0,
@@ -471,7 +451,7 @@ withFrames device gfx allocator stagingBufferSize vertexBufferSize lightBufferSi
         vertexBuffer <- withGPUBuffer allocator vertexBufferSize Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
         lightBuffer <- withGPUBuffer allocator lightBufferSize Vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT
         viewportBuffer <- withGPUBuffer allocator lightBufferSize Vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT
-        (image, view) <- Tex.withImageAndView allocator device windowWidth windowHeight Init.imageFormat
+        (image, view) <- Tex.withImageAndView allocator device windowSize Init.imageFormat
         return
           Frame
             { pool = pool,
@@ -528,8 +508,7 @@ mainLoop shutdown frameData frame worldTime worldEvent w0 =
 worldEvent :: (Monad io) => SDL.Event -> World -> io World
 worldEvent e w@(World {grid = grid, gridStuff = gridStuff, pointerPosition = pointerPosition}) =
   return $
-    let
-        ndcPointerPosition = Measure.pixelPosToNdc pointerPosition (Measure.pixelSize windowWidth windowHeight)
+    let ndcPointerPosition = Measure.pixelPosToNdc pointerPosition windowSize
         w1 = w {grid = if mouseClicked then flip ndcPointerPosition else grid, pointerPosition = fromMaybe w.pointerPosition mouseMoved}
      in w1
   where
@@ -547,7 +526,7 @@ worldEvent e w@(World {grid = grid, gridStuff = gridStuff, pointerPosition = poi
       | otherwise = False
     mouseMoved
       | (SDL.Event _ (SDL.MouseMotionEvent (SDL.MouseMotionEventData {mouseMotionEventPos = SDL.P (SDL.V2 x y)}))) <- e = Just $ Measure.pixelPos (fromIntegral x) (fromIntegral y)
-      | otherwise = Nothing  
+      | otherwise = Nothing
 
 gridFlip :: Spot -> Grid -> Grid
 gridFlip spot (Grid m) = Grid $ Map.adjust cardFlip spot m
@@ -559,21 +538,18 @@ cardFlip (Card name FaceDown) = Card name FaceUp
 worldTime :: (Monad io) => DeltaTime -> World -> io World -- TODO: redundant?
 worldTime _ = return
 
-windowWidth :: Word32
-windowWidth = 1000
-
-windowHeight :: Word32
-windowHeight = 700
-
 windowSize :: Measure.PixelSize
-windowSize = Measure.pixelSize windowWidth windowHeight
+windowSize = Measure.pixelSize 1000 700
+
+-- windowSize :: Measure.PixelSize
+-- windowSize = Measure.pixelSize 1000 700
 
 sprites :: World -> [(Tex.Sprite, G.Transform)]
 sprites World {atlas, grid, gridStuff, pointerPosition} =
   grd grid ++ maybeToList (highlight <$> spot pointerPos) ++ [(pointer, Measure.transform pointerPos)]
   where
     pointer = Atlas.sprite atlas "pointer" Measure.texTopLeft windowSize
-    pointerPos = Measure.pixelPosToNdc pointerPosition (Measure.pixelSize windowWidth windowHeight)
+    pointerPos = Measure.pixelPosToNdc pointerPosition windowSize
     spot pos =
       let Measure.NormalizedDeviceXY x y = Measure.translate (G.vec2 (-gridStuff.left) (-gridStuff.top)) pos
           Measure.NormalizedDeviceWH w h = gridStuff.cardSize
@@ -928,35 +904,3 @@ createShaders dev =
 
 clearColor :: Vk.ClearValue
 clearColor = Vk.Color (Vk.Float32 1.0 0.0 1.0 0)
-
-withDevice :: Vk.PhysicalDevice -> Word32 -> Word32 -> Bool -> Managed Vk.Device
-withDevice gpu gfx present portability =
-  let exts =
-        Vk.KHR_DYNAMIC_RENDERING_EXTENSION_NAME
-          : Vk.KHR_SWAPCHAIN_EXTENSION_NAME
-          : Vk.KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME
-          : ([Vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME | portability])
-      dynamicRendering = Vk.zero {VkPhysicalDeviceDynamicRenderingFeatures.dynamicRendering = True}
-      bindlessDescriptors =
-        Vk.zero
-          { VkPhysicalDeviceVulkan12Features.runtimeDescriptorArray = True,
-            VkPhysicalDeviceVulkan12Features.descriptorBindingPartiallyBound = True,
-            VkPhysicalDeviceVulkan12Features.descriptorBindingSampledImageUpdateAfterBind = True,
-            VkPhysicalDeviceVulkan12Features.descriptorBindingUniformBufferUpdateAfterBind = True
-          }
-      info =
-        Vk.zero
-          { VkDeviceCreateInfo.queueCreateInfos = V.fromList $ inf gfx : ([inf present | gfx /= present]),
-            VkDeviceCreateInfo.enabledExtensionNames = V.fromList exts
-          }
-          ::& dynamicRendering
-            :& bindlessDescriptors
-            :& ()
-   in managed $ Vk.withDevice gpu info Nothing bracket
-  where
-    inf i =
-      Vk.SomeStruct $
-        Vk.zero
-          { VkDeviceQueueCreateInfo.queueFamilyIndex = i,
-            VkDeviceQueueCreateInfo.queuePriorities = [1.0]
-          }

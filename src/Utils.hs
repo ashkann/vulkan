@@ -43,6 +43,7 @@ import Data.Word (Word32)
 import Foreign (Ptr, Storable, castPtr, copyArray, withForeignPtr)
 import Foreign.C (peekCAString)
 import Foreign.Storable (Storable (..), sizeOf)
+import Measure qualified
 import SDL qualified
 import SDL.Video.Vulkan qualified as SDL
 import Vulkan qualified as Vk
@@ -141,14 +142,14 @@ withSurface w v@(Vk.Instance v' _) = managed $ bracket create destroy
     destroy s = Vk.destroySurfaceKHR v s Nothing <* say "Vulkan" "Destroyed surface"
     create = Vk.SurfaceKHR <$> SDL.vkCreateSurface w (castPtr v') <* say "SDL" "Vulkan surface created"
 
-withWindow :: Int -> Int -> Managed SDL.Window
-withWindow width height =
+withWindow :: Measure.PixelSize -> Managed SDL.Window
+withWindow (Measure.PixelWH w h) =
   managed $
     bracket
       (SDL.createWindow applicationName win <* say "SDL" "Window created")
       (\w -> SDL.destroyWindow w <* say "SDL" "Window destroyed")
   where
-    size = SDL.V2 (fromIntegral width) (fromIntegral height)
+    size = SDL.V2 (fromIntegral w) (fromIntegral h)
     win =
       SDL.defaultWindow
         { SDL.windowInitialSize = size,

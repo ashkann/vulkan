@@ -1,4 +1,5 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE PatternSynonyms #-}
 
 module Measure
@@ -44,14 +45,15 @@ module Measure
     localPosToNdc,
     ndcTranslate,
     translate,
-    transform
+    transform,
+    windowSize,
   )
 where
 
 import Data.Word (Word32)
 import qualified Geomancy as G
-import Prelude hiding (lookup)
 import qualified Geomancy.Transform as G
+import Prelude hiding (lookup)
 
 -- data TextureRegion = TextureRegion {uv :: G.Vec4, pixels :: G.UVec4} deriving (Show)
 
@@ -60,7 +62,7 @@ import qualified Geomancy.Transform as G
 -- pattern TextureRegionXY :: Float -> Float -> Float -> Float -> TextureRegion
 -- pattern TextureRegionXY u1 v1 u2 v2 <- TextureRegion (G.WithVec4 u1 v1 u2 v2)
 
-newtype PixelPosition = PixelPosition G.UVec2 deriving (Show)
+newtype PixelPosition = PixelPosition {vec :: G.UVec2} deriving (Show)
 
 pixelPos :: Word32 -> Word32 -> PixelPosition
 pixelPos x y = PixelPosition $ G.uvec2 x y
@@ -70,10 +72,15 @@ pixelPos x y = PixelPosition $ G.uvec2 x y
 pattern PixelXY :: Word32 -> Word32 -> PixelPosition
 pattern PixelXY x y <- PixelPosition (G.WithUVec2 x y)
 
-newtype PixelSize = PixelSize G.UVec2 deriving (Show)
+newtype PixelSize = PixelSize {vec :: G.UVec2} deriving (Show)
 
 pixelSize :: Word32 -> Word32 -> PixelSize
 pixelSize w h = PixelSize $ G.uvec2 w h
+
+windowSize :: Word32 -> Word32 -> Maybe Measure.PixelSize
+windowSize w h
+  | w >= 0 && h >= 0 = Just $ pixelSize w h
+  | otherwise = Nothing
 
 {-# COMPLETE PixelWH #-}
 

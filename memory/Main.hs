@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
@@ -40,7 +41,7 @@ import Foreign.Storable.Record qualified as Store
 import Geomancy qualified as G
 import Geomancy.Transform qualified as G
 import Init qualified
-import Measure qualified
+import Measure
 import SDL qualified
 import System.Random qualified as Random
 import Texture qualified as Tex
@@ -110,7 +111,7 @@ frameData :: World -> FrameData
 frameData world =
   FrameData
     { verts = mconcat $ uncurry tranformSprite <$> sprites world,
-      viewport = Viewport {viewportSize = windowSize.vec, _padding = 0} -- TODO: remove _padding = 0
+      viewport = Viewport {viewportSize = let WithVec w h = windowSize in G.uvec2 w h, _padding = 0} -- TODO: remove _padding = 0
     }
 
 data Frame = Frame
@@ -259,11 +260,11 @@ data GridStuff = GridStuff
     left :: Float,
     hPadding :: Float,
     vPadding :: Float,
-    cardSize :: Measure.NormalizedDeviceSize
+    cardSize :: NDCVec
   }
 
 data World = World
-  { pointerPosition :: Measure.PixelPosition,
+  { pointerPosition :: PixelVec,
     atlas :: Atlas.Atlas,
     grid :: Grid,
     gridStuff :: GridStuff
@@ -296,10 +297,10 @@ mkGrid deck = Grid . Map.fromList $ zipWith f spots deck
 world0 :: (MonadIO io) => Atlas.Atlas -> io World
 world0 atlas = do
   deck <- liftIO $ mkSuffeledDeck 18
-  let faceDown = Atlas.sprite atlas "back-side" Measure.texTopLeft windowSize
+  let faceDown = Atlas.sprite atlas "back-side" topLeft windowSize
    in return $
         World
-          { pointerPosition = Measure.pixelPos 0 0,
+          { pointerPosition = vec 0 0,
             atlas = atlas,
             grid = mkGrid (V.toList deck),
             gridStuff =
@@ -451,7 +452,8 @@ withFrames device gfx allocator stagingBufferSize vertexBufferSize lightBufferSi
         vertexBuffer <- withGPUBuffer allocator vertexBufferSize Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
         lightBuffer <- withGPUBuffer allocator lightBufferSize Vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT
         viewportBuffer <- withGPUBuffer allocator lightBufferSize Vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT
-        (image, view) <- Tex.withImageAndView allocator device windowSize Init.imageFormat
+        let WithVec w h = windowSize
+        (image, view) <- Tex.withImageAndView allocator device (vec w h) Init.imageFormat
         return
           Frame
             { pool = pool,
@@ -508,7 +510,7 @@ mainLoop shutdown frameData frame worldTime worldEvent w0 =
 worldEvent :: (Monad io) => SDL.Event -> World -> io World
 worldEvent e w@(World {grid = grid, gridStuff = gridStuff, pointerPosition = pointerPosition}) =
   return $
-    let ndcPointerPosition = Measure.pixelPosToNdc pointerPosition windowSize
+    let ndcPointerPosition = pixelPosToNdc pointerPosition windowSize
         w1 = w {grid = if mouseClicked then flip ndcPointerPosition else grid, pointerPosition = fromMaybe w.pointerPosition mouseMoved}
      in w1
   where
@@ -516,8 +518,8 @@ worldEvent e w@(World {grid = grid, gridStuff = gridStuff, pointerPosition = poi
       | Just spot <- spot pos = gridFlip spot grid
       | otherwise = grid
     spot pos =
-      let Measure.NormalizedDeviceXY x y = Measure.translate (G.vec2 (-gridStuff.left) (-gridStuff.top)) pos
-          Measure.NormalizedDeviceWH w h = gridStuff.cardSize
+      let WithVec x y = vec (-gridStuff.left) (-gridStuff.top) + pos
+          WithVec w h = gridStuff.cardSize
           r = floor $ (y + 1) / (h + gridStuff.vPadding)
           c = floor $ (x + 1) / (w + gridStuff.hPadding)
        in Just (Spot (Row r, Column c))
@@ -525,7 +527,7 @@ worldEvent e w@(World {grid = grid, gridStuff = gridStuff, pointerPosition = poi
       | SDL.Event _ (SDL.MouseButtonEvent (SDL.MouseButtonEventData _ SDL.Released _ SDL.ButtonLeft _ _)) <- e = True
       | otherwise = False
     mouseMoved
-      | (SDL.Event _ (SDL.MouseMotionEvent (SDL.MouseMotionEventData {mouseMotionEventPos = SDL.P (SDL.V2 x y)}))) <- e = Just $ Measure.pixelPos (fromIntegral x) (fromIntegral y)
+      | (SDL.Event _ (SDL.MouseMotionEvent (SDL.MouseMotionEventData {mouseMotionEventPos = SDL.P (SDL.V2 x y)}))) <- e = Just $ vec (fromIntegral x) (fromIntegral y)
       | otherwise = Nothing
 
 gridFlip :: Spot -> Grid -> Grid
@@ -538,46 +540,43 @@ cardFlip (Card name FaceDown) = Card name FaceUp
 worldTime :: (Monad io) => DeltaTime -> World -> io World -- TODO: redundant?
 worldTime _ = return
 
-windowSize :: Measure.PixelSize
-windowSize = Measure.pixelSize 1000 700
-
--- windowSize :: Measure.PixelSize
--- windowSize = Measure.pixelSize 1000 700
+windowSize :: WindowSize
+windowSize = vec 1000 700
 
 sprites :: World -> [(Tex.Sprite, G.Transform)]
 sprites World {atlas, grid, gridStuff, pointerPosition} =
-  grd grid ++ maybeToList (highlight <$> spot pointerPos) ++ [(pointer, Measure.transform pointerPos)]
+  grd grid ++ maybeToList (highlight <$> spot pointerPos) ++ [(pointer, transform pointerPos)]
   where
-    pointer = Atlas.sprite atlas "pointer" Measure.texTopLeft windowSize
-    pointerPos = Measure.pixelPosToNdc pointerPosition windowSize
+    pointer = Atlas.sprite atlas "pointer" topLeft windowSize
+    pointerPos = pixelPosToNdc pointerPosition windowSize
     spot pos =
-      let Measure.NormalizedDeviceXY x y = Measure.translate (G.vec2 (-gridStuff.left) (-gridStuff.top)) pos
-          Measure.NormalizedDeviceWH w h = gridStuff.cardSize
+      let WithVec x y = vec (-gridStuff.left) (-gridStuff.top) + pos
+          WithVec w h = gridStuff.cardSize
           r = floor $ (y + 1) / (h + gridStuff.vPadding)
           c = floor $ (x + 1) / (w + gridStuff.hPadding)
        in if (0 <= r && r <= 5) && (0 <= c && c <= 5) then Just (Spot (Row r, Column c)) else Nothing -- TODO: hardcoded "5"
     grd (Grid m) = uncurry putAt <$> Map.toList m
     highlight spot =
-      let tr = Measure.transform $ Measure.ndcTranslate (pos spot) Measure.ndcTopLeft
+      let tr = transform $ pos spot + (topLeft :: NDCVec)
           sprite = border
        in (sprite, tr)
       where
         GridStuff {top, left, hPadding, vPadding} = gridStuff
-        pos (Spot (Row r, Column c)) = G.vec2 (fromIntegral c * (w + hPadding) + left) (fromIntegral r * (h + vPadding) + top)
-        border = Atlas.sprite atlas "border" Measure.texTopLeft windowSize
-        Measure.NormalizedDeviceWH w h = faceDown.size
+        pos (Spot (Row r, Column c)) = vec (fromIntegral c * (w + hPadding) + left) (fromIntegral r * (h + vPadding) + top)
+        border = Atlas.sprite atlas "border" topLeft windowSize
+        WithVec w h = faceDown.size
     putAt spot crd =
-      let position = Measure.ndcTranslate (pos spot) Measure.ndcTopLeft
-          tr = Measure.transform position
+      let position = pos spot + (topLeft :: NDCVec)
+          tr = transform position
           sprite = card crd
        in (sprite, tr)
       where
-        card (Card (CardName name) FaceUp) = Atlas.sprite atlas name Measure.texTopLeft windowSize
+        card (Card (CardName name) FaceUp) = Atlas.sprite atlas name topLeft windowSize
         card (Card _ FaceDown) = faceDown
         GridStuff {top, left, hPadding, vPadding} = gridStuff
-        pos (Spot (Row r, Column c)) = G.vec2 (fromIntegral c * (w + hPadding) + left) (fromIntegral r * (h + vPadding) + top)
-        Measure.NormalizedDeviceWH w h = faceDown.size
-    faceDown = Atlas.sprite atlas "back-side" Measure.texTopLeft windowSize
+        pos (Spot (Row r, Column c)) = vec (fromIntegral c * (w + hPadding) + left) (fromIntegral r * (h + vPadding) + top)
+        WithVec w h = faceDown.size
+    faceDown = Atlas.sprite atlas "back-side" topLeft windowSize
 
 -- pos :: Object s -> Measure.NormalizedDevicePosition
 
@@ -602,24 +601,21 @@ withMemoryAllocator vulkan gpu device =
 
 tranformSprite :: Tex.Sprite -> G.Transform -> SV.Vector Vert.Vertex
 tranformSprite
-  (Tex.Sprite {texture = tex, region = Measure.UVReg u1 v1 u2 v2, size = size@(Measure.NormalizedDeviceWH w h), origin = org})
+  (Tex.Sprite {texture = tex, region = UVReg u1 v1 u2 v2, size = size@(WithVec w h), origin = org})
   tr =
-    let a@(Measure.NormalizedDeviceXY x y) = Measure.localPosToNdc size org (Measure.ndcPos 0 0) -- TODO: improve ndc (0,0)
-        b = Measure.ndcPos (x + w) y
-        c = Measure.ndcPos (x + w) (y + h)
-        d = Measure.ndcPos x (y + h)
-        a2 = transform a
-        b2 = transform b
-        c2 = transform c
-        d2 = transform d
-        uva = Measure.uvPos u1 v1
-        uvb = Measure.uvPos u2 v1
-        uvc = Measure.uvPos u2 v2
-        uvd = Measure.uvPos u1 v2
-        topLeft = Vert.mkVertex a2 uva tex
-        topRight = Vert.mkVertex b2 uvb tex
-        bottomRight = Vert.mkVertex c2 uvc tex
-        bottomLeft = Vert.mkVertex d2 uvd tex
+    let a = Measure.localPosToNdc size org (vec 0 0) -- TODO: improve ndc (0,0)
+        WithVec x y = a
+        b = vec (x + w) y
+        c = vec (x + w) (y + h)
+        d = vec x (y + h)
+        uva = vec u1 v1
+        uvb = vec u2 v1
+        uvc = vec u2 v2
+        uvd = vec u1 v2
+        topLeft = Vert.Vertex (transform a) uva tex
+        topRight = Vert.Vertex (transform b) uvb tex
+        bottomRight = Vert.Vertex (transform c) uvc tex
+        bottomLeft = Vert.Vertex (transform d) uvd tex
      in SV.fromList
           [ topLeft,
             topRight,
@@ -629,7 +625,7 @@ tranformSprite
             topLeft
           ]
     where
-      transform (Measure.NormalizedDeviceXY x y) = let G.WithVec3 x2 y2 _ = G.apply (G.vec3 x y 1) tr in Measure.ndcPos x2 y2
+      transform (WithVec x y) = let G.WithVec3 x2 y2 _ = G.apply (G.vec3 x y 1) tr in vec x2 y2
 
 withGPUBuffer :: Vma.Allocator -> Vk.DeviceSize -> Vk.BufferUsageFlagBits -> Managed Vk.Buffer
 withGPUBuffer allocator size flags = do

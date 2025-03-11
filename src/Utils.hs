@@ -4,6 +4,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DataKinds #-}
 
 module Utils
   ( say,
@@ -142,8 +143,8 @@ withSurface w v@(Vk.Instance v' _) = managed $ bracket create destroy
     destroy s = Vk.destroySurfaceKHR v s Nothing <* say "Vulkan" "Destroyed surface"
     create = Vk.SurfaceKHR <$> SDL.vkCreateSurface w (castPtr v') <* say "SDL" "Vulkan surface created"
 
-withWindow :: Measure.PixelSize -> Managed SDL.Window
-withWindow (Measure.PixelWH w h) =
+withWindow :: Measure.WindowSize -> Managed SDL.Window
+withWindow (Measure.WithVec w h) =
   managed $
     bracket
       (SDL.createWindow applicationName win <* say "SDL" "Window created")

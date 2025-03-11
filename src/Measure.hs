@@ -1,94 +1,103 @@
-{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StrictData #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Measure
-  ( PixelPosition (..),
-    PixelSize (..),
+  ( PixelVec,
+    NDCVec,
+    UVVec,
+    Vec (..),
     PixelRegion (..),
     UVRegion (..),
-    TexturePosition,
-    TextureSize,
-    NormalizedDevicePosition,
-    NormalizedDeviceSize,
-    ndcPos,
-    uvPos,
-    ndcSize,
+    Normalized (..),
     pixelPosToNdc,
-    pixelPos,
-    pixelSize,
-    uvSize,
     pixelSizeToNdc,
-    pattern TextureXY,
-    pattern NormalizedDeviceWH,
-    pattern NormalizedDeviceXY,
-    pattern PixelXY,
-    pattern PixelWH,
     pattern PixelReg,
     pattern UVReg,
-    ndcTopLeft,
-    ndcTopRight,
-    ndcBottomLeft,
-    ndcBottomRight,
-    ndcCenter,
-    texTopLeft,
-    texTopRight,
-    texBottomLeft,
-    texBottomRight,
-    texCenter,
-    ndcVec,
-    texVec,
+    pattern WithVec,
     pixelPosToTex,
     pixelReg,
     uvReg,
     localToNdc,
     localPosToNdc,
-    ndcTranslate,
-    translate,
     transform,
-    windowSize,
+    WindowSize,
+    mkWindowSize,
   )
 where
 
+import Data.Coerce (coerce)
+import Data.Kind (Type)
 import Data.Word (Word32)
+import Foreign.Storable (Storable)
 import qualified Geomancy as G
+import qualified Geomancy.Elementwise as G
 import qualified Geomancy.Transform as G
 import Prelude hiding (lookup)
 
--- data TextureRegion = TextureRegion {uv :: G.Vec4, pixels :: G.UVec4} deriving (Show)
+newtype NDCVec = NDCVec G.Vec2 deriving (Show, Num, Storable)
 
--- {-# COMPLETE TextureRegionXY #-}
+newtype PixelVec = PixelVec G.UVec2 deriving (Show, Num)
 
--- pattern TextureRegionXY :: Float -> Float -> Float -> Float -> TextureRegion
--- pattern TextureRegionXY u1 v1 u2 v2 <- TextureRegion (G.WithVec4 u1 v1 u2 v2)
+newtype UVVec = UVVec G.Vec2 deriving (Show, Storable, Num)
 
-newtype PixelPosition = PixelPosition {vec :: G.UVec2} deriving (Show)
+data WindowSize = WindowSize Word32 Word32 deriving (Show)
 
-pixelPos :: Word32 -> Word32 -> PixelPosition
-pixelPos x y = PixelPosition $ G.uvec2 x y
+{-# COMPLETE WithVec #-}
 
-{-# COMPLETE PixelXY #-}
+-- pattern WithVec :: Vec u => Element u -> Element u -> u
+pattern WithVec :: (Vec u) => Element u -> Element u -> u
+pattern WithVec x y <- (unVec -> (x, y))
 
-pattern PixelXY :: Word32 -> Word32 -> PixelPosition
-pattern PixelXY x y <- PixelPosition (G.WithUVec2 x y)
+class Vec u where
+  type Element u :: Type
+  vec :: Element u -> Element u -> u
+  unVec :: u -> (Element u, Element u)
 
-newtype PixelSize = PixelSize {vec :: G.UVec2} deriving (Show)
+-- TODO: a type class for all the various newtypes who wrap a G.XVec2
+-- instance Vec G.UVec2 where
+--   type Element G.UVec2 = G.Element G.UVec2
+--   vec = G.uvec2
+--   unVec (G.WithUVec2 x y) = (x, y)
 
-pixelSize :: Word32 -> Word32 -> PixelSize
-pixelSize w h = PixelSize $ G.uvec2 w h
+instance Vec PixelVec where
+  type Element PixelVec = G.Element G.UVec2
+  vec = coerce G.uvec2
+  unVec (PixelVec v) = let G.WithUVec2 x y = v in (x, y)
 
-windowSize :: Word32 -> Word32 -> Maybe Measure.PixelSize
-windowSize w h
-  | w >= 0 && h >= 0 = Just $ pixelSize w h
+instance Vec NDCVec where
+  type Element NDCVec = G.Element G.Vec2
+  vec = coerce G.vec2
+  unVec (NDCVec v) = let G.WithVec2 x y = v in (x, y)
+
+instance Vec UVVec where
+  type Element UVVec = G.Element G.Vec2
+  vec = coerce G.vec2
+  unVec (UVVec v) = let G.WithVec2 x y = v in (x, y)
+
+instance Vec WindowSize where
+  type Element WindowSize = Word32
+  vec = WindowSize
+  unVec (WindowSize w h) = (w, h)
+
+mkWindowSize :: Word32 -> Word32 -> Maybe WindowSize
+mkWindowSize w h
+  | w >= 0 && h >= 0 = Just $ vec w h
   | otherwise = Nothing
-
-{-# COMPLETE PixelWH #-}
-
-pattern PixelWH :: Word32 -> Word32 -> PixelSize
-pattern PixelWH w h <- PixelSize (G.WithUVec2 w h)
 
 newtype PixelRegion = PixelRegion G.UVec4 deriving (Show)
 
+-- TODO: newtype to represent 1D pixel values ?
 pixelReg :: Word32 -> Word32 -> Word32 -> Word32 -> PixelRegion
 pixelReg x1 y1 x2 y2 = PixelRegion $ G.uvec4 x1 y1 x2 y2
 
@@ -110,120 +119,53 @@ pattern UVReg u1 v1 u2 v2 <- UVRegion (G.WithVec4 u1 v1 u2 v2)
 class Transform a where
   transform :: a -> G.Transform
 
-newtype NormalizedDevicePosition = NormalizedDevicePosition G.Vec2 deriving (Show)
+instance Transform NDCVec where
+  transform (WithVec x y) = G.translate x y 1
 
-instance Transform NormalizedDevicePosition where
-  transform (NormalizedDeviceXY x y) = G.translate x y 1
-
-{-# COMPLETE NormalizedDeviceXY #-}
-
-ndcVec :: NormalizedDevicePosition -> G.Vec2
-ndcVec (NormalizedDevicePosition v) = v
-
-{-# COMPLETE NormalizedDeviceXY #-}
-
-pattern NormalizedDeviceXY :: Float -> Float -> NormalizedDevicePosition
-pattern NormalizedDeviceXY x y <- NormalizedDevicePosition (G.WithVec2 x y)
-
-class Translate a b where
-  translate :: a -> b -> b
-
-instance Translate G.Vec2 NormalizedDevicePosition where
-  translate d (NormalizedDevicePosition p) = NormalizedDevicePosition $ p + d
-
-instance Translate NormalizedDeviceSize NormalizedDevicePosition where
-  translate (NormalizedDeviceSize s) = translate s
-
-instance Translate NormalizedDevicePosition NormalizedDevicePosition where
-  translate (NormalizedDevicePosition a) (NormalizedDevicePosition b) = NormalizedDevicePosition $ a + b
-
-ndcTranslate :: G.Vec2 -> NormalizedDevicePosition -> NormalizedDevicePosition
-ndcTranslate d (NormalizedDevicePosition p) = translate d (NormalizedDevicePosition p)
-
-texVec :: TexturePosition -> G.Vec2
-texVec (TexturePosition v) = v
-
-pixelPosToTex :: PixelSize -> PixelPosition -> TexturePosition
-pixelPosToTex (PixelWH w h) (PixelXY x y) =
+pixelPosToTex :: PixelVec -> PixelVec -> UVVec
+pixelPosToTex (WithVec w h) (WithVec x y) =
   let nx = fromIntegral x / fromIntegral w
       ny = fromIntegral y / fromIntegral h
-   in uvPos nx ny
+   in vec nx ny
 
-ndcPos :: Float -> Float -> NormalizedDevicePosition
-ndcPos x y = NormalizedDevicePosition $ G.vec2 x y
-
-newtype NormalizedDeviceSize = NormalizedDeviceSize G.Vec2 deriving (Show)
-
-{-# COMPLETE NormalizedDeviceWH #-}
-
-pattern NormalizedDeviceWH :: Float -> Float -> NormalizedDeviceSize
-pattern NormalizedDeviceWH w h <- NormalizedDeviceSize (G.WithVec2 w h)
-
-ndcSize :: Float -> Float -> NormalizedDeviceSize
-ndcSize w h = NormalizedDeviceSize $ G.vec2 w h
-
-pixelPosToNdc :: PixelPosition -> PixelSize -> NormalizedDevicePosition
-pixelPosToNdc (PixelXY x y) (PixelWH w h) =
+pixelPosToNdc :: PixelVec -> WindowSize -> NDCVec
+pixelPosToNdc (WithVec x y) (WithVec w h) =
   let nx = (fromIntegral x / fromIntegral w) * 2
       ny = (fromIntegral y / fromIntegral h) * 2
-   in ndcPos (nx - 1.0) (ny - 1.0)
+   in vec (nx - 1.0) (ny - 1.0)
 
-pixelSizeToNdc :: PixelSize -> PixelSize -> NormalizedDeviceSize
-pixelSizeToNdc (PixelWH w h) (PixelWH windowWidth windowHeight) =
+pixelSizeToNdc :: PixelVec -> WindowSize -> NDCVec
+pixelSizeToNdc (WithVec w h) (WithVec windowWidth windowHeight) =
   let nw = fromIntegral w / fromIntegral windowWidth
       nh = fromIntegral h / fromIntegral windowHeight
-   in ndcSize (nw * 2.0) (nh * 2.0)
+   in vec (nw * 2.0) (nh * 2.0)
 
-newtype TexturePosition = TexturePosition G.Vec2 deriving (Show)
-
-{-# COMPLETE TextureXY #-}
-
-pattern TextureXY :: Float -> Float -> TexturePosition
-pattern TextureXY x y <- TexturePosition (G.WithVec2 x y)
-
-uvPos :: Float -> Float -> TexturePosition
-uvPos x y = TexturePosition $ G.vec2 x y
-
-newtype TextureSize = TextureSize G.Vec2 deriving (Show)
-
-uvSize :: Float -> Float -> TextureSize
-uvSize w h = TextureSize $ G.vec2 w h
-
-localPosToNdc :: NormalizedDeviceSize -> TexturePosition -> NormalizedDevicePosition -> NormalizedDevicePosition
-localPosToNdc (NormalizedDeviceWH w h) (TextureXY ox oy) (NormalizedDeviceXY x y) =
+localPosToNdc :: NDCVec -> UVVec -> NDCVec -> NDCVec
+localPosToNdc (WithVec w h) (WithVec ox oy) (WithVec x y) =
   let x1 = localToNdc w ox x
       y1 = localToNdc h oy y
-   in ndcPos x1 y1
+   in vec x1 y1
 
 localToNdc :: Float -> Float -> Float -> Float
 localToNdc ndcWidth factor x = x - ndcWidth * factor
 
-ndcTopLeft :: NormalizedDevicePosition
-ndcTopLeft = ndcPos (-1.0) (-1.0)
+class Normalized u where
+  topLeft :: u
+  topRight :: u
+  bottomLeft :: u
+  bottomRight :: u
+  center :: u
 
-ndcTopRight :: NormalizedDevicePosition
-ndcTopRight = ndcPos 1.0 (-1.0)
+instance Normalized NDCVec where
+  topLeft = vec (-1.0) (-1.0)
+  topRight = vec 1.0 (-1.0)
+  bottomLeft = vec (-1.0) 1.0
+  bottomRight = vec 1.0 1.0
+  center = vec 0.0 0.0
 
-ndcBottomLeft :: NormalizedDevicePosition
-ndcBottomLeft = ndcPos (-1.0) 1.0
-
-ndcBottomRight :: NormalizedDevicePosition
-ndcBottomRight = ndcPos 1.0 1.0
-
-ndcCenter :: NormalizedDevicePosition
-ndcCenter = ndcPos 0.0 0.0
-
-texTopLeft :: TexturePosition
-texTopLeft = uvPos 0.0 0.0
-
-texTopRight :: TexturePosition
-texTopRight = uvPos 1.0 0.0
-
-texBottomLeft :: TexturePosition
-texBottomLeft = uvPos 0.0 1.0
-
-texBottomRight :: TexturePosition
-texBottomRight = uvPos 1.0 1.0
-
-texCenter :: TexturePosition
-texCenter = uvPos 0.5 0.5
+instance Normalized UVVec where
+  topLeft = vec 0.0 0.0
+  topRight = vec 1.0 0.0
+  bottomLeft = vec 0.0 1.0
+  bottomRight = vec 1.0 1.0
+  center = vec 0.5 0.5

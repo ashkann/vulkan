@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ImportQualifiedPost #-}
@@ -46,7 +47,7 @@ import Prelude hiding (init, lookup)
 
 -- | TODO: remove the Texture and put everything into BoundTexture and rename it to Texture
 data Texture = Texture
-  { size :: Measure.PixelSize,
+  { size :: PixelVec,
     -- | TODO: Do we need to keep the image?
     image :: Vk.Image,
     -- | TODO: Do we need to keep the view?
@@ -58,9 +59,9 @@ newtype DescriptorIndex = DescriptorIndex Word32 deriving (Storable)
 
 data Sprite = Sprite
   { texture :: DescriptorIndex,
-    region :: Measure.UVRegion,
-    size :: Measure.NormalizedDeviceSize,
-    origin :: Measure.TexturePosition
+    region :: UVRegion,
+    size :: NDCVec,
+    origin :: UVVec
   }
 
 fromRGBA8PngFile :: Vma.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> FilePath -> Managed Vk.ImageView
@@ -70,7 +71,7 @@ fromRGBA8PngFile allocator device pool queue path = do
       h = fromIntegral height
       size = w * h * 4
       format = Vk.FORMAT_R8G8B8A8_SRGB
-      imageSize = Measure.pixelSize w h
+      imageSize = vec w h
   (image, view) <- withImageAndView allocator device imageSize format
   do
     (staging, mem) <- withHostBuffer allocator (fromIntegral size)
@@ -83,14 +84,14 @@ fromRGBA8PngFile allocator device pool queue path = do
           dst = castPtr mem
        in withForeignPtr src $ \from -> copyArray dst from size
 
-withImageAndView :: Vma.Allocator -> Vk.Device -> Measure.PixelSize -> Vk.Format -> Managed (Vk.Image, Vk.ImageView)
+withImageAndView :: Vma.Allocator -> Vk.Device -> PixelVec -> Vk.Format -> Managed (Vk.Image, Vk.ImageView)
 withImageAndView allocator device size format = do
   image <- withImage allocator size format
   view <- withImageView device image format
   return (image, view)
 
-withImage :: Vma.Allocator -> Measure.PixelSize -> Vk.Format -> Managed Vk.Image
-withImage allocator (Measure.PixelWH width height) format = do
+withImage :: Vma.Allocator -> PixelVec -> Vk.Format -> Managed Vk.Image
+withImage allocator (WithVec width height) format = do
   (image, _, _) <-
     let dims =
           Vk.Extent3D

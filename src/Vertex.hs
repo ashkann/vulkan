@@ -1,26 +1,21 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE NoFieldSelectors #-}
 
 module Vertex
   ( Vertex (..),
-    mkVertex,
-    vertexStore,
   )
 where
 
 import Foreign (Storable)
 import Foreign.Storable (Storable (..), sizeOf)
 import qualified Foreign.Storable.Record as Store
-import qualified Geomancy as G
-import qualified Measure
+import Measure
 import qualified Texture as Tex
 import Prelude hiding (init, lookup)
 
-data Vertex = Vertex {xy :: G.Vec2, uv :: G.Vec2, texture :: Tex.DescriptorIndex}
-
-mkVertex :: Measure.NormalizedDevicePosition -> Measure.TexturePosition -> Tex.DescriptorIndex -> Vertex
-mkVertex pos uv index = Vertex {xy = Measure.ndcVec pos, uv = Measure.texVec uv, texture = index}
+data Vertex = Vertex {xy :: NDCVec, uv :: UVVec, texture :: Tex.DescriptorIndex}
 
 -- $(makeLenses ''Vertex)
 

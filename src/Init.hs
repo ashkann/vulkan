@@ -31,6 +31,7 @@ import Data.Text.Encoding (decodeUtf8)
 import qualified Data.Vector as V
 import Data.Word (Word32)
 import qualified Measure
+import Measure
 import Utils
 import qualified Vulkan as Ft (PhysicalDeviceVulkan12Features (..))
 import qualified Vulkan as Vk
@@ -46,6 +47,7 @@ import Vulkan.CStruct.Extends (pattern (:&), pattern (::&))
 import qualified Vulkan.CStruct.Extends as Vk
 import qualified Vulkan.Zero as Vk
 import Prelude hiding (init)
+import qualified Geomancy as G
 
 -- import Vulkan.CStruct.Extends ((:&),(::&))
 
@@ -177,7 +179,7 @@ withSwapChain ::
   Vk.SurfaceKHR ->
   QueueFamilyIndex Graphics ->
   QueueFamilyIndex Present ->
-  Measure.PixelSize ->
+  WindowSize ->
   Managed (Vk.SwapchainKHR, Vk.Extent2D, V.Vector Vk.Image)
 withSwapChain
   gpu
@@ -185,7 +187,7 @@ withSwapChain
   surface
   (QueueFamilyIndex gfx)
   (QueueFamilyIndex present)
-  (Measure.PixelWH width height) =
+  (WithVec width height) =
     do
       caps <- Vk.getPhysicalDeviceSurfaceCapabilitiesKHR gpu surface
       let minImageCount = VkSurfaceCaps.minImageCount caps

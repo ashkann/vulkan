@@ -1,9 +1,8 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NoFieldSelectors #-}
-{-# LANGUAGE OverloadedRecordDot #-}
-
 
 module Atlas
   ( atlas,
@@ -21,7 +20,6 @@ import Control.Monad.Managed (Managed)
 import Data.Functor ((<&>))
 import qualified Data.Map.Strict as M
 import Data.Word (Word32)
-import qualified Geomancy as G
 import Measure
 import Text.Parsec (anyChar, char, digit, endOfLine, eof, many1, manyTill, optionMaybe, parse, string, (<?>))
 import Text.Parsec.Char (spaces)
@@ -36,19 +34,19 @@ newtype Key = Key (String, Maybe Word32)
   deriving (Show)
   deriving (Ord, Eq)
 
-data Region = Region {region :: UVRegion, size :: PixelSize} deriving (Show)
+data Region = Region {region :: UVRegion, size :: PixelVec} deriving (Show)
 
 newtype Regions = Regions (M.Map Key Region) deriving (Show)
 
 mkRegion ::
   -- | Size of the atlas
-  PixelSize ->
+  PixelVec ->
   -- | Position of the region
-  PixelPosition ->
+  PixelVec ->
   -- | Size of the region
-  PixelSize ->
+  PixelVec ->
   Region
-mkRegion (PixelWH aw ah) (PixelXY rx ry) size@(PixelWH rw rh) =
+mkRegion (WithVec aw ah) (WithVec rx ry) size@(WithVec rw rh) =
   Region {region = uvReg (u rx) (v ry) (u $ rx + rw) (v $ ry + rh), size = size}
   where
     u x = fromIntegral x / fromIntegral aw
@@ -79,11 +77,11 @@ atlasP = do
 -- filter: Nearest, Nearest
 -- repeat: none
 -- @
-headerP :: Parser (FilePath, PixelSize)
+headerP :: Parser (FilePath, PixelVec)
 headerP = do
   _ <- endOfLine <?> "empty line"
   fileName <- manyTill anyChar endOfLine <?> "fileName"
-  size <- vartP "size" (const pixelSizeP)
+  size <- vartP "size" (const vec2P)
   _ <- vartP "format" $ \f -> when (f /= "RGBA8888") $ fail ("format must be RGBA8888, not " ++ f)
   _ <- varP "filter"
   _ <- varP "repeat"
@@ -112,33 +110,27 @@ varP name = vartP name return
 --  offset: 0, 0
 --  index: -1
 -- @
-regionP :: Parser (Key, PixelPosition, PixelSize)
+regionP :: Parser (Key, PixelVec, PixelVec)
 regionP = do
   name <- manyTill anyChar endOfLine
   _ <- spaces >> varP "rotate"
-  xy <- spaces >> vartP "xy" (const pixelPositionP)
-  size <- spaces >> vartP "size" (const pixelSizeP)
-  _ <- spaces >> vartP "orig" (const uvec2P)
-  _ <- spaces >> vartP "offset" (const uvec2P)
+  xy <- spaces >> vartP "xy" (const vec2P)
+  size <- spaces >> vartP "size" (const vec2P)
+  _ <- spaces >> vartP "orig" (const vec2P)
+  _ <- spaces >> vartP "offset" (const vec2P)
   index <- spaces >> vartP "index" (const $ optionMaybe word32P)
   return (Key (name, index), xy, size)
 
 word32P :: Parser Word32
 word32P = read <$> many1 digit
 
-uvec2P :: Parser G.UVec2
-uvec2P = do
+vec2P :: Parser PixelVec
+vec2P = do
   x <- word32P
   _ <- spaces >> char ',' >> spaces
   y <- word32P
-  let v = G.uvec2 x y
+  let v = vec x y
   return v
-
-pixelSizeP :: Parser PixelSize
-pixelSizeP = PixelSize <$> uvec2P
-
-pixelPositionP :: Parser PixelPosition
-pixelPositionP = PixelPosition <$> uvec2P
 
 data Atlas = Atlas
   { texture :: Tex.DescriptorIndex,
@@ -153,7 +145,7 @@ withAtlas allocator device commandPool gfxQueue descSet sampler atlasDir = do
   [descIndex] <- Tex.bind device descSet [tex] sampler
   return $ Atlas {texture = descIndex, regions = regions}
 
-sprite :: Atlas -> String -> TexturePosition -> PixelSize -> Tex.Sprite
+sprite :: Atlas -> String -> UVVec -> WindowSize -> Tex.Sprite
 sprite atlas name origin windowSize = maybe (notFound name) mk maybeReg
   where
     notFound name = error $ "Can't find region " ++ name ++ " in atlas"
@@ -161,12 +153,12 @@ sprite atlas name origin windowSize = maybe (notFound name) mk maybeReg
     maybeReg = lookup regs name
     mk reg = mkSprite tex reg origin windowSize
 
-spriteIndexed :: Atlas -> String -> Word32 -> TexturePosition -> PixelSize -> Tex.Sprite
+spriteIndexed :: Atlas -> String -> Word32 -> UVVec -> WindowSize -> Tex.Sprite
 spriteIndexed (Atlas {texture = tex, regions = atlas}) name index origin windowSize =
   let reg = lookupIndexed atlas name index
    in mkSprite tex reg origin windowSize
 
-mkSprite :: Tex.DescriptorIndex -> Region -> TexturePosition -> PixelSize -> Tex.Sprite
+mkSprite :: Tex.DescriptorIndex -> Region -> UVVec -> WindowSize -> Tex.Sprite
 mkSprite tex Region {region = reg, size = size} origin windowSize =
   Tex.Sprite
     { texture = tex,

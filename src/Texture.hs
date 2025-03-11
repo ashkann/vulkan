@@ -61,7 +61,7 @@ data Sprite = Sprite
   { texture :: DescriptorIndex,
     region :: UVRegion,
     size :: NDCVec,
-    origin :: UVVec
+    origin :: LocalVec
   }
 
 fromRGBA8PngFile :: Vma.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> FilePath -> Managed Vk.ImageView

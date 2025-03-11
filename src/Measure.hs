@@ -16,6 +16,7 @@ module Measure
   ( PixelVec,
     NDCVec,
     UVVec,
+    LocalVec,
     Vec (..),
     PixelRegion (..),
     UVRegion (..),
@@ -28,7 +29,6 @@ module Measure
     pixelPosToTex,
     pixelReg,
     uvReg,
-    localToNdc,
     localPosToNdc,
     transform,
     WindowSize,
@@ -51,6 +51,8 @@ newtype PixelVec = PixelVec G.UVec2 deriving (Show, Num)
 
 newtype UVVec = UVVec G.Vec2 deriving (Show, Storable, Num)
 
+newtype LocalVec = LocalVec G.Vec2
+
 data WindowSize = WindowSize Word32 Word32 deriving (Show)
 
 {-# COMPLETE WithVec #-}
@@ -64,12 +66,6 @@ class Vec u where
   vec :: Element u -> Element u -> u
   unVec :: u -> (Element u, Element u)
 
--- TODO: a type class for all the various newtypes who wrap a G.XVec2
--- instance Vec G.UVec2 where
---   type Element G.UVec2 = G.Element G.UVec2
---   vec = G.uvec2
---   unVec (G.WithUVec2 x y) = (x, y)
-
 instance Vec PixelVec where
   type Element PixelVec = G.Element G.UVec2
   vec = coerce G.uvec2
@@ -79,6 +75,11 @@ instance Vec NDCVec where
   type Element NDCVec = G.Element G.Vec2
   vec = coerce G.vec2
   unVec (NDCVec v) = let G.WithVec2 x y = v in (x, y)
+
+instance Vec LocalVec where
+  type Element LocalVec = G.Element G.Vec2
+  vec = coerce G.vec2
+  unVec (LocalVec v) = let G.WithVec2 x y = v in (x, y)
 
 instance Vec UVVec where
   type Element UVVec = G.Element G.Vec2
@@ -135,19 +136,18 @@ pixelPosToNdc (WithVec x y) (WithVec w h) =
    in vec (nx - 1.0) (ny - 1.0)
 
 pixelSizeToNdc :: PixelVec -> WindowSize -> NDCVec
-pixelSizeToNdc (WithVec w h) (WithVec windowWidth windowHeight) =
-  let nw = fromIntegral w / fromIntegral windowWidth
-      nh = fromIntegral h / fromIntegral windowHeight
+pixelSizeToNdc (WithVec w h) (WithVec ww wh) =
+  let nw = fromIntegral w / fromIntegral ww
+      nh = fromIntegral h / fromIntegral wh
    in vec (nw * 2.0) (nh * 2.0)
 
-localPosToNdc :: NDCVec -> UVVec -> NDCVec -> NDCVec
+localPosToNdc :: NDCVec -> LocalVec -> UVVec -> NDCVec
 localPosToNdc (WithVec w h) (WithVec ox oy) (WithVec x y) =
-  let x1 = localToNdc w ox x
-      y1 = localToNdc h oy y
-   in vec x1 y1
-
-localToNdc :: Float -> Float -> Float -> Float
-localToNdc ndcWidth factor x = x - ndcWidth * factor
+  let lx = localToNdc w ox x
+      ly = localToNdc h oy y
+   in vec lx ly
+  where
+    localToNdc ndcWidth factor x = x - ndcWidth * factor
 
 class Normalized u where
   topLeft :: u
@@ -163,7 +163,7 @@ instance Normalized NDCVec where
   bottomRight = vec 1.0 1.0
   center = vec 0.0 0.0
 
-instance Normalized UVVec where
+instance Normalized LocalVec where
   topLeft = vec 0.0 0.0
   topRight = vec 1.0 0.0
   bottomLeft = vec 0.0 1.0

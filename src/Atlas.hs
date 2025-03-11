@@ -145,7 +145,7 @@ withAtlas allocator device commandPool gfxQueue descSet sampler atlasDir = do
   [descIndex] <- Tex.bind device descSet [tex] sampler
   return $ Atlas {texture = descIndex, regions = regions}
 
-sprite :: Atlas -> String -> UVVec -> WindowSize -> Tex.Sprite
+sprite :: Atlas -> String -> LocalVec -> WindowSize -> Tex.Sprite
 sprite atlas name origin windowSize = maybe (notFound name) mk maybeReg
   where
     notFound name = error $ "Can't find region " ++ name ++ " in atlas"
@@ -153,12 +153,12 @@ sprite atlas name origin windowSize = maybe (notFound name) mk maybeReg
     maybeReg = lookup regs name
     mk reg = mkSprite tex reg origin windowSize
 
-spriteIndexed :: Atlas -> String -> Word32 -> UVVec -> WindowSize -> Tex.Sprite
+spriteIndexed :: Atlas -> String -> Word32 -> LocalVec -> WindowSize -> Tex.Sprite
 spriteIndexed (Atlas {texture = tex, regions = atlas}) name index origin windowSize =
   let reg = lookupIndexed atlas name index
    in mkSprite tex reg origin windowSize
 
-mkSprite :: Tex.DescriptorIndex -> Region -> UVVec -> WindowSize -> Tex.Sprite
+mkSprite :: Tex.DescriptorIndex -> Region -> LocalVec -> WindowSize -> Tex.Sprite
 mkSprite tex Region {region = reg, size = size} origin windowSize =
   Tex.Sprite
     { texture = tex,

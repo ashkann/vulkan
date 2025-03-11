@@ -603,7 +603,7 @@ tranformSprite :: Tex.Sprite -> G.Transform -> SV.Vector Vert.Vertex
 tranformSprite
   (Tex.Sprite {texture = tex, region = UVReg u1 v1 u2 v2, size = size@(WithVec w h), origin = org})
   tr =
-    let a = Measure.localPosToNdc size org (vec 0 0) -- TODO: improve ndc (0,0)
+    let a = localPosToNdc size org (vec 0 0) -- TODO: improve ndc (0,0)
         WithVec x y = a
         b = vec (x + w) y
         c = vec (x + w) (y + h)

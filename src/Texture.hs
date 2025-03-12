@@ -31,14 +31,14 @@ import Foreign (Ptr, castPtr, copyArray, withForeignPtr)
 import Foreign.Storable (Storable)
 import Measure
 import Utils
-import Vulkan qualified as Vk
-import Vulkan qualified as VkBufferCreateInfo (BufferCreateInfo (..))
-import Vulkan qualified as VkDescriptorImageInfo (DescriptorImageInfo (..))
-import Vulkan qualified as VkExtent3D (Extent3D (..))
-import Vulkan qualified as VkImageCreateInfo (ImageCreateInfo (..))
-import Vulkan qualified as VkImageSubresourceRange (ImageSubresourceRange (..))
-import Vulkan qualified as VkImageViewCreateInfo (ImageViewCreateInfo (..))
-import Vulkan qualified as VkWriteDescriptorSet (WriteDescriptorSet (..))
+import qualified Vulkan as Vk
+import qualified Vulkan as VkBufferCreateInfo (BufferCreateInfo (..))
+import qualified Vulkan as VkDescriptorImageInfo (DescriptorImageInfo (..))
+import qualified Vulkan as VkExtent3D (Extent3D (..))
+import qualified Vulkan as VkImageCreateInfo (ImageCreateInfo (..))
+import qualified Vulkan as VkImageSubresourceRange (ImageSubresourceRange (..))
+import qualified Vulkan as VkImageViewCreateInfo (ImageViewCreateInfo (..))
+import qualified Vulkan as VkWriteDescriptorSet (WriteDescriptorSet (..))
 import Vulkan.CStruct.Extends qualified as Vk
 import Vulkan.Zero qualified as Vk
 import VulkanMemoryAllocator qualified as Vma

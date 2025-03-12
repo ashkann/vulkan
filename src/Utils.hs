@@ -28,6 +28,7 @@ module Utils
     copyToGpu2,
     copyImageToImage,
     repeatingSampler,
+    withGPUBuffer,
   )
 where
 
@@ -44,30 +45,34 @@ import Data.Word (Word32)
 import Foreign (Ptr, Storable, castPtr, copyArray, withForeignPtr)
 import Foreign.C (peekCAString)
 import Foreign.Storable (Storable (..), sizeOf)
-import Measure qualified
 import SDL qualified
 import SDL.Video.Vulkan qualified as SDL
-import Vulkan qualified as Vk
-import Vulkan qualified as VkApplicationInfo (ApplicationInfo (..))
-import Vulkan qualified as VkBufferCopy (BufferCopy (..))
-import Vulkan qualified as VkBufferImageCopy (BufferImageCopy (..))
-import Vulkan qualified as VkCommandBufferAllocateInfo (CommandBufferAllocateInfo (..))
-import Vulkan qualified as VkCommandBufferBeginInfo (CommandBufferBeginInfo (..))
-import Vulkan qualified as VkDebugUtilsMessengerCreateInfoEXT (DebugUtilsMessengerCreateInfoEXT (..))
-import Vulkan qualified as VkExtent2D (Extent2D (..))
-import Vulkan qualified as VkExtent3D (Extent3D (..))
-import Vulkan qualified as VkImageCopy (ImageCopy (..))
-import Vulkan qualified as VkImageMemoryBarrier (ImageMemoryBarrier (..))
-import Vulkan qualified as VkImageSubresourceLayers (ImageSubresourceLayers (..))
-import Vulkan qualified as VkImageSubresourceRange (ImageSubresourceRange (..))
-import Vulkan qualified as VkInstanceCreateInfo (InstanceCreateInfo (..))
-import Vulkan qualified as VkOffset3D (Offset3D (..))
-import Vulkan qualified as VkSamplerCreateInfo (SamplerCreateInfo (..))
-import Vulkan qualified as VkSubmitInfo (SubmitInfo (..))
+import qualified Vulkan as Vk
+import qualified Vulkan as VkApplicationInfo (ApplicationInfo (..))
+import qualified Vulkan as VkBufferCopy (BufferCopy (..))
+import qualified Vulkan as VkBufferImageCopy (BufferImageCopy (..))
+import qualified Vulkan as VkCommandBufferAllocateInfo (CommandBufferAllocateInfo (..))
+import qualified Vulkan as VkCommandBufferBeginInfo (CommandBufferBeginInfo (..))
+import qualified Vulkan as VkDebugUtilsMessengerCreateInfoEXT (DebugUtilsMessengerCreateInfoEXT (..))
+import qualified Vulkan as VkExtent2D (Extent2D (..))
+import qualified Vulkan as VkExtent3D (Extent3D (..))
+import qualified Vulkan as VkImageCopy (ImageCopy (..))
+import qualified Vulkan as VkImageMemoryBarrier (ImageMemoryBarrier (..))
+import qualified Vulkan as VkImageSubresourceLayers (ImageSubresourceLayers (..))
+import qualified Vulkan as VkImageSubresourceRange (ImageSubresourceRange (..))
+import qualified Vulkan as VkInstanceCreateInfo (InstanceCreateInfo (..))
+import qualified Vulkan as VkOffset3D (Offset3D (..))
+import qualified Vulkan as VkSamplerCreateInfo (SamplerCreateInfo (..))
+import qualified Vulkan as VkSubmitInfo (SubmitInfo (..))
 import Vulkan.CStruct.Extends (pattern (:&), pattern (::&))
 import Vulkan.CStruct.Extends qualified as Vk
 import Vulkan.Utils.Debug qualified as Vk
 import Vulkan.Zero qualified as Vk
+import Measure
+import qualified Vulkan as VkBufferCreateInfo (BufferCreateInfo (..))
+import VulkanMemoryAllocator qualified as Vma
+import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCreateInfo (..))
+import Prelude hiding (init)
 
 say :: (MonadIO io) => String -> String -> io ()
 say prefix msg = liftIO . putStrLn $ prefix ++ ": " ++ msg
@@ -143,8 +148,8 @@ withSurface w v@(Vk.Instance v' _) = managed $ bracket create destroy
     destroy s = Vk.destroySurfaceKHR v s Nothing <* say "Vulkan" "Destroyed surface"
     create = Vk.SurfaceKHR <$> SDL.vkCreateSurface w (castPtr v') <* say "SDL" "Vulkan surface created"
 
-withWindow :: Measure.WindowSize -> Managed SDL.Window
-withWindow (Measure.WithVec w h) =
+withWindow :: WindowSize -> Managed SDL.Window
+withWindow (WithVec w h) =
   managed $
     bracket
       (SDL.createWindow applicationName win <* say "SDL" "Window created")
@@ -442,6 +447,25 @@ repeatingSampler device =
             VkSamplerCreateInfo.borderColor = Vk.BORDER_COLOR_INT_OPAQUE_WHITE
           }
    in managed $ Vk.withSampler device info Nothing bracket
+
+withGPUBuffer :: Vma.Allocator -> Vk.DeviceSize -> Vk.BufferUsageFlagBits -> Managed Vk.Buffer
+withGPUBuffer allocator size flags = do
+  (buffer, _, _) <-
+    let bufferInfo =
+          Vk.zero
+            { VkBufferCreateInfo.size = size,
+              VkBufferCreateInfo.usage = Vk.BUFFER_USAGE_TRANSFER_DST_BIT .|. flags,
+              VkBufferCreateInfo.sharingMode = Vk.SHARING_MODE_EXCLUSIVE
+            }
+        vmaInfo =
+          Vk.zero
+            { VmaAllocationCreateInfo.usage = Vma.MEMORY_USAGE_AUTO,
+              VmaAllocationCreateInfo.flags = Vma.ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
+              VmaAllocationCreateInfo.priority = 1
+            }
+     in managed $ Vma.withBuffer allocator bufferInfo vmaInfo bracket
+  say "Vulkan" $ "Created GPU buffer (" ++ show size ++ " bytes)"
+  return buffer   
 
 -- import DearImGui qualified as ImGui
 -- import DearImGui.SDL.Vulkan qualified as ImGui

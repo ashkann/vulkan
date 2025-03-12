@@ -4,7 +4,6 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedRecordDot #-}
@@ -19,72 +18,63 @@
 
 module Main (main) where
 
-import Atlas qualified
+import qualified Atlas
 import Control.Concurrent (threadDelay)
 import Control.Exception (bracket)
 import Control.Monad (when)
 import Control.Monad.Managed (Managed, MonadIO (liftIO), managed, runManaged)
 import Data.Bits ((.|.))
-import Data.ByteString qualified as BS (readFile)
 import Data.Foldable (foldlM)
 import Data.Functor (($>))
-import Data.Map.Strict qualified as Map
+import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, maybeToList)
 import Data.Vector ((!))
-import Data.Vector qualified as V
-import Data.Vector.Mutable qualified as MV
-import Data.Vector.Storable qualified as SV
+import qualified Data.Vector as V
+import qualified Data.Vector.Mutable as MV
+import qualified Data.Vector.Storable as SV
 import Foreign (Ptr, Storable, Word32, Word64)
-import Foreign.Ptr (castFunPtr)
 import Foreign.Storable (Storable (..), sizeOf)
-import Foreign.Storable.Record qualified as Store
-import Geomancy qualified as G
-import Geomancy.Transform qualified as G
-import Init qualified
+import qualified Foreign.Storable.Record as Store
+import qualified Geomancy as G
+import qualified Geomancy.Transform as G
+import qualified Init
 import Measure
-import SDL qualified
-import System.Random qualified as Random
-import Texture qualified as Tex
+import qualified SDL
+import qualified System.Random as Random
+import qualified Texture as Tex
 import Utils
-import Vertex qualified as Vert
-import Vulkan qualified as Vk
-import Vulkan qualified as VkBufferCreateInfo (BufferCreateInfo (..))
-import Vulkan qualified as VkCommandPoolCreateInfo (CommandPoolCreateInfo (..))
-import Vulkan qualified as VkDescriptorBufferInfo (DescriptorBufferInfo (..))
-import Vulkan qualified as VkDescriptorPoolCreateInfo (DescriptorPoolCreateInfo (..))
-import Vulkan qualified as VkDescriptorPoolSize (DescriptorPoolSize (..))
-import Vulkan qualified as VkDescriptorSetAllocateInfo (DescriptorSetAllocateInfo (..))
-import Vulkan qualified as VkDescriptorSetLayoutBinding (DescriptorSetLayoutBinding (..))
-import Vulkan qualified as VkDescriptorSetLayoutBindingFlagsCreateInfo (DescriptorSetLayoutBindingFlagsCreateInfo (..))
-import Vulkan qualified as VkDescriptorSetLayoutCreateInfo (DescriptorSetLayoutCreateInfo (..))
-import Vulkan qualified as VkDevice (Device (..))
-import Vulkan qualified as VkExtent2D (Extent2D (..))
-import Vulkan qualified as VkFenceCreateInfo (FenceCreateInfo (..))
-import Vulkan qualified as VkGraphicsPipelineCreateInfo (GraphicsPipelineCreateInfo (..))
-import Vulkan qualified as VkInstance (Instance (..))
-import Vulkan qualified as VkPipelineColorBlendStateCreateInfo (PipelineColorBlendStateCreateInfo (..))
-import Vulkan qualified as VkPipelineLayoutCreateInfo (PipelineLayoutCreateInfo (..))
-import Vulkan qualified as VkPipelineRenderingCreateInfo (PipelineRenderingCreateInfo (..))
-import Vulkan qualified as VkPipelineShaderStageCreateInfo (PipelineShaderStageCreateInfo (..))
-import Vulkan qualified as VkPipelineVertexInputStateCreateInfo (PipelineVertexInputStateCreateInfo (..))
-import Vulkan qualified as VkPresentInfoKHR (PresentInfoKHR (..))
-import Vulkan qualified as VkRect2D (Rect2D (..))
-import Vulkan qualified as VkRenderingAttachmentInfo (RenderingAttachmentInfo (..))
-import Vulkan qualified as VkRenderingInfo (RenderingInfo (..))
-import Vulkan qualified as VkShaderModuleCreateInfo (ShaderModuleCreateInfo (..))
-import Vulkan qualified as VkSubmitInfo (SubmitInfo (..))
-import Vulkan qualified as VkVPipelineMultisampleStateCreateInfo (PipelineMultisampleStateCreateInfo (..))
-import Vulkan qualified as VkVertexInputAttributeDescription (VertexInputAttributeDescription (..))
-import Vulkan qualified as VkVertexInputBindingDescription (VertexInputBindingDescription (..))
-import Vulkan qualified as VkViewport (Viewport (..))
-import Vulkan qualified as VkWriteDescriptorSet (WriteDescriptorSet (..))
+import qualified Vertex as Vert
+import qualified Vulkan as Vk
+import qualified Vulkan as VkCommandPoolCreateInfo (CommandPoolCreateInfo (..))
+import qualified Vulkan as VkDescriptorBufferInfo (DescriptorBufferInfo (..))
+import qualified Vulkan as VkDescriptorPoolCreateInfo (DescriptorPoolCreateInfo (..))
+import qualified Vulkan as VkDescriptorPoolSize (DescriptorPoolSize (..))
+import qualified Vulkan as VkDescriptorSetAllocateInfo (DescriptorSetAllocateInfo (..))
+import qualified Vulkan as VkDescriptorSetLayoutBinding (DescriptorSetLayoutBinding (..))
+import qualified Vulkan as VkDescriptorSetLayoutBindingFlagsCreateInfo (DescriptorSetLayoutBindingFlagsCreateInfo (..))
+import qualified Vulkan as VkDescriptorSetLayoutCreateInfo (DescriptorSetLayoutCreateInfo (..))
+import qualified Vulkan as VkDevice (Device (..))
+import qualified Vulkan as VkExtent2D (Extent2D (..))
+import qualified Vulkan as VkFenceCreateInfo (FenceCreateInfo (..))
+import qualified Vulkan as VkGraphicsPipelineCreateInfo (GraphicsPipelineCreateInfo (..))
+import qualified Vulkan as VkPipelineColorBlendStateCreateInfo (PipelineColorBlendStateCreateInfo (..))
+import qualified Vulkan as VkPipelineLayoutCreateInfo (PipelineLayoutCreateInfo (..))
+import qualified Vulkan as VkPipelineRenderingCreateInfo (PipelineRenderingCreateInfo (..))
+import qualified Vulkan as VkPipelineVertexInputStateCreateInfo (PipelineVertexInputStateCreateInfo (..))
+import qualified Vulkan as VkPresentInfoKHR (PresentInfoKHR (..))
+import qualified Vulkan as VkRect2D (Rect2D (..))
+import qualified Vulkan as VkRenderingAttachmentInfo (RenderingAttachmentInfo (..))
+import qualified Vulkan as VkRenderingInfo (RenderingInfo (..))
+import qualified Vulkan as VkSubmitInfo (SubmitInfo (..))
+import qualified Vulkan as VkVPipelineMultisampleStateCreateInfo (PipelineMultisampleStateCreateInfo (..))
+import qualified Vulkan as VkVertexInputAttributeDescription (VertexInputAttributeDescription (..))
+import qualified Vulkan as VkVertexInputBindingDescription (VertexInputBindingDescription (..))
+import qualified Vulkan as VkViewport (Viewport (..))
+import qualified Vulkan as VkWriteDescriptorSet (WriteDescriptorSet (..))
 import Vulkan.CStruct.Extends (pattern (:&), pattern (::&))
-import Vulkan.CStruct.Extends qualified as Vk
-import Vulkan.Dynamic qualified as Vk
-import Vulkan.Zero qualified as Vk
-import VulkanMemoryAllocator qualified as Vma
-import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCreateInfo (..))
-import VulkanMemoryAllocator qualified as VmaAllocatorCreateInfo (AllocatorCreateInfo (..))
+import qualified Vulkan.CStruct.Extends as Vk
+import qualified Vulkan.Zero as Vk
+import qualified VulkanMemoryAllocator as Vma
 import Prelude hiding (init)
 
 newtype DeltaTime = DeltaTime Float
@@ -148,7 +138,7 @@ main = runManaged $ do
               VkCommandPoolCreateInfo.flags = Vk.COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT
             }
      in managed $ Vk.withCommandPool device info Nothing bracket
-  allocator <- withMemoryAllocator vulkan gpu device <* say "Vulkan" "Created VMA allocator"
+  allocator <- Init.withMemoryAllocator vulkan gpu device <* say "Vulkan" "Created VMA allocator"
   let descriptorCount = 16
   descSetLayout <- descriptorSetLayout device descriptorCount
   descPool <- descriptorPool device 1000
@@ -580,25 +570,6 @@ sprites World {atlas, grid, gridStuff, pointerPosition} =
 
 -- pos :: Object s -> Measure.NormalizedDevicePosition
 
-withMemoryAllocator :: Vk.Instance -> Vk.PhysicalDevice -> Vk.Device -> Managed Vma.Allocator
-withMemoryAllocator vulkan gpu device =
-  let insanceCmds = VkInstance.instanceCmds vulkan
-      deviceCmds = VkDevice.deviceCmds device
-      info =
-        Vk.zero
-          { VmaAllocatorCreateInfo.vulkanApiVersion = vulkanVersion,
-            VmaAllocatorCreateInfo.instance' = Vk.instanceHandle vulkan,
-            VmaAllocatorCreateInfo.physicalDevice = Vk.physicalDeviceHandle gpu,
-            VmaAllocatorCreateInfo.device = Vk.deviceHandle device,
-            VmaAllocatorCreateInfo.vulkanFunctions =
-              Just $
-                Vk.zero
-                  { Vma.vkGetInstanceProcAddr = castFunPtr $ Vk.pVkGetInstanceProcAddr insanceCmds,
-                    Vma.vkGetDeviceProcAddr = castFunPtr $ Vk.pVkGetDeviceProcAddr deviceCmds
-                  }
-          }
-   in managed $ Vma.withAllocator info bracket
-
 tranformSprite :: Tex.Sprite -> G.Transform -> SV.Vector Vert.Vertex
 tranformSprite
   (Tex.Sprite {texture = tex, region = UVReg u1 v1 u2 v2, size = size@(WithVec w h), origin = org})
@@ -626,25 +597,6 @@ tranformSprite
           ]
     where
       transform (WithVec x y) = let G.WithVec3 x2 y2 _ = G.apply (G.vec3 x y 1) tr in vec x2 y2
-
-withGPUBuffer :: Vma.Allocator -> Vk.DeviceSize -> Vk.BufferUsageFlagBits -> Managed Vk.Buffer
-withGPUBuffer allocator size flags = do
-  (buffer, _, _) <-
-    let bufferInfo =
-          Vk.zero
-            { VkBufferCreateInfo.size = size,
-              VkBufferCreateInfo.usage = Vk.BUFFER_USAGE_TRANSFER_DST_BIT .|. flags,
-              VkBufferCreateInfo.sharingMode = Vk.SHARING_MODE_EXCLUSIVE
-            }
-        vmaInfo =
-          Vk.zero
-            { VmaAllocationCreateInfo.usage = Vma.MEMORY_USAGE_AUTO,
-              VmaAllocationCreateInfo.flags = Vma.ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
-              VmaAllocationCreateInfo.priority = 1
-            }
-     in managed $ Vma.withBuffer allocator bufferInfo vmaInfo bracket
-  say "Vulkan" $ "Created GPU buffer (" ++ show size ++ " bytes)"
-  return buffer
 
 descriptorSetLayout :: Vk.Device -> Word32 -> Managed Vk.DescriptorSetLayout
 descriptorSetLayout dev count = do
@@ -760,7 +712,7 @@ createPipeline ::
   Vk.PipelineLayout ->
   Managed Vk.Pipeline
 createPipeline dev extent layout = do
-  (vert, frag) <- createShaders dev
+  (vert, frag) <- Init.withShaders dev
   (_, res) <-
     let vertextAttribute format location offset =
           Vk.zero
@@ -873,30 +825,6 @@ createPipeline dev extent layout = do
             ::& dynamicRendering :& ()
      in managed $ Vk.withGraphicsPipelines dev Vk.zero [Vk.SomeStruct pipelineCreateInfo] Nothing bracket
   return $ V.head res
-
--- TODO: break into two functions
-createShaders ::
-  Vk.Device ->
-  Managed (Vk.SomeStruct Vk.PipelineShaderStageCreateInfo, Vk.SomeStruct Vk.PipelineShaderStageCreateInfo)
-createShaders dev =
-  do
-    fragCode <- liftIO $ BS.readFile "out/frag.spv"
-    vertCode <- liftIO $ BS.readFile "out/vert.spv"
-    fragModule <- managed $ Vk.withShaderModule dev Vk.zero {VkShaderModuleCreateInfo.code = fragCode} Nothing bracket
-    vertModule <- managed $ Vk.withShaderModule dev Vk.zero {VkShaderModuleCreateInfo.code = vertCode} Nothing bracket
-    let vertextInfo =
-          Vk.zero
-            { VkPipelineShaderStageCreateInfo.stage = Vk.SHADER_STAGE_VERTEX_BIT,
-              VkPipelineShaderStageCreateInfo.module' = vertModule,
-              VkPipelineShaderStageCreateInfo.name = "main"
-            }
-        fragInfo =
-          Vk.zero
-            { VkPipelineShaderStageCreateInfo.stage = Vk.SHADER_STAGE_FRAGMENT_BIT,
-              VkPipelineShaderStageCreateInfo.module' = fragModule,
-              VkPipelineShaderStageCreateInfo.name = "main"
-            }
-    pure (Vk.SomeStruct vertextInfo, Vk.SomeStruct fragInfo)
 
 clearColor :: Vk.ClearValue
 clearColor = Vk.Color (Vk.Float32 1.0 0.0 1.0 0)

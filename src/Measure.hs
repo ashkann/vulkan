@@ -8,6 +8,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StrictData #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ViewPatterns #-}
@@ -33,6 +34,10 @@ module Measure
     transform,
     WindowSize,
     mkWindowSize,
+    topLeft,
+    topRight,
+    bottomLeft,
+    bottomRight,
   )
 where
 
@@ -149,23 +154,38 @@ localPosToNdc (WithVec w h) (WithVec ox oy) (WithVec x y) =
   where
     localToNdc ndcWidth factor x = x - ndcWidth * factor
 
-class Normalized u where
-  topLeft :: u
-  topRight :: u
-  bottomLeft :: u
-  bottomRight :: u
-  center :: u
+class (Vec u) => Normalized u where
+  top :: Element u
+  left :: Element u
+  bottom :: Element u
+  right :: Element u
+
+-- center :: u
+
+topLeft :: forall u. (Normalized u) => u
+topLeft = vec (left @u) (top @u)
+
+topRight :: forall u. (Normalized u) => u
+topRight = vec (left @u) (top @u)
+
+bottomLeft :: forall u. (Normalized u) => u
+bottomLeft = vec (left @u) (bottom @u)
+
+bottomRight :: forall u. (Normalized u) => u
+bottomRight = vec (right @u) (bottom @u)
 
 instance Normalized NDCVec where
-  topLeft = vec (-1.0) (-1.0)
-  topRight = vec 1.0 (-1.0)
-  bottomLeft = vec (-1.0) 1.0
-  bottomRight = vec 1.0 1.0
-  center = vec 0.0 0.0
+  top = -1.0
+  left = -1.0
+  bottom = 1.0
+  right = 1.0
+
+-- center = vec 0.0 0.0
 
 instance Normalized LocalVec where
-  topLeft = vec 0.0 0.0
-  topRight = vec 1.0 0.0
-  bottomLeft = vec 0.0 1.0
-  bottomRight = vec 1.0 1.0
-  center = vec 0.5 0.5
+  top = 0
+  left = 0
+  right = 1
+  bottom = 1
+
+-- center = vec 0.5 0.5

@@ -18,7 +18,7 @@ import Data.Map.Strict qualified as Map (fromList)
 import Language.C.Inline qualified as C
 import Language.C.Inline.Context qualified as C
 import Language.C.Types qualified as C
-import Vulkan qualified as Vk
+import qualified Vulkan as Vk
 import Prelude hiding (init)
 
 vulkanTypesTable :: C.TypesTable

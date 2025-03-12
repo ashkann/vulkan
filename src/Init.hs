@@ -6,6 +6,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE NoFieldSelectors #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Init
   ( pickGPU,
@@ -15,6 +16,8 @@ module Init
     withSwapChain,
     withDevice,
     QueueFamilyIndex (..),
+    withMemoryAllocator,
+    withShaders,
   )
 where
 
@@ -30,28 +33,30 @@ import Data.Text (unpack)
 import Data.Text.Encoding (decodeUtf8)
 import qualified Data.Vector as V
 import Data.Word (Word32)
-import qualified Measure
+import Foreign.Ptr (castFunPtr)
 import Measure
 import Utils
 import qualified Vulkan as Ft (PhysicalDeviceVulkan12Features (..))
 import qualified Vulkan as Vk
+import qualified Vulkan as VkDevice (Device (..))
 import qualified Vulkan as VkDeviceCreateInfo (DeviceCreateInfo (..))
 import qualified Vulkan as VkDeviceQueueCreateInfo (DeviceQueueCreateInfo (..))
+import qualified Vulkan as VkInstance (Instance (..))
 import qualified Vulkan as VkPhysicalDeviceDynamicRenderingFeatures (PhysicalDeviceDynamicRenderingFeatures (..))
 import qualified Vulkan as VkPhysicalDeviceFeatures2 (PhysicalDeviceFeatures2 (..))
 import qualified Vulkan as VkPhysicalDeviceVulkan12Features (PhysicalDeviceVulkan12Features (..))
+import qualified Vulkan as VkPipelineShaderStageCreateInfo (PipelineShaderStageCreateInfo (..))
+import qualified Vulkan as VkShaderModuleCreateInfo (ShaderModuleCreateInfo (..))
 import qualified Vulkan as VkSurfaceCaps (SurfaceCapabilitiesKHR (..))
 import qualified Vulkan as VkSurfaceFormat (SurfaceFormatKHR (..))
 import qualified Vulkan as VkSwapchainCreateInfo (SwapchainCreateInfoKHR (..))
 import Vulkan.CStruct.Extends (pattern (:&), pattern (::&))
 import qualified Vulkan.CStruct.Extends as Vk
+import qualified Vulkan.Dynamic as Vk
 import qualified Vulkan.Zero as Vk
-import Prelude hiding (init)
-import qualified Geomancy as G
-
--- import Vulkan.CStruct.Extends ((:&),(::&))
-
--- newtype QueueFamilyIndex = QueueFamilyIndex Word32
+import qualified VulkanMemoryAllocator as Vma
+import qualified VulkanMemoryAllocator as VmaAllocatorCreateInfo (AllocatorCreateInfo (..))
+import qualified Data.ByteString  as BS (readFile)
 
 presentMode :: Vk.PresentModeKHR
 presentMode = Vk.PRESENT_MODE_FIFO_KHR
@@ -257,3 +262,46 @@ withDevice gpu (QueueFamilyIndex gfx) (QueueFamilyIndex present) portability =
           { VkDeviceQueueCreateInfo.queueFamilyIndex = i,
             VkDeviceQueueCreateInfo.queuePriorities = [1.0]
           }
+
+withMemoryAllocator :: Vk.Instance -> Vk.PhysicalDevice -> Vk.Device -> Managed Vma.Allocator
+withMemoryAllocator vulkan gpu device =
+  let insanceCmds = VkInstance.instanceCmds vulkan
+      deviceCmds = VkDevice.deviceCmds device
+      info =
+        Vk.zero
+          { VmaAllocatorCreateInfo.vulkanApiVersion = vulkanVersion,
+            VmaAllocatorCreateInfo.instance' = Vk.instanceHandle vulkan,
+            VmaAllocatorCreateInfo.physicalDevice = Vk.physicalDeviceHandle gpu,
+            VmaAllocatorCreateInfo.device = Vk.deviceHandle device,
+            VmaAllocatorCreateInfo.vulkanFunctions =
+              Just $
+                Vk.zero
+                  { Vma.vkGetInstanceProcAddr = castFunPtr $ Vk.pVkGetInstanceProcAddr insanceCmds,
+                    Vma.vkGetDeviceProcAddr = castFunPtr $ Vk.pVkGetDeviceProcAddr deviceCmds
+                  }
+          }
+   in managed $ Vma.withAllocator info bracket
+
+-- TODO: break into two functions
+withShaders ::
+  Vk.Device ->
+  Managed (Vk.SomeStruct Vk.PipelineShaderStageCreateInfo, Vk.SomeStruct Vk.PipelineShaderStageCreateInfo)
+withShaders dev =
+  do
+    fragCode <- liftIO $ BS.readFile "out/frag.spv" -- TODO: hardcoded
+    vertCode <- liftIO $ BS.readFile "out/vert.spv" -- TODO: hardcoded
+    fragModule <- managed $ Vk.withShaderModule dev Vk.zero {VkShaderModuleCreateInfo.code = fragCode} Nothing bracket
+    vertModule <- managed $ Vk.withShaderModule dev Vk.zero {VkShaderModuleCreateInfo.code = vertCode} Nothing bracket
+    let vertextInfo =
+          Vk.zero
+            { VkPipelineShaderStageCreateInfo.stage = Vk.SHADER_STAGE_VERTEX_BIT,
+              VkPipelineShaderStageCreateInfo.module' = vertModule,
+              VkPipelineShaderStageCreateInfo.name = "main"
+            }
+        fragInfo =
+          Vk.zero
+            { VkPipelineShaderStageCreateInfo.stage = Vk.SHADER_STAGE_FRAGMENT_BIT,
+              VkPipelineShaderStageCreateInfo.module' = fragModule,
+              VkPipelineShaderStageCreateInfo.name = "main"
+            }
+    pure (Vk.SomeStruct vertextInfo, Vk.SomeStruct fragInfo)

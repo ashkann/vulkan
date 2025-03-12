@@ -21,7 +21,7 @@ import Foreign qualified as F
 import Language.C.Inline qualified as C
 import Language.C.Inline.Cpp qualified as Cpp
 import Utils (say, sayErr)
-import Vulkan qualified as Vk
+import qualified Vulkan as Vk
 import Prelude hiding (init)
 
 C.context (Cpp.cppCtx <> C.funCtx <> vulkanCtx)

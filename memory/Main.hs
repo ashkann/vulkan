@@ -99,10 +99,10 @@ instance Storable Viewport where
   peek = Store.peek viewportStore
   poke = Store.poke viewportStore
 
-frameData :: World -> Camera -> FrameData
-frameData world cam =
+frameData :: World -> FrameData
+frameData world =
   FrameData
-    { verts = mconcat $ (`renderSpriteInWorld` cam) <$> sprites world cam,
+    { verts = mconcat $ (`renderSpriteInWorld` world.camera) <$> sprites world,
       viewport = Viewport {viewportSize = let WithVec w h = windowSize in G.uvec2 w h, _padding = 0} -- TODO: remove _padding = 0
     }
 
@@ -180,12 +180,11 @@ main = runManaged $ do
       lightBufferSize = 1024
   frames <- withFrames device gfx.index allocator stagingBufferSize vertexBufferSize lightBufferSize frameCount
   w0 <- liftIO $ world0 atlas
-  let camera = Camera {position = vec 0 0, rotation = pi / 4, zoom = 1.5} -- TODO: too rigid
   let shutdown = say "Engine" "Shutting down ..." *> Vk.deviceWaitIdle device
    in say "Engine" "Entering the main loop"
         *> mainLoop
           shutdown
-          (`frameData` camera)
+          frameData
           ( \frameNumber frameData ->
               do
                 let n = frameNumber `mod` frameCount
@@ -254,11 +253,12 @@ data GridStuff = GridStuff
   }
 
 data World = World
-  { pointerPosition :: PixelVec,
+  { pointer :: PixelVec,
     atlas :: Atlas.Atlas,
     grid :: Grid,
     gridStuff :: GridStuff,
-    cardSize :: WorldVec
+    cardSize :: WorldVec,
+    camera :: Camera
   }
 
 mkSuffeledDeck :: Int -> IO (V.Vector CardName)
@@ -291,7 +291,7 @@ world0 atlas = do
   let faceDown = Tex.putInWorld (Atlas.sprite atlas "back-side")
    in return $
         World
-          { pointerPosition = vec 0 0,
+          { pointer = vec 0 0,
             atlas = atlas,
             grid = mkGrid (V.toList deck),
             gridStuff =
@@ -299,7 +299,8 @@ world0 atlas = do
                 { topLeft = vec 0.5 0.5,
                   padding = vec 0.2 0.2
                 },
-            cardSize = vec 1.0 1.0
+            cardSize = vec 1.0 1.0,
+            camera = Camera {position = vec 0 0, rotation = 0, zoom = 1}
           }
 
 data FrameData = FrameData
@@ -497,30 +498,26 @@ mainLoop shutdown frameData frame worldTime worldEvent w0 =
           go (n + 1) t2 w3
 
 worldEvent :: (Monad io) => SDL.Event -> World -> io World
-worldEvent e w@(World {grid, gridStuff, pointerPosition, cardSize}) = return w
-
--- return $
---   let ndcPointerPosition = pixelPosToNdc pointerPosition windowSize
---       w1 = w {grid = if mouseClicked then flip ndcPointerPosition else grid, pointerPosition = fromMaybe w.pointerPosition mouseMoved}
---    in w1
--- where
---   posInWorld pos = pixelPosToWorld pos cam
---   flip pos
---     | Just spot <- spot pos = gridFlip spot grid
---     | otherwise = grid
---   spot pos =
---     let WithVec x y = -gridStuff.topLeft + posInWorld pos
---         WithVec px py = gridStuff.padding
---         WithVec w h = cardSize
---         r = floor $ (y + 1) / (h + px)
---         c = floor $ (x + 1) / (w + py)
---      in Just (Spot (Row r, Column c))
---   mouseClicked
---     | SDL.Event _ (SDL.MouseButtonEvent (SDL.MouseButtonEventData _ SDL.Released _ SDL.ButtonLeft _ _)) <- e = True
---     | otherwise = False
---   mouseMoved
---     | (SDL.Event _ (SDL.MouseMotionEvent (SDL.MouseMotionEventData {mouseMotionEventPos = SDL.P (SDL.V2 x y)}))) <- e = Just $ vec (fromIntegral x) (fromIntegral y)
---     | otherwise = Nothing
+worldEvent e w@(World {grid, gridStuff, pointer, cardSize, camera}) = return w {grid = grid', pointer = pointer'}
+  where
+    grid' = let ndcPointerPosition = pixelPosToNdc pointer windowSize in if mouseClicked then flip ndcPointerPosition else grid
+    pointer' = fromMaybe w.pointer mouseMoved
+    flip pos
+      | Just spot <- spot pos = gridFlip spot grid
+      | otherwise = grid
+    spot pos =
+      let WithVec x y = -gridStuff.topLeft + pixPosToWorld camera pointer
+          WithVec px py = gridStuff.padding
+          WithVec w h = cardSize
+          r = floor $ (y + 1) / (h + px)
+          c = floor $ (x + 1) / (w + py)
+       in Just (Spot (Row r, Column c))
+    mouseClicked
+      | SDL.Event _ (SDL.MouseButtonEvent (SDL.MouseButtonEventData _ SDL.Released _ SDL.ButtonLeft _ _)) <- e = True
+      | otherwise = False
+    mouseMoved
+      | (SDL.Event _ (SDL.MouseMotionEvent (SDL.MouseMotionEventData {mouseMotionEventPos = SDL.P (SDL.V2 x y)}))) <- e = Just $ vec (fromIntegral x) (fromIntegral y)
+      | otherwise = Nothing
 
 gridFlip :: Spot -> Grid -> Grid
 gridFlip spot (Grid m) = Grid $ Map.adjust cardFlip spot m
@@ -548,30 +545,35 @@ worldSize (WithVec w h) (PPU ppu) =
       y = fromIntegral h / ppu
    in vec x y
 
-worldToCam :: Camera -> WindowSize -> PPU -> G.Transform
-worldToCam cam (WithVec w h) (PPU ppu) =
+worldToNDC :: Camera -> WindowSize -> PPU -> G.Transform
+worldToNDC cam (WithVec w h) (PPU ppu) =
   let WithVec x y = cam.position
       r = cam.rotation
       sx = (ppu / fromIntegral w) * cam.zoom
       sy = (ppu / fromIntegral h) * cam.zoom
-   in G.translate (-x) (-y) 0 <> G.rotateZ (-r) <> G.scaleXY sx (-sy)
+   in G.scaleXY sx (-sy) <> G.rotateZ (-r) <> G.translate (-x) (-y) 0
 
 -- TODO:
 pixToWorld :: Camera -> WindowSize -> PPU -> G.Transform
 pixToWorld cam (WithVec w h) (PPU ppu) =
   let WithVec x y = cam.position
+      w2 = (fromIntegral w / 2) / ppu
+      h2 = (fromIntegral h / 2) / ppu
       r = cam.rotation
-      sx = (fromIntegral w / ppu) * cam.zoom
-      sy = (fromIntegral h / ppu) * cam.zoom
-   in G.translate x y 0 <> G.rotateZ r <> G.scaleXY sx (-sy)
+      sx = cam.zoom / ppu
+      sy = cam.zoom / ppu
+   in G.scaleXY sx (-sy) <> G.rotateZ r <> G.translate (x - w2) (y + h2) 0
+
+pixPosToWorld :: Camera -> PixelVec -> WorldVec
+pixPosToWorld cam pos = let G.WithVec2 x y = tr pos (pixToWorld cam windowSize ppu) in vec x y
 
 -- TODO: the tranform should be inside the SpriteInWorld
-sprites :: World -> Camera -> [Tex.SpriteInWorld]
-sprites World {atlas, grid, gridStuff, pointerPosition, cardSize} cam =
-  grd grid ++ maybeToList (highlight <$> spot pointerPosInWorld) ++ [pointer]
+sprites :: World -> [Tex.SpriteInWorld]
+sprites World {atlas, grid, gridStuff, pointer, cardSize, camera} =
+  grd grid ++ maybeToList (highlight <$> spot pointerWorld) ++ [pointerInWorld]
   where
-    pointer = putInWorld (Atlas.sprite atlas "pointer") pointerPosInWorld
-    pointerPosInWorld = let G.WithVec2 x y = tr pointerPosition (pixToWorld cam windowSize ppu) in vec x y
+    pointerWorld = pixPosToWorld camera pointer
+    pointerInWorld = putInWorld (Atlas.sprite atlas "pointer") pointerWorld
     spot pos =
       let WithVec x y = pos - gridStuff.topLeft
           WithVec w h = cardSize
@@ -581,7 +583,7 @@ sprites World {atlas, grid, gridStuff, pointerPosition, cardSize} cam =
        in if (0 <= r && r <= 5) && (0 <= c && c <= 5) then Just (Spot (Row r, Column c)) else Nothing -- TODO: hardcoded "5"
     grd (Grid m) = uncurry putAt <$> Map.toList m
     highlight spot =
-      let border = putInWorld (Atlas.sprite atlas "border") pointerPosInWorld
+      let border = putInWorld (Atlas.sprite atlas "border") pointerWorld
        in -- tr = transform $ pos spot + (topLeft :: NDCVec)
           border
       where
@@ -638,7 +640,7 @@ renderSpriteInWorld
       vertext xy uv = Vert.Vertex xy uv sprite.texture
       tr2 = G.translate x y 0 <> G.rotateZ rotation <> G.scaleXY sx sy
       worldToNdc (G.WithVec2 x y) =
-        let G.WithVec2 x' y' = tr @WorldVec (vec x y) (worldToCam cam windowSize ppu) in vec x' y' :: NDCVec
+        let G.WithVec2 x' y' = tr @WorldVec (vec x y) (worldToNDC cam windowSize ppu) in vec x' y' :: NDCVec
 
 descriptorSetLayout :: Vk.Device -> Word32 -> Managed Vk.DescriptorSetLayout
 descriptorSetLayout dev count = do

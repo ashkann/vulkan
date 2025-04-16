@@ -44,3 +44,12 @@ Generate the atlas
 - [ ] Think about bloom and glow effects
 - [ ] Suuport multiple light sources
 - [ ] 2D global illumination
+
+## Spaces and coordinate systems
+### Ashkan
+To convert coordinates `(xs, ys)` from `S` to `(xt, yt)` in `T`, the `T` should be defined in reference to `S`. 
+
+### Screen space
+(0,0) is the top left corner of the screen, (width, height) is the bottom right corner of the screen.
+
+

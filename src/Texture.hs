@@ -10,12 +10,14 @@ module Texture
   ( Texture (..),
     DescriptorIndex,
     Sprite (..),
+    SpriteInWorld (..),
     fromRGBA8PngFile,
     bind,
     withHostBuffer,
     withImageView,
     withImage,
     withImageAndView,
+    putInWorld,
   )
 where
 
@@ -31,19 +33,21 @@ import Foreign (Ptr, castPtr, copyArray, withForeignPtr)
 import Foreign.Storable (Storable)
 import Measure
 import Utils
-import qualified Vulkan as Vk
-import qualified Vulkan as VkBufferCreateInfo (BufferCreateInfo (..))
-import qualified Vulkan as VkDescriptorImageInfo (DescriptorImageInfo (..))
-import qualified Vulkan as VkExtent3D (Extent3D (..))
-import qualified Vulkan as VkImageCreateInfo (ImageCreateInfo (..))
-import qualified Vulkan as VkImageSubresourceRange (ImageSubresourceRange (..))
-import qualified Vulkan as VkImageViewCreateInfo (ImageViewCreateInfo (..))
-import qualified Vulkan as VkWriteDescriptorSet (WriteDescriptorSet (..))
+import Vulkan qualified as Vk
+import Vulkan qualified as VkBufferCreateInfo (BufferCreateInfo (..))
+import Vulkan qualified as VkDescriptorImageInfo (DescriptorImageInfo (..))
+import Vulkan qualified as VkExtent3D (Extent3D (..))
+import Vulkan qualified as VkImageCreateInfo (ImageCreateInfo (..))
+import Vulkan qualified as VkImageSubresourceRange (ImageSubresourceRange (..))
+import Vulkan qualified as VkImageViewCreateInfo (ImageViewCreateInfo (..))
+import Vulkan qualified as VkWriteDescriptorSet (WriteDescriptorSet (..))
 import Vulkan.CStruct.Extends qualified as Vk
 import Vulkan.Zero qualified as Vk
 import VulkanMemoryAllocator qualified as Vma
 import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCreateInfo (..))
 import Prelude hiding (init, lookup)
+import qualified Geomancy as G
+import qualified GHC.Base as G
 
 -- | TODO: remove the Texture and put everything into BoundTexture and rename it to Texture
 data Texture = Texture
@@ -57,12 +61,27 @@ data Texture = Texture
 
 newtype DescriptorIndex = DescriptorIndex Word32 deriving (Storable)
 
+-- TODO: move sprite to its own module
 data Sprite = Sprite
   { texture :: DescriptorIndex,
     region :: UVRegion,
-    size :: NDCVec,
-    origin :: LocalVec
+    resolution :: PixelVec
   }
+
+data SpriteInWorld = SpriteInWorld
+  { sprite :: Sprite,
+    origin :: LocalVec,
+    position :: WorldVec,
+    rotation :: Float,
+    scale :: G.Vec2
+  }
+
+-- | Put the sprite in the world with a given size.
+putInWorld ::
+  Sprite ->
+  WorldVec ->
+  SpriteInWorld
+putInWorld sprite pos = SpriteInWorld {sprite = sprite, position = pos, origin = vec 0 0, rotation = 0, scale = G.vec2 1 1}
 
 fromRGBA8PngFile :: Vma.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> FilePath -> Managed Vk.ImageView
 fromRGBA8PngFile allocator device pool queue path = do

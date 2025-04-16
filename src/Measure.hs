@@ -1,8 +1,10 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
@@ -18,9 +20,10 @@ module Measure
     NDCVec,
     UVVec,
     LocalVec,
+    WorldVec,
     Vec (..),
     PixelRegion (..),
-    UVRegion (..),
+    UVRegion,
     Normalized (..),
     pixelPosToNdc,
     pixelSizeToNdc,
@@ -38,6 +41,8 @@ module Measure
     topRight,
     bottomLeft,
     bottomRight,
+    pattern UVReg2,
+    center,
   )
 where
 
@@ -60,41 +65,60 @@ newtype LocalVec = LocalVec G.Vec2
 
 data WindowSize = WindowSize Word32 Word32 deriving (Show)
 
+newtype WorldVec = WorldVec G.Vec2 deriving (Show, Num)
+
 {-# COMPLETE WithVec #-}
 
 -- pattern WithVec :: Vec u => Element u -> Element u -> u
 pattern WithVec :: (Vec u) => Element u -> Element u -> u
 pattern WithVec x y <- (unVec -> (x, y))
 
-class Vec u where
-  type Element u :: Type
-  vec :: Element u -> Element u -> u
-  unVec :: u -> (Element u, Element u)
+class Vec v where
+  type Element v :: Type
+  vec :: Element v -> Element v -> v
+  unVec :: v -> (Element v, Element v)
+  homo :: v -> G.Vec3
+  tr :: v -> G.Transform -> G.Vec2
+  tr v t =
+    let G.WithVec3 x' y' _ = G.apply (homo v) t
+     in G.vec2 x' y'
 
 instance Vec PixelVec where
   type Element PixelVec = G.Element G.UVec2
   vec = coerce G.uvec2
   unVec (PixelVec v) = let G.WithUVec2 x y = v in (x, y)
+  homo (PixelVec (G.WithUVec2 x y)) = G.vec3 (fromIntegral x) (fromIntegral y) 1.0
 
 instance Vec NDCVec where
   type Element NDCVec = G.Element G.Vec2
   vec = coerce G.vec2
   unVec (NDCVec v) = let G.WithVec2 x y = v in (x, y)
+  homo (NDCVec (G.WithVec2 x y)) = G.vec3 x y 1.0
 
 instance Vec LocalVec where
   type Element LocalVec = G.Element G.Vec2
   vec = coerce G.vec2
   unVec (LocalVec v) = let G.WithVec2 x y = v in (x, y)
+  homo (LocalVec (G.WithVec2 x y)) = G.vec3 x y 1.0
 
 instance Vec UVVec where
   type Element UVVec = G.Element G.Vec2
   vec = coerce G.vec2
   unVec (UVVec v) = let G.WithVec2 x y = v in (x, y)
+  homo :: UVVec -> G.Vec3
+  homo (UVVec (G.WithVec2 x y)) = G.vec3 x y 1.0
 
 instance Vec WindowSize where
   type Element WindowSize = Word32
   vec = WindowSize
   unVec (WindowSize w h) = (w, h)
+  homo (WindowSize x y) = G.vec3 (fromIntegral x) (fromIntegral y) 1.0
+
+instance Vec WorldVec where
+  type Element WorldVec = G.Element G.Vec2
+  vec = coerce G.vec2
+  unVec (WorldVec v) = let G.WithVec2 x y = v in (x, y)
+  homo (WorldVec (G.WithVec2 x y)) = G.vec3 x y 1.0
 
 mkWindowSize :: Word32 -> Word32 -> Maybe WindowSize
 mkWindowSize w h
@@ -122,6 +146,19 @@ uvReg u1 v1 u2 v2 = UVRegion $ G.vec4 u1 v1 u2 v2
 pattern UVReg :: Float -> Float -> Float -> Float -> UVRegion -- TODO: make it bidirectional
 pattern UVReg u1 v1 u2 v2 <- UVRegion (G.WithVec4 u1 v1 u2 v2)
 
+{-# COMPLETE UVReg2 #-}
+
+pattern UVReg2 :: UVVec -> UVVec -> UVVec -> UVVec -> UVRegion
+pattern UVReg2 a b c d <- (uvRegCorners -> (a, b, c, d))
+
+uvRegCorners :: UVRegion -> (UVVec, UVVec, UVVec, UVVec)
+uvRegCorners (UVReg u1 v1 u2 v2) =
+  let a = vec u1 v1
+      b = vec u2 v1
+      c = vec u2 v2
+      d = vec u1 v2
+   in (a, b, c, d)
+
 class Transform a where
   transform :: a -> G.Transform
 
@@ -130,9 +167,9 @@ instance Transform NDCVec where
 
 pixelPosToTex :: PixelVec -> PixelVec -> UVVec
 pixelPosToTex (WithVec w h) (WithVec x y) =
-  let nx = fromIntegral x / fromIntegral w
-      ny = fromIntegral y / fromIntegral h
-   in vec nx ny
+  let u = fromIntegral x / fromIntegral w
+      v = fromIntegral y / fromIntegral h
+   in vec u v
 
 pixelPosToNdc :: PixelVec -> WindowSize -> NDCVec
 pixelPosToNdc (WithVec x y) (WithVec w h) =
@@ -146,9 +183,23 @@ pixelSizeToNdc (WithVec w h) (WithVec ww wh) =
       nh = fromIntegral h / fromIntegral wh
    in vec (nw * 2.0) (nh * 2.0)
 
-localPosToNdc :: NDCVec -> LocalVec -> UVVec -> NDCVec
-localPosToNdc (WithVec w h) (WithVec ox oy) (WithVec x y) =
-  let lx = localToNdc w ox x
+localPosToNdc :: NDCVec -> LocalVec -> LocalVec -> NDCVec
+localPosToNdc size origin position =
+  let (WithVec w h) = size
+      (WithVec ox oy) = origin
+      (WithVec x y) = position
+      lx = localToNdc w ox x
+      ly = localToNdc h oy y
+   in vec lx ly
+  where
+    localToNdc ndcWidth factor x = x - ndcWidth * factor
+
+localPosToNdc00 :: NDCVec -> LocalVec -> LocalVec -> NDCVec
+localPosToNdc00 size origin position =
+  let (WithVec w h) = size
+      (WithVec ox oy) = origin
+      (WithVec x y) = position
+      lx = localToNdc w ox x
       ly = localToNdc h oy y
    in vec lx ly
   where
@@ -159,8 +210,6 @@ class (Vec u) => Normalized u where
   left :: Element u
   bottom :: Element u
   right :: Element u
-
--- center :: u
 
 topLeft :: forall u. (Normalized u) => u
 topLeft = vec (left @u) (top @u)
@@ -173,6 +222,12 @@ bottomLeft = vec (left @u) (bottom @u)
 
 bottomRight :: forall u. (Normalized u) => u
 bottomRight = vec (right @u) (bottom @u)
+
+center :: forall u. (Fractional (Element u), Normalized u) => u
+center =
+  let x = (right @u) + (left @u) / 2
+      y = (top @u) + (bottom @u) / 2
+   in vec x y
 
 instance Normalized NDCVec where
   top = -1.0
@@ -188,4 +243,8 @@ instance Normalized LocalVec where
   right = 1
   bottom = 1
 
--- center = vec 0.5 0.5
+instance Normalized UVVec where
+  top = 0
+  left = 0
+  right = 1
+  bottom = 1

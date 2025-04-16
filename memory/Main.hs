@@ -13,6 +13,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StrictData #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE NoFieldSelectors #-}
 
@@ -41,6 +42,7 @@ import qualified Init
 import Measure
 import qualified SDL
 import qualified System.Random as Random
+import Texture (putInWorld)
 import qualified Texture as Tex
 import Utils
 import qualified Vertex as Vert
@@ -97,10 +99,10 @@ instance Storable Viewport where
   peek = Store.peek viewportStore
   poke = Store.poke viewportStore
 
-frameData :: World -> FrameData
-frameData world =
+frameData :: World -> Camera -> FrameData
+frameData world cam =
   FrameData
-    { verts = mconcat $ uncurry tranformSprite <$> sprites world,
+    { verts = mconcat $ (`renderSpriteInWorld` cam) <$> sprites world cam,
       viewport = Viewport {viewportSize = let WithVec w h = windowSize in G.uvec2 w h, _padding = 0} -- TODO: remove _padding = 0
     }
 
@@ -178,11 +180,12 @@ main = runManaged $ do
       lightBufferSize = 1024
   frames <- withFrames device gfx.index allocator stagingBufferSize vertexBufferSize lightBufferSize frameCount
   w0 <- liftIO $ world0 atlas
+  let camera = Camera {position = vec 0 0, rotation = pi / 4, zoom = 1.5} -- TODO: too rigid
   let shutdown = say "Engine" "Shutting down ..." *> Vk.deviceWaitIdle device
    in say "Engine" "Entering the main loop"
         *> mainLoop
           shutdown
-          frameData
+          (`frameData` camera)
           ( \frameNumber frameData ->
               do
                 let n = frameNumber `mod` frameCount
@@ -246,18 +249,16 @@ data Card = Card CardName Face
 newtype Grid = Grid (Map.Map Spot Card)
 
 data GridStuff = GridStuff
-  { top :: Float,
-    left :: Float,
-    hPadding :: Float,
-    vPadding :: Float,
-    cardSize :: NDCVec
+  { topLeft :: WorldVec,
+    padding :: WorldVec
   }
 
 data World = World
   { pointerPosition :: PixelVec,
     atlas :: Atlas.Atlas,
     grid :: Grid,
-    gridStuff :: GridStuff
+    gridStuff :: GridStuff,
+    cardSize :: WorldVec
   }
 
 mkSuffeledDeck :: Int -> IO (V.Vector CardName)
@@ -287,7 +288,7 @@ mkGrid deck = Grid . Map.fromList $ zipWith f spots deck
 world0 :: (MonadIO io) => Atlas.Atlas -> io World
 world0 atlas = do
   deck <- liftIO $ mkSuffeledDeck 18
-  let faceDown = Atlas.sprite atlas "back-side" topLeft windowSize
+  let faceDown = Tex.putInWorld (Atlas.sprite atlas "back-side")
    in return $
         World
           { pointerPosition = vec 0 0,
@@ -295,12 +296,10 @@ world0 atlas = do
             grid = mkGrid (V.toList deck),
             gridStuff =
               GridStuff
-                { top = 0.05,
-                  left = 0.05,
-                  hPadding = 0.02,
-                  vPadding = 0.02,
-                  cardSize = faceDown.size
-                }
+                { topLeft = vec 0.5 0.5,
+                  padding = vec 0.2 0.2
+                },
+            cardSize = vec 1.0 1.0
           }
 
 data FrameData = FrameData
@@ -339,8 +338,8 @@ frame device gfxQueue presentQueue pipeline pipelineLayout swp descSet f frameDa
       FrameData {verts, viewport = viewport'} = frameData
       (swapchain, swapchainExtent, swapchainImages) = swp
   waitForFrame device f
-  liftIO $ copyToGpu2 device pool gfxQueue viewport staging viewport'
-  liftIO $ copyToGpu device pool gfxQueue vertex staging verts
+  liftIO $ Utils.copyToGpu2 device pool gfxQueue viewport staging viewport'
+  liftIO $ Utils.copyToGpu device pool gfxQueue vertex staging verts
   -- say "Global light" $ show viewport'.globalLight
   recordRender renderCmd vertex light viewport (targetImage, targetView) swapchainExtent (fromIntegral $ SV.length verts)
   index <- Vk.acquireNextImageKHR device swapchain maxBound imageAvailable Vk.zero >>= \(r, index) -> checkSwapchainIsOld r $> index
@@ -498,27 +497,30 @@ mainLoop shutdown frameData frame worldTime worldEvent w0 =
           go (n + 1) t2 w3
 
 worldEvent :: (Monad io) => SDL.Event -> World -> io World
-worldEvent e w@(World {grid = grid, gridStuff = gridStuff, pointerPosition = pointerPosition}) =
-  return $
-    let ndcPointerPosition = pixelPosToNdc pointerPosition windowSize
-        w1 = w {grid = if mouseClicked then flip ndcPointerPosition else grid, pointerPosition = fromMaybe w.pointerPosition mouseMoved}
-     in w1
-  where
-    flip pos
-      | Just spot <- spot pos = gridFlip spot grid
-      | otherwise = grid
-    spot pos =
-      let WithVec x y = vec (-gridStuff.left) (-gridStuff.top) + pos
-          WithVec w h = gridStuff.cardSize
-          r = floor $ (y + 1) / (h + gridStuff.vPadding)
-          c = floor $ (x + 1) / (w + gridStuff.hPadding)
-       in Just (Spot (Row r, Column c))
-    mouseClicked
-      | SDL.Event _ (SDL.MouseButtonEvent (SDL.MouseButtonEventData _ SDL.Released _ SDL.ButtonLeft _ _)) <- e = True
-      | otherwise = False
-    mouseMoved
-      | (SDL.Event _ (SDL.MouseMotionEvent (SDL.MouseMotionEventData {mouseMotionEventPos = SDL.P (SDL.V2 x y)}))) <- e = Just $ vec (fromIntegral x) (fromIntegral y)
-      | otherwise = Nothing
+worldEvent e w@(World {grid, gridStuff, pointerPosition, cardSize}) = return w
+
+-- return $
+--   let ndcPointerPosition = pixelPosToNdc pointerPosition windowSize
+--       w1 = w {grid = if mouseClicked then flip ndcPointerPosition else grid, pointerPosition = fromMaybe w.pointerPosition mouseMoved}
+--    in w1
+-- where
+--   posInWorld pos = pixelPosToWorld pos cam
+--   flip pos
+--     | Just spot <- spot pos = gridFlip spot grid
+--     | otherwise = grid
+--   spot pos =
+--     let WithVec x y = -gridStuff.topLeft + posInWorld pos
+--         WithVec px py = gridStuff.padding
+--         WithVec w h = cardSize
+--         r = floor $ (y + 1) / (h + px)
+--         c = floor $ (x + 1) / (w + py)
+--      in Just (Spot (Row r, Column c))
+--   mouseClicked
+--     | SDL.Event _ (SDL.MouseButtonEvent (SDL.MouseButtonEventData _ SDL.Released _ SDL.ButtonLeft _ _)) <- e = True
+--     | otherwise = False
+--   mouseMoved
+--     | (SDL.Event _ (SDL.MouseMotionEvent (SDL.MouseMotionEventData {mouseMotionEventPos = SDL.P (SDL.V2 x y)}))) <- e = Just $ vec (fromIntegral x) (fromIntegral y)
+--     | otherwise = Nothing
 
 gridFlip :: Spot -> Grid -> Grid
 gridFlip spot (Grid m) = Grid $ Map.adjust cardFlip spot m
@@ -533,70 +535,110 @@ worldTime _ = return
 windowSize :: WindowSize
 windowSize = vec 1000 700
 
-sprites :: World -> [(Tex.Sprite, G.Transform)]
-sprites World {atlas, grid, gridStuff, pointerPosition} =
-  grd grid ++ maybeToList (highlight <$> spot pointerPos) ++ [(pointer, transform pointerPos)]
+ppu :: PPU
+ppu = PPU 50
+
+data Camera = Camera {position :: WorldVec, rotation :: Float, zoom :: Float}
+
+newtype PPU = PPU Float
+
+worldSize :: PixelVec -> PPU -> WorldVec
+worldSize (WithVec w h) (PPU ppu) =
+  let x = fromIntegral w / ppu
+      y = fromIntegral h / ppu
+   in vec x y
+
+worldToCam :: Camera -> WindowSize -> PPU -> G.Transform
+worldToCam cam (WithVec w h) (PPU ppu) =
+  let WithVec x y = cam.position
+      r = cam.rotation
+      sx = (ppu / fromIntegral w) * cam.zoom
+      sy = (ppu / fromIntegral h) * cam.zoom
+   in G.translate (-x) (-y) 0 <> G.rotateZ (-r) <> G.scaleXY sx (-sy)
+
+-- TODO:
+pixToWorld :: Camera -> WindowSize -> PPU -> G.Transform
+pixToWorld cam (WithVec w h) (PPU ppu) =
+  let WithVec x y = cam.position
+      r = cam.rotation
+      sx = (fromIntegral w / ppu) * cam.zoom
+      sy = (fromIntegral h / ppu) * cam.zoom
+   in G.translate x y 0 <> G.rotateZ r <> G.scaleXY sx (-sy)
+
+-- TODO: the tranform should be inside the SpriteInWorld
+sprites :: World -> Camera -> [Tex.SpriteInWorld]
+sprites World {atlas, grid, gridStuff, pointerPosition, cardSize} cam =
+  grd grid ++ maybeToList (highlight <$> spot pointerPosInWorld) ++ [pointer]
   where
-    pointer = Atlas.sprite atlas "pointer" topLeft windowSize
-    pointerPos = pixelPosToNdc pointerPosition windowSize
+    pointer = putInWorld (Atlas.sprite atlas "pointer") pointerPosInWorld
+    pointerPosInWorld = let G.WithVec2 x y = tr pointerPosition (pixToWorld cam windowSize ppu) in vec x y
     spot pos =
-      let WithVec x y = vec (-gridStuff.left) (-gridStuff.top) + pos
-          WithVec w h = gridStuff.cardSize
-          r = floor $ (y + 1) / (h + gridStuff.vPadding)
-          c = floor $ (x + 1) / (w + gridStuff.hPadding)
+      let WithVec x y = pos - gridStuff.topLeft
+          WithVec w h = cardSize
+          WithVec px py = gridStuff.padding
+          r = floor $ (y + 1) / (h + px)
+          c = floor $ (x + 1) / (w + py)
        in if (0 <= r && r <= 5) && (0 <= c && c <= 5) then Just (Spot (Row r, Column c)) else Nothing -- TODO: hardcoded "5"
     grd (Grid m) = uncurry putAt <$> Map.toList m
     highlight spot =
-      let tr = transform $ pos spot + (topLeft :: NDCVec)
-          sprite = border
-       in (sprite, tr)
+      let border = putInWorld (Atlas.sprite atlas "border") pointerPosInWorld
+       in -- tr = transform $ pos spot + (topLeft :: NDCVec)
+          border
       where
-        GridStuff {top, left, hPadding, vPadding} = gridStuff
-        pos (Spot (Row r, Column c)) = vec (fromIntegral c * (w + hPadding) + left) (fromIntegral r * (h + vPadding) + top)
-        border = Atlas.sprite atlas "border" topLeft windowSize
-        WithVec w h = faceDown.size
-    putAt spot crd =
-      let position = pos spot + (topLeft :: NDCVec)
-          tr = transform position
-          sprite = card crd
-       in (sprite, tr)
+        GridStuff {topLeft = WithVec top left, padding = WithVec hPadding vPadding} = gridStuff
+        WithVec w h = cardSize
+    putAt spot crd = putInWorld (card crd) (pos spot)
       where
-        card (Card (CardName name) FaceUp) = Atlas.sprite atlas name topLeft windowSize
+        pos (Spot (Row r, Column c)) = vec (fromIntegral c * (w + hPadding) + left) (fromIntegral r * (h + vPadding) + top) :: WorldVec
+
+        card (Card (CardName name) FaceUp) = Atlas.sprite atlas name
         card (Card _ FaceDown) = faceDown
-        GridStuff {top, left, hPadding, vPadding} = gridStuff
-        pos (Spot (Row r, Column c)) = vec (fromIntegral c * (w + hPadding) + left) (fromIntegral r * (h + vPadding) + top)
-        WithVec w h = faceDown.size
-    faceDown = Atlas.sprite atlas "back-side" topLeft windowSize
+        GridStuff {topLeft = WithVec top left, padding = WithVec hPadding vPadding} = gridStuff
+        -- pos2 (Spot (Row r, Column c)) = vec (fromIntegral c * (w + hPadding) + left) (fromIntegral r * (h + vPadding) + top)
+        WithVec w h = cardSize
+    faceDown = Atlas.sprite atlas "back-side"
 
 -- pos :: Object s -> Measure.NormalizedDevicePosition
 
-tranformSprite :: Tex.Sprite -> G.Transform -> SV.Vector Vert.Vertex
-tranformSprite
-  (Tex.Sprite {texture = tex, region = UVReg u1 v1 u2 v2, size = size@(WithVec w h), origin = org})
-  tr =
-    let a = localPosToNdc size org (vec 0 0) -- TODO: improve ndc (0,0)
-        WithVec x y = a
-        b = vec (x + w) y
-        c = vec (x + w) (y + h)
-        d = vec x (y + h)
-        uva = vec u1 v1
-        uvb = vec u2 v1
-        uvc = vec u2 v2
-        uvd = vec u1 v2
-        topLeft = Vert.Vertex (transform a) uva tex
-        topRight = Vert.Vertex (transform b) uvb tex
-        bottomRight = Vert.Vertex (transform c) uvc tex
-        bottomLeft = Vert.Vertex (transform d) uvd tex
-     in SV.fromList
-          [ topLeft,
-            topRight,
-            bottomRight,
-            bottomRight,
-            bottomLeft,
-            topLeft
-          ]
+data WorldRegion = WorldRegion {x1 :: Float, y1 :: Float, x2 :: Float, y2 :: Float}
+
+-- | TODO: implement
+cameraView :: Camera -> WorldRegion
+cameraView cam = WorldRegion 0 0 100 100
+
+-- | TODO: implement
+spriteBoundingBox :: Tex.SpriteInWorld -> WorldRegion
+spriteBoundingBox spw = WorldRegion 1 1 1 1
+
+-- | TODO: implement
+regionsOverlap :: WorldRegion -> WorldRegion -> Bool
+regionsOverlap (WorldRegion ax1 ay1 ax2 ay2) (WorldRegion bx1 by1 bx2 by2) = True
+
+isSpriteInWorldVisible :: Tex.SpriteInWorld -> Camera -> Bool
+isSpriteInWorldVisible spw cam =
+  let spriteRegion = spriteBoundingBox spw
+      cameraRegion = cameraView cam
+   in regionsOverlap spriteRegion cameraRegion
+
+renderSpriteInWorld :: Tex.SpriteInWorld -> Camera -> SV.Vector Vert.Vertex
+renderSpriteInWorld
+  spw@(Tex.SpriteInWorld {sprite, position = (WithVec x y), rotation, scale = (G.WithVec2 sx sy)})
+  cam =
+    if isSpriteInWorldVisible spw cam
+      then
+        let WithVec w h = worldSize sprite.resolution ppu
+            UVReg2 auv buv cuv duv = sprite.region
+            a = let xy = (vec x y :: WorldVec) in vertext (worldToNdc (tr xy tr2)) auv -- top left
+            b = let xy = (vec (x + w) y :: WorldVec) in vertext (worldToNdc (tr xy tr2)) buv -- top right
+            c = let xy = (vec (x + w) (y - h) :: WorldVec) in vertext (worldToNdc (tr xy tr2)) cuv -- bottom right
+            d = let xy = (vec x (y - h) :: WorldVec) in vertext (worldToNdc (tr xy tr2)) duv -- bottom left
+         in SV.fromList [a, b, c, c, d, a]
+      else SV.empty
     where
-      transform (WithVec x y) = let G.WithVec3 x2 y2 _ = G.apply (G.vec3 x y 1) tr in vec x2 y2
+      vertext xy uv = Vert.Vertex xy uv sprite.texture
+      tr2 = G.translate x y 0 <> G.rotateZ rotation <> G.scaleXY sx sy
+      worldToNdc (G.WithVec2 x y) =
+        let G.WithVec2 x' y' = tr @WorldVec (vec x y) (worldToCam cam windowSize ppu) in vec x' y' :: NDCVec
 
 descriptorSetLayout :: Vk.Device -> Word32 -> Managed Vk.DescriptorSetLayout
 descriptorSetLayout dev count = do

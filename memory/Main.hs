@@ -300,7 +300,7 @@ world0 atlas = do
                   padding = vec 0.2 0.2
                 },
             cardSize = vec 1.0 1.0,
-            camera = Camera {position = vec 0 0, rotation = 0, zoom = 1}
+            camera = Camera {position = vec 0 0, rotation = 0, zoom = 1.0}
           }
 
 data FrameData = FrameData
@@ -498,9 +498,20 @@ mainLoop shutdown frameData frame worldTime worldEvent w0 =
           go (n + 1) t2 w3
 
 worldEvent :: (Monad io) => SDL.Event -> World -> io World
-worldEvent e w@(World {grid, gridStuff, pointer, cardSize, camera}) = return w {grid = grid', pointer = pointer'}
+worldEvent e w@(World {grid, gridStuff, pointer, cardSize, camera}) = return w {grid = grid', pointer = pointer', camera = camera'}
   where
     grid' = let ndcPointerPosition = pixelPosToNdc pointer windowSize in if mouseClicked then flip ndcPointerPosition else grid
+    camera'
+      | keyboard == Just SDL.ScancodeW = camera {position = camera.position + vec 0 0.1}
+      | keyboard == Just SDL.ScancodeS = camera {position = camera.position + vec 0 (-0.1)}
+      | keyboard == Just SDL.ScancodeA = camera {position = camera.position + vec (-0.1) 0}
+      | keyboard == Just SDL.ScancodeD = camera {position = camera.position + vec 0.1 0}
+      | keyboard == Just SDL.ScancodeQ = camera {rotation = camera.rotation + 0.1}
+      | keyboard == Just SDL.ScancodeE = camera {rotation = camera.rotation - 0.1}
+      | keyboard == Just SDL.ScancodeEquals = camera {zoom = camera.zoom + 0.25}
+      | keyboard == Just SDL.ScancodeMinus = camera {zoom = camera.zoom - 0.25}
+      | keyboard == Just SDL.Scancode0 = camera {zoom = 1.0}
+      | otherwise = camera
     pointer' = fromMaybe w.pointer mouseMoved
     flip pos
       | Just spot <- spot pos = gridFlip spot grid
@@ -517,6 +528,9 @@ worldEvent e w@(World {grid, gridStuff, pointer, cardSize, camera}) = return w {
       | otherwise = False
     mouseMoved
       | (SDL.Event _ (SDL.MouseMotionEvent (SDL.MouseMotionEventData {mouseMotionEventPos = SDL.P (SDL.V2 x y)}))) <- e = Just $ vec (fromIntegral x) (fromIntegral y)
+      | otherwise = Nothing
+    keyboard
+      | (SDL.Event _ (SDL.KeyboardEvent (SDL.KeyboardEventData {keyboardEventKeyMotion = SDL.Released, keyboardEventKeysym = SDL.Keysym {keysymScancode = code}}))) <- e = Just code
       | otherwise = Nothing
 
 gridFlip :: Spot -> Grid -> Grid
@@ -548,12 +562,13 @@ worldSize (WithVec w h) (PPU ppu) =
 worldToNDC :: Camera -> WindowSize -> PPU -> G.Transform
 worldToNDC cam (WithVec w h) (PPU ppu) =
   let WithVec x y = cam.position
+      w2 = (fromIntegral w / 2) / ppu
+      h2 = (fromIntegral h / 2) / ppu
       r = cam.rotation
-      sx = (ppu / fromIntegral w) * cam.zoom
-      sy = (ppu / fromIntegral h) * cam.zoom
-   in G.scaleXY sx (-sy) <> G.rotateZ (-r) <> G.translate (-x) (-y) 0
+      sx = (cam.zoom / w2)
+      sy = (cam.zoom / h2)
+   in G.scaleXY sx (-sy) <> G.rotateZ (-r) <> G.translate (-(x / w2)) (y / h2) 0
 
--- TODO:
 pixToWorld :: Camera -> WindowSize -> PPU -> G.Transform
 pixToWorld cam (WithVec w h) (PPU ppu) =
   let WithVec x y = cam.position

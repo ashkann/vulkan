@@ -500,23 +500,23 @@ mainLoop shutdown frameData frame worldTime worldEvent w0 =
 worldEvent :: (Monad io) => SDL.Event -> World -> io World
 worldEvent e w@(World {grid, gridStuff, pointer, cardSize, camera}) = return w {grid = grid', pointer = pointer', camera = camera'}
   where
-    grid' = let ndcPointerPosition = pixelPosToNdc pointer windowSize in if mouseClicked then flip ndcPointerPosition else grid
+    grid' = if mouseClicked then flip else grid
     camera'
-      | keyboard == Just SDL.ScancodeW = camera {position = camera.position + vec 0 0.1}
-      | keyboard == Just SDL.ScancodeS = camera {position = camera.position + vec 0 (-0.1)}
-      | keyboard == Just SDL.ScancodeA = camera {position = camera.position + vec (-0.1) 0}
-      | keyboard == Just SDL.ScancodeD = camera {position = camera.position + vec 0.1 0}
-      | keyboard == Just SDL.ScancodeQ = camera {rotation = camera.rotation + 0.1}
-      | keyboard == Just SDL.ScancodeE = camera {rotation = camera.rotation - 0.1}
-      | keyboard == Just SDL.ScancodeEquals = camera {zoom = camera.zoom + 0.25}
-      | keyboard == Just SDL.ScancodeMinus = camera {zoom = camera.zoom - 0.25}
+      | keyboard == Just SDL.ScancodeW = moveCamera (vec 0 0.1) camera
+      | keyboard == Just SDL.ScancodeS = moveCamera (vec 0 (-0.1)) camera
+      | keyboard == Just SDL.ScancodeA = moveCamera (vec (-0.1) 0) camera
+      | keyboard == Just SDL.ScancodeD = moveCamera (vec 0.1 0) camera
+      | keyboard == Just SDL.ScancodeE = rotateCamera (-0.1) camera
+      | keyboard == Just SDL.ScancodeR = rotateCamera 0.1 camera
+      | keyboard == Just SDL.ScancodeEquals = camera {zoom = camera.zoom * 1.1}
+      | keyboard == Just SDL.ScancodeMinus, camera.zoom >= 0.30 = camera {zoom = camera.zoom - 0.25}
       | keyboard == Just SDL.Scancode0 = camera {zoom = 1.0}
       | otherwise = camera
     pointer' = fromMaybe w.pointer mouseMoved
-    flip pos
-      | Just spot <- spot pos = gridFlip spot grid
+    flip
+      | Just spot <- spot = gridFlip spot grid
       | otherwise = grid
-    spot pos =
+    spot =
       let WithVec x y = -gridStuff.topLeft + pixPosToWorld camera pointer
           WithVec px py = gridStuff.padding
           WithVec w h = cardSize
@@ -550,6 +550,12 @@ ppu :: PPU
 ppu = PPU 50
 
 data Camera = Camera {position :: WorldVec, rotation :: Float, zoom :: Float}
+
+rotateCamera :: Float -> Camera -> Camera
+rotateCamera r cam = cam {rotation = cam.rotation + r}
+
+moveCamera :: WorldVec -> Camera -> Camera
+moveCamera v cam = cam {position = cam.position + v}
 
 newtype PPU = PPU Float
 
@@ -585,8 +591,11 @@ pixPosToWorld cam pos = let G.WithVec2 x y = tr pos (pixToWorld cam windowSize p
 -- TODO: the tranform should be inside the SpriteInWorld
 sprites :: World -> [Tex.SpriteInWorld]
 sprites World {atlas, grid, gridStuff, pointer, cardSize, camera} =
-  grd grid ++ maybeToList (highlight <$> spot pointerWorld) ++ [pointerInWorld]
+  let mark x y = putInWorld (Atlas.sprite atlas "back-side") $ vec x y
+   in [mark 0 0, mark 0 1, mark 1 0]
   where
+    -- grd grid ++ maybeToList (highlight <$> spot pointerWorld) ++ [pointerInWorld]
+
     pointerWorld = pixPosToWorld camera pointer
     pointerInWorld = putInWorld (Atlas.sprite atlas "pointer") pointerWorld
     spot pos =
@@ -645,17 +654,17 @@ renderSpriteInWorld
       then
         let WithVec w h = worldSize sprite.resolution ppu
             UVReg2 auv buv cuv duv = sprite.region
-            a = let xy = (vec x y :: WorldVec) in vertext (worldToNdc (tr xy tr2)) auv -- top left
-            b = let xy = (vec (x + w) y :: WorldVec) in vertext (worldToNdc (tr xy tr2)) buv -- top right
-            c = let xy = (vec (x + w) (y - h) :: WorldVec) in vertext (worldToNdc (tr xy tr2)) cuv -- bottom right
-            d = let xy = (vec x (y - h) :: WorldVec) in vertext (worldToNdc (tr xy tr2)) duv -- bottom left
+            a = vert x y auv -- top left
+            b = vert (x + w) y buv -- top right
+            c = vert (x + w) (y - h) cuv -- bottom right
+            d = vert x (y - h) duv -- bottom left
          in SV.fromList [a, b, c, c, d, a]
       else SV.empty
     where
-      vertext xy uv = Vert.Vertex xy uv sprite.texture
-      tr2 = G.translate x y 0 <> G.rotateZ rotation <> G.scaleXY sx sy
-      worldToNdc (G.WithVec2 x y) =
+      vert x y uv = let xy = vec @WorldVec x y in Vert.Vertex (ndc (tr xy m)) uv sprite.texture
+      ndc (G.WithVec2 x y) =
         let G.WithVec2 x' y' = tr @WorldVec (vec x y) (worldToNDC cam windowSize ppu) in vec x' y' :: NDCVec
+      m = G.scaleXY sx sy <> G.rotateZ rotation <> G.translate x y 0
 
 descriptorSetLayout :: Vk.Device -> Word32 -> Managed Vk.DescriptorSetLayout
 descriptorSetLayout dev count = do

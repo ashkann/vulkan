@@ -8,11 +8,11 @@ Compile the shaders, generate the atlas and run:
 ```
 Compile the shaders:
 ```
-./compile_shaders.sh
+./compile-shaders.sh
 ```
 Generate the atlas
 ```
-./generate_atlas.sh
+./pack-texture.sh
 ```
 ![Screenshot](screenshot.gif)
 ## TODO (doubling as a roadmap)

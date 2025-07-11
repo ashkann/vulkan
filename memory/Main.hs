@@ -128,7 +128,7 @@ main = runManaged $ do
   withSDL
   window <- Utils.withWindow windowSize
   vulkan <- Utils.withVulkan window
-  _ <- Utils.withDebug vulkan
+  -- _ <- Utils.withDebug vulkan
   surface <- Utils.withSurface window vulkan
   (gpu, gfx, present, portability, gpuName) <- Init.pickGPU vulkan surface
   say "Vulkan" $ "Picked GPU \"" ++ gpuName ++ "\", present queue " ++ show present ++ ", graphics queue " ++ show gfx

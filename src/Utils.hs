@@ -1,10 +1,10 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE DataKinds #-}
 
 module Utils
   ( say,
@@ -15,7 +15,7 @@ module Utils
     withWindow,
     vulkanVersion,
     isQuitEvent,
-    withDebug,
+    -- withDebug,
     transitImage,
     transitToPresent,
     transitToRenderTarget,
@@ -45,31 +45,30 @@ import Data.Word (Word32)
 import Foreign (Ptr, Storable, castPtr, copyArray, withForeignPtr)
 import Foreign.C (peekCAString)
 import Foreign.Storable (Storable (..), sizeOf)
+import Measure
 import SDL qualified
 import SDL.Video.Vulkan qualified as SDL
-import qualified Vulkan as Vk
-import qualified Vulkan as VkApplicationInfo (ApplicationInfo (..))
-import qualified Vulkan as VkBufferCopy (BufferCopy (..))
-import qualified Vulkan as VkBufferImageCopy (BufferImageCopy (..))
-import qualified Vulkan as VkCommandBufferAllocateInfo (CommandBufferAllocateInfo (..))
-import qualified Vulkan as VkCommandBufferBeginInfo (CommandBufferBeginInfo (..))
-import qualified Vulkan as VkDebugUtilsMessengerCreateInfoEXT (DebugUtilsMessengerCreateInfoEXT (..))
-import qualified Vulkan as VkExtent2D (Extent2D (..))
-import qualified Vulkan as VkExtent3D (Extent3D (..))
-import qualified Vulkan as VkImageCopy (ImageCopy (..))
-import qualified Vulkan as VkImageMemoryBarrier (ImageMemoryBarrier (..))
-import qualified Vulkan as VkImageSubresourceLayers (ImageSubresourceLayers (..))
-import qualified Vulkan as VkImageSubresourceRange (ImageSubresourceRange (..))
-import qualified Vulkan as VkInstanceCreateInfo (InstanceCreateInfo (..))
-import qualified Vulkan as VkOffset3D (Offset3D (..))
-import qualified Vulkan as VkSamplerCreateInfo (SamplerCreateInfo (..))
-import qualified Vulkan as VkSubmitInfo (SubmitInfo (..))
+import Vulkan qualified as Vk
+import Vulkan qualified as VkApplicationInfo (ApplicationInfo (..))
+import Vulkan qualified as VkBufferCopy (BufferCopy (..))
+import Vulkan qualified as VkBufferCreateInfo (BufferCreateInfo (..))
+import Vulkan qualified as VkBufferImageCopy (BufferImageCopy (..))
+import Vulkan qualified as VkCommandBufferAllocateInfo (CommandBufferAllocateInfo (..))
+import Vulkan qualified as VkCommandBufferBeginInfo (CommandBufferBeginInfo (..))
+import Vulkan qualified as VkDebugUtilsMessengerCreateInfoEXT (DebugUtilsMessengerCreateInfoEXT (..))
+import Vulkan qualified as VkExtent2D (Extent2D (..))
+import Vulkan qualified as VkExtent3D (Extent3D (..))
+import Vulkan qualified as VkImageCopy (ImageCopy (..))
+import Vulkan qualified as VkImageMemoryBarrier (ImageMemoryBarrier (..))
+import Vulkan qualified as VkImageSubresourceLayers (ImageSubresourceLayers (..))
+import Vulkan qualified as VkImageSubresourceRange (ImageSubresourceRange (..))
+import Vulkan qualified as VkInstanceCreateInfo (InstanceCreateInfo (..))
+import Vulkan qualified as VkOffset3D (Offset3D (..))
+import Vulkan qualified as VkSamplerCreateInfo (SamplerCreateInfo (..))
+import Vulkan qualified as VkSubmitInfo (SubmitInfo (..))
 import Vulkan.CStruct.Extends (pattern (:&), pattern (::&))
 import Vulkan.CStruct.Extends qualified as Vk
-import Vulkan.Utils.Debug qualified as Vk
 import Vulkan.Zero qualified as Vk
-import Measure
-import qualified Vulkan as VkBufferCreateInfo (BufferCreateInfo (..))
 import VulkanMemoryAllocator qualified as Vma
 import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCreateInfo (..))
 import Prelude hiding (init)
@@ -96,7 +95,8 @@ withVulkan w = do
           ]
         sdlExts = mapM (fmap BS.pack . peekCAString) =<< SDL.vkGetInstanceExtensions w
      in liftIO $ (++ extraExts) <$> sdlExts
-  say "Vulkan" $ "Instance extenions: " ++ unwords (BS.unpack <$> exts)
+  let lst = unwords (zipWith (\i s -> show i ++ ":" ++ BS.unpack s ++ " ") [0 :: Int ..] exts)
+   in say "Vulkan" $ "Instance extenions: " ++ lst
   let info =
         Vk.zero
           { VkInstanceCreateInfo.applicationInfo =
@@ -109,38 +109,39 @@ withVulkan w = do
             VkInstanceCreateInfo.enabledLayerNames = ["VK_LAYER_KHRONOS_validation"],
             VkInstanceCreateInfo.flags = Vk.INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR
           }
-          ::& debugUtilsMessengerCreateInfo
-            :& Vk.ValidationFeaturesEXT
-              [ Vk.VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT
-              -- Vk.VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT
-              -- Vk.VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT
-              ]
-              []
+          -- ::& debugUtilsMessengerCreateInfo
+            ::& Vk.ValidationFeaturesEXT
+              { Vk.enabledValidationFeatures = [Vk.VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT],
+                Vk.disabledValidationFeatures = []
+              }
             :& ()
    in managed $ Vk.withInstance info Nothing bracket
 
-debugUtilsMessengerCreateInfo :: Vk.DebugUtilsMessengerCreateInfoEXT
-debugUtilsMessengerCreateInfo =
-  Vk.zero
-    { Vk.messageSeverity =
-        Vk.DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
-          .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
-      -- .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
-      Vk.messageType =
-        Vk.DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
-          .|. Vk.DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
-          .|. Vk.DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
-      VkDebugUtilsMessengerCreateInfoEXT.pfnUserCallback = Vk.debugCallbackPtr
-    }
+-- debugUtilsMessengerCreateInfo :: Vk.DebugUtilsMessengerCreateInfoEXT
+-- debugUtilsMessengerCreateInfo =
+--   Vk.zero
+--     { Vk.messageSeverity =
+--         Vk.DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
+--           .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+--       -- .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
+--       Vk.messageType =
+--         Vk.DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
+--           .|. Vk.DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
+--           .|. Vk.DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
+--       VkDebugUtilsMessengerCreateInfoEXT.pfnUserCallback = debugCallbackPtr
+--     }
 
-withDebug :: Vk.Instance -> Managed ()
-withDebug vulkan = do
-  _ <- managed $ Vk.withDebugUtilsMessengerEXT vulkan debugUtilsMessengerCreateInfo Nothing bracket
-  Vk.submitDebugUtilsMessageEXT
-    vulkan
-    Vk.DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
-    Vk.DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
-    Vk.zero {Vk.message = "Debug Message Test"}
+-- foreign import ccall unsafe "DebugCallback.c &debugCallback"
+--   debugCallbackPtr :: Vk.PFN_vkDebugUtilsMessengerCallbackEXT    
+
+-- withDebug :: Vk.Instance -> Managed ()
+-- withDebug vulkan = do
+--   _ <- managed $ Vk.withDebugUtilsMessengerEXT vulkan debugUtilsMessengerCreateInfo Nothing bracket
+--   Vk.submitDebugUtilsMessageEXT
+--     vulkan
+--     Vk.DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
+--     Vk.DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
+--     Vk.zero {Vk.message = "Debug Message Test"}
 
 withSurface :: SDL.Window -> Vk.Instance -> Managed Vk.SurfaceKHR
 withSurface w v@(Vk.Instance v' _) = managed $ bracket create destroy
@@ -465,7 +466,7 @@ withGPUBuffer allocator size flags = do
             }
      in managed $ Vma.withBuffer allocator bufferInfo vmaInfo bracket
   say "Vulkan" $ "Created GPU buffer (" ++ show size ++ " bytes)"
-  return buffer   
+  return buffer
 
 -- import DearImGui qualified as ImGui
 -- import DearImGui.SDL.Vulkan qualified as ImGui

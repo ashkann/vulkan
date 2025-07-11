@@ -9,46 +9,6 @@ version:        0.1.0
 maintainer:     ashkan.kh.nazary@gmail.com
 build-type:     Simple
 
-executable atlas-parser
-  main-is: Main.hs
-  other-modules:
-      Atlas
-      Init
-      Measure
-      Texture
-      Utils
-      Vertex
-      Paths_Vulkan2DEngine
-  hs-source-dirs:
-      atlas-parser
-      src
-  ghc-options: -Wall -Wcompat -Widentities -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -Wambiguous-fields -Wno-name-shadowing -optl-Wl,-rpath,/usr/local/lib -fprof-auto -rtsopts
-  build-depends:
-      JuicyPixels
-    , VulkanMemoryAllocator
-    , base
-    , bytestring
-    , containers
-    , dear-imgui
-    , extra
-    , geomancy
-    , inline-c
-    , inline-c-cpp
-    , lens
-    , lens-tutorial
-    , managed
-    , mtl
-    , parsec
-    , random
-    , sdl2
-    , storable-record
-    , text
-    , transformers
-    , vector
-    , vulkan
-    , vulkan-utils
-  default-language: Haskell2010
-
 executable memory
   main-is: Main.hs
   other-modules:
@@ -62,20 +22,16 @@ executable memory
   hs-source-dirs:
       memory
       src
-  ghc-options: -Wall -Wcompat -Widentities -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -Wambiguous-fields -Wno-name-shadowing -optl-Wl,-rpath,/usr/local/lib -fprof-auto -rtsopts
+  ghc-options: -Wall -Wcompat -Widentities -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -Wambiguous-fields -Wno-name-shadowing -optl-Wl,-rpath,/usr/local/lib
   build-depends:
       JuicyPixels
     , VulkanMemoryAllocator
     , base
     , bytestring
     , containers
-    , dear-imgui
     , extra
     , geomancy
-    , inline-c
-    , inline-c-cpp
     , lens
-    , lens-tutorial
     , managed
     , mtl
     , parsec
@@ -86,85 +42,4 @@ executable memory
     , transformers
     , vector
     , vulkan
-    , vulkan-utils
-  default-language: Haskell2010
-
-executable minesweeper
-  main-is: Main.hs
-  other-modules:
-      Atlas
-      Init
-      Measure
-      Texture
-      Utils
-      Vertex
-      Paths_Vulkan2DEngine
-  hs-source-dirs:
-      minesweeper
-      src
-  ghc-options: -Wall -Wcompat -Widentities -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -Wambiguous-fields -Wno-name-shadowing -optl-Wl,-rpath,/usr/local/lib -fprof-auto -rtsopts
-  build-depends:
-      JuicyPixels
-    , VulkanMemoryAllocator
-    , base
-    , bytestring
-    , containers
-    , dear-imgui
-    , extra
-    , geomancy
-    , inline-c
-    , inline-c-cpp
-    , lens
-    , lens-tutorial
-    , managed
-    , mtl
-    , parsec
-    , random
-    , sdl2
-    , storable-record
-    , text
-    , transformers
-    , vector
-    , vulkan
-    , vulkan-utils
-  default-language: Haskell2010
-
-executable vulkan2dengine
-  main-is: Main.hs
-  other-modules:
-      Atlas
-      Init
-      Measure
-      Texture
-      Utils
-      Vertex
-      Paths_Vulkan2DEngine
-  hs-source-dirs:
-      app
-      src
-  ghc-options: -Wall -Wcompat -Widentities -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -Wambiguous-fields -Wno-name-shadowing -optl-Wl,-rpath,/usr/local/lib -fprof-auto -rtsopts
-  build-depends:
-      JuicyPixels
-    , VulkanMemoryAllocator
-    , base
-    , bytestring
-    , containers
-    , dear-imgui
-    , extra
-    , geomancy
-    , inline-c
-    , inline-c-cpp
-    , lens
-    , lens-tutorial
-    , managed
-    , mtl
-    , parsec
-    , random
-    , sdl2
-    , storable-record
-    , text
-    , transformers
-    , vector
-    , vulkan
-    , vulkan-utils
   default-language: Haskell2010

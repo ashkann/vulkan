@@ -287,7 +287,7 @@ main = runManaged $ do
       lightBufferSize = 1024
   frames <- withFrames device gfx allocator stagingBufferSize vertexBufferSize lightBufferSize frameCount
   let shutdown = say "Engine" "Shutting down ..." *> Vk.deviceWaitIdle device
-   in say "Engine" "Entering the main loop"
+    in say "Engine" "Entering the main loop"
         *> mainLoop
           shutdown
           frameData

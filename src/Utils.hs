@@ -15,7 +15,6 @@ module Utils
     withWindow,
     vulkanVersion,
     isQuitEvent,
-    -- withDebug,
     transitImage,
     transitToPresent,
     transitToRenderTarget,
@@ -29,6 +28,7 @@ module Utils
     copyImageToImage,
     repeatingSampler,
     withGPUBuffer,
+    withSDL2VulkanWindow,
   )
 where
 
@@ -55,7 +55,6 @@ import Vulkan qualified as VkBufferCreateInfo (BufferCreateInfo (..))
 import Vulkan qualified as VkBufferImageCopy (BufferImageCopy (..))
 import Vulkan qualified as VkCommandBufferAllocateInfo (CommandBufferAllocateInfo (..))
 import Vulkan qualified as VkCommandBufferBeginInfo (CommandBufferBeginInfo (..))
-import Vulkan qualified as VkDebugUtilsMessengerCreateInfoEXT (DebugUtilsMessengerCreateInfoEXT (..))
 import Vulkan qualified as VkExtent2D (Extent2D (..))
 import Vulkan qualified as VkExtent3D (Extent3D (..))
 import Vulkan qualified as VkImageCopy (ImageCopy (..))
@@ -85,6 +84,14 @@ applicationName = "Vulkan 2D Engine"
 vulkanVersion :: Word32
 vulkanVersion = Vk.API_VERSION_1_2
 
+withSDL2VulkanWindow :: WindowSize -> Managed (SDL.Window, Vk.Instance, Vk.SurfaceKHR)
+withSDL2VulkanWindow  s = do
+  withSDL
+  window <- Utils.withWindow s
+  vulkan <- Utils.withVulkan window
+  surface <- Utils.withSurface window vulkan
+  return (window, vulkan, surface)
+
 withVulkan :: SDL.Window -> Managed Vk.Instance
 withVulkan w = do
   exts <-
@@ -109,39 +116,12 @@ withVulkan w = do
             VkInstanceCreateInfo.enabledLayerNames = ["VK_LAYER_KHRONOS_validation"],
             VkInstanceCreateInfo.flags = Vk.INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR
           }
-          -- ::& debugUtilsMessengerCreateInfo
-            ::& Vk.ValidationFeaturesEXT
-              { Vk.enabledValidationFeatures = [Vk.VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT],
-                Vk.disabledValidationFeatures = []
-              }
+          ::& Vk.ValidationFeaturesEXT
+            { Vk.enabledValidationFeatures = [Vk.VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT],
+              Vk.disabledValidationFeatures = []
+            }
             :& ()
    in managed $ Vk.withInstance info Nothing bracket
-
--- debugUtilsMessengerCreateInfo :: Vk.DebugUtilsMessengerCreateInfoEXT
--- debugUtilsMessengerCreateInfo =
---   Vk.zero
---     { Vk.messageSeverity =
---         Vk.DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
---           .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
---       -- .|. Vk.DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
---       Vk.messageType =
---         Vk.DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
---           .|. Vk.DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
---           .|. Vk.DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
---       VkDebugUtilsMessengerCreateInfoEXT.pfnUserCallback = debugCallbackPtr
---     }
-
--- foreign import ccall unsafe "DebugCallback.c &debugCallback"
---   debugCallbackPtr :: Vk.PFN_vkDebugUtilsMessengerCallbackEXT    
-
--- withDebug :: Vk.Instance -> Managed ()
--- withDebug vulkan = do
---   _ <- managed $ Vk.withDebugUtilsMessengerEXT vulkan debugUtilsMessengerCreateInfo Nothing bracket
---   Vk.submitDebugUtilsMessageEXT
---     vulkan
---     Vk.DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
---     Vk.DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
---     Vk.zero {Vk.message = "Debug Message Test"}
 
 withSurface :: SDL.Window -> Vk.Instance -> Managed Vk.SurfaceKHR
 withSurface w v@(Vk.Instance v' _) = managed $ bracket create destroy
@@ -153,26 +133,27 @@ withWindow :: WindowSize -> Managed SDL.Window
 withWindow (WithVec w h) =
   managed $
     bracket
-      (SDL.createWindow applicationName win <* say "SDL" "Window created")
-      (\w -> SDL.destroyWindow w <* say "SDL" "Window destroyed")
+      (SDL.createWindow applicationName win <* say "SDL" "Created window")
+      (\w -> SDL.destroyWindow w <* say "SDL" "Destroyed window")
   where
-    size = SDL.V2 (fromIntegral w) (fromIntegral h)
     win =
       SDL.defaultWindow
         { SDL.windowInitialSize = size,
           SDL.windowGraphicsContext = SDL.VulkanContext,
           SDL.windowPosition = SDL.Centered
         }
+    size = SDL.V2 (fromIntegral w) (fromIntegral h)
 
 withSDL :: Managed ()
 withSDL = do
-  liftIO printVersion
-  with_ (SDL.initialize flags <* say "SDL" "Initialized") (SDL.quit <* say "SDL" "Quit")
-  with_ (SDL.vkLoadLibrary Nothing <* say "SDL" "Loaded Vulkan lib") (SDL.vkUnloadLibrary <* say "SDL" "Unloaded Vulkan lib")
+  (v0 :: Int, v1, v2) <- SDL.version
+  let ver = "version " ++ show v0 ++ "." ++ show v1 ++ "." ++ show v2
+  with_ (SDL.initialize flags <* say' ("Initialized " ++ ver)) (SDL.quit <* say' "Quit")
+  with_ (SDL.vkLoadLibrary Nothing <* say' "Loaded Vulkan lib") (SDL.vkUnloadLibrary <* say' "Unloaded Vulkan lib")
   where
+    say' = say "SDL"
     with_ acq rel = managed_ $ bracket_ acq rel
-    printVersion = SDL.version >>= (\(v0 :: Int, v1, v2) -> putStrLn $ "SDL: Version " ++ show v0 ++ "." ++ show v1 ++ "." ++ show v2)
-    flags = [SDL.InitEvents :: SDL.InitFlag, SDL.InitVideo] :: [SDL.InitFlag]
+    flags = [SDL.InitEvents, SDL.InitVideo] :: [SDL.InitFlag]
 
 isQuitEvent :: SDL.Event -> Bool
 isQuitEvent = \case
@@ -467,100 +448,3 @@ withGPUBuffer allocator size flags = do
      in managed $ Vma.withBuffer allocator bufferInfo vmaInfo bracket
   say "Vulkan" $ "Created GPU buffer (" ++ show size ++ " bytes)"
   return buffer
-
--- import DearImGui qualified as ImGui
--- import DearImGui.SDL.Vulkan qualified as ImGui
--- import DearImGui.Vulkan qualified as ImGui
--- withImGui :: Vk.Instance -> Vk.PhysicalDevice -> Vk.Device -> SDL.Window -> Vk.Queue -> Vk.CommandPool -> Vk.Queue -> Managed ()
--- withImGui vulkan gpu device window queue cmdPool gfx =
---   do
---     pool <-
---       let poolSizes = poolSize <$> types
---           info =
---             Vk.zero
---               { VkDescriptorPoolCreateInfo.poolSizes = poolSizes,
---                 VkDescriptorPoolCreateInfo.maxSets = 1000,
---                 VkDescriptorPoolCreateInfo.flags = Vk.DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT
---               }
---        in managed $ Vk.withDescriptorPool device info Nothing bracket
---     managed_ $ bracket_ (init pool) Ashkan2.vulkanShutdown
---   where
---     types =
---       [ Vk.DESCRIPTOR_TYPE_SAMPLER,
---         Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
---         Vk.DESCRIPTOR_TYPE_SAMPLED_IMAGE,
---         Vk.DESCRIPTOR_TYPE_STORAGE_IMAGE,
---         Vk.DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER,
---         Vk.DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER,
---         Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
---         Vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
---         Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
---         Vk.DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC,
---         Vk.DESCRIPTOR_TYPE_INPUT_ATTACHMENT
---       ]
---     poolSize typ =
---       Vk.zero
---         { VkDescriptorPoolSize.descriptorCount = 1000,
---           VkDescriptorPoolSize.type' = typ
---         }
---     init pool = do
---       _ <- ImGui.createContext
---       say "ImGui" "Created context"
---       _ <- ImGui.sdl2InitForVulkan window
---       say "ImGui" "Initialized for SDL2 Vulkan"
---       Ashkan2.vulkanInit vulkan gpu device gfx pool
---       _ <- submitNow device cmdPool queue (\cmd -> ImGui.vulkanCreateFontsTexture cmd $> ())
---       say "ImGui" "Created fonts texture"
---       ImGui.vulkanDestroyFontUploadObjects
---       say "ImGui" "Destroyed font upload objects"
-
--- copyImageToImage2 :: Vk.CommandBuffer -> Vk.Image -> Vk.Image -> Vk.Extent2D -> Vk.Extent2D -> IO ()
--- copyImageToImage2 cmd source destination srcSize dstSize = _
-
--- Vk.ImageBlit2 blitRegion{ .sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2, .pNext = nullptr };
-
--- blitRegion.srcOffsets[1].x = srcSize.width;
--- blitRegion.srcOffsets[1].y = srcSize.height;
--- blitRegion.srcOffsets[1].z = 1;
-
--- blitRegion.dstOffsets[1].x = dstSize.width;
--- blitRegion.dstOffsets[1].y = dstSize.height;
--- blitRegion.dstOffsets[1].z = 1;
-
--- blitRegion.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
--- blitRegion.srcSubresource.baseArrayLayer = 0;
--- blitRegion.srcSubresource.layerCount = 1;
--- blitRegion.srcSubresource.mipLevel = 0;
-
--- blitRegion.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
--- blitRegion.dstSubresource.baseArrayLayer = 0;
--- blitRegion.dstSubresource.layerCount = 1;
--- blitRegion.dstSubresource.mipLevel = 0;
-
--- VkBlitImageInfo2 blitInfo{ .sType = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2, .pNext = nullptr };
--- blitInfo.dstImage = destination;
--- blitInfo.dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
--- blitInfo.srcImage = source;
--- blitInfo.srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
--- blitInfo.filter = VK_FILTER_LINEAR;
--- blitInfo.regionCount = 1;
--- blitInfo.pRegions = &blitRegion;
-
--- vkCmdBlitImage2(cmd, &blitInfo);
-
--- renderImgui cmd view extent imguiData =
---   let attachment =
---         Vk.zero
---           { VkRenderingAttachmentInfo.imageView = view,
---             VkRenderingAttachmentInfo.imageLayout = Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
---             VkRenderingAttachmentInfo.loadOp = Vk.ATTACHMENT_LOAD_OP_LOAD,
---             VkRenderingAttachmentInfo.storeOp = Vk.ATTACHMENT_STORE_OP_STORE
---           }
---       scissor = Vk.Rect2D {VkRect2D.offset = Vk.Offset2D 0 0, VkRect2D.extent = extent}
---       info =
---         Vk.zero
---           { VkRenderingInfo.renderArea = scissor,
---             VkRenderingInfo.layerCount = 1,
---             VkRenderingInfo.colorAttachments = [attachment]
---           }
---    in Vk.cmdUseRendering cmd info $ ImGui.vulkanRenderDrawData imguiData cmd Nothing

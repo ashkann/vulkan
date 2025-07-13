@@ -116,7 +116,6 @@ data Frame = Frame
     copyFinished :: Vk.Semaphore,
     staging :: (Vk.Buffer, Ptr ()),
     vertex :: Vk.Buffer,
-    light :: Vk.Buffer,
     viewport :: Vk.Buffer,
     targetImage :: Vk.Image,
     targetView :: Vk.ImageView
@@ -125,13 +124,9 @@ data Frame = Frame
 -- TODO: run inside a MonadError instance
 main :: IO ()
 main = runManaged $ do
-  withSDL
-  window <- Utils.withWindow windowSize
-  vulkan <- Utils.withVulkan window
-  -- _ <- Utils.withDebug vulkan
-  surface <- Utils.withSurface window vulkan
+  (window, vulkan, surface) <- withSDL2VulkanWindow windowSize
   (gpu, gfx, present, portability, gpuName) <- Init.pickGPU vulkan surface
-  say "Vulkan" $ "Picked GPU \"" ++ gpuName ++ "\", present queue " ++ show present ++ ", graphics queue " ++ show gfx
+  say "Vulkan" $ "GPU: " ++ gpuName ++ ", present: " ++ show present.index ++ ", graphics: " ++ show gfx.index
   device <- Init.withDevice gpu gfx present portability <* say "Vulkan" "Created device"
   commandPool <-
     let info =
@@ -320,7 +315,7 @@ frame ::
   Frame ->
   FrameData ->
   io ()
-frame device gfxQueue presentQueue pipeline pipelineLayout swp descSet f frameData = do
+frame device gfx present pipeline pipelineLayout swp descSet f frameData = do
   let Frame
         { pool,
           renderCmd,
@@ -331,7 +326,6 @@ frame device gfxQueue presentQueue pipeline pipelineLayout swp descSet f frameDa
           copyFinished,
           staging,
           vertex,
-          light,
           viewport,
           targetImage,
           targetView
@@ -339,10 +333,10 @@ frame device gfxQueue presentQueue pipeline pipelineLayout swp descSet f frameDa
       FrameData {verts, viewport = viewport'} = frameData
       (swapchain, swapchainExtent, swapchainImages) = swp
   waitForFrame device f
-  liftIO $ Utils.copyToGpu2 device pool gfxQueue viewport staging viewport'
-  liftIO $ Utils.copyToGpu device pool gfxQueue vertex staging verts
+  liftIO $ Utils.copyToGpu2 device pool gfx viewport staging viewport'
+  liftIO $ Utils.copyToGpu device pool gfx vertex staging verts
   -- say "Global light" $ show viewport'.globalLight
-  recordRender renderCmd vertex light viewport (targetImage, targetView) swapchainExtent (fromIntegral $ SV.length verts)
+  recordRender renderCmd vertex viewport (targetImage, targetView) swapchainExtent (fromIntegral $ SV.length verts)
   index <- Vk.acquireNextImageKHR device swapchain maxBound imageAvailable Vk.zero >>= \(r, index) -> checkSwapchainIsOld r $> index
   let swapchainImage = swapchainImages ! fromIntegral index
    in recordCopyToSwapchain copyCmd targetImage swapchainImage swapchainExtent
@@ -361,14 +355,14 @@ frame device gfxQueue presentQueue pipeline pipelineLayout swp descSet f frameDa
               VkSubmitInfo.commandBuffers = [Vk.commandBufferHandle copyCmd],
               VkSubmitInfo.signalSemaphores = [copyFinished]
             }
-   in Vk.queueSubmit gfxQueue [render, copy] fence
+   in Vk.queueSubmit gfx [render, copy] fence
   let info =
         Vk.zero
           { VkPresentInfoKHR.waitSemaphores = [copyFinished],
             VkPresentInfoKHR.swapchains = [swapchain],
             VkPresentInfoKHR.imageIndices = [index]
           }
-   in Vk.queuePresentKHR presentQueue info >>= checkSwapchainIsOld
+   in Vk.queuePresentKHR present info >>= checkSwapchainIsOld
   where
     checkSwapchainIsOld r = when (r == Vk.SUBOPTIMAL_KHR || r == Vk.ERROR_OUT_OF_DATE_KHR) (say "Engine" $ "presentFrame" ++ show r)
     recordCopyToSwapchain cmd offscreenImage swapchainImage extent =
@@ -377,13 +371,12 @@ frame device gfxQueue presentQueue pipeline pipelineLayout swp descSet f frameDa
         transitToCopyDst cmd swapchainImage
         copyImageToImage cmd offscreenImage swapchainImage extent
         transitToPresent cmd swapchainImage
-    recordRender cmd vertBuff lightBuff viewportBuff target extent vertexCount =
+    recordRender cmd vertBuff viewportBuff target extent vertexCount =
       Vk.useCommandBuffer cmd Vk.zero $ do
         let (image, view) = target
         Vk.cmdBindPipeline cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
         Vk.cmdBindVertexBuffers cmd 0 [vertBuff] [0]
         Vk.cmdBindDescriptorSets cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipelineLayout 0 [descSet] []
-        bindLights device descSet lightBuff
         bindViewport device descSet viewportBuff
         transitToRenderTarget cmd image
         let attachment =
@@ -455,7 +448,6 @@ withFrames device gfx allocator stagingBufferSize vertexBufferSize lightBufferSi
               copyFinished = copyFinished,
               staging = vertextStagingBuffer,
               vertex = vertexBuffer,
-              light = lightBuffer,
               viewport = viewportBuffer,
               targetImage = image,
               targetView = view
@@ -501,17 +493,22 @@ worldEvent :: (Monad io) => SDL.Event -> World -> io World
 worldEvent e w@(World {grid, gridStuff, pointer, cardSize, camera}) = return w {grid = grid', pointer = pointer', camera = camera'}
   where
     grid' = if mouseClicked then flip else grid
+    moveStep = 1.5
+    zoomStep = 0.1
+    minZoom = 0.30
+    rotationStep = 0.1
     camera'
-      | keyboard == Just SDL.ScancodeW = moveCamera (vec 0 0.1) camera
-      | keyboard == Just SDL.ScancodeS = moveCamera (vec 0 (-0.1)) camera
-      | keyboard == Just SDL.ScancodeA = moveCamera (vec (-0.1) 0) camera
-      | keyboard == Just SDL.ScancodeD = moveCamera (vec 0.1 0) camera
-      | keyboard == Just SDL.ScancodeE = rotateCamera (-0.1) camera
-      | keyboard == Just SDL.ScancodeR = rotateCamera 0.1 camera
-      | keyboard == Just SDL.ScancodeEquals = camera {zoom = camera.zoom * 1.1}
-      | keyboard == Just SDL.ScancodeMinus, camera.zoom >= 0.30 = camera {zoom = camera.zoom - 0.25}
-      | keyboard == Just SDL.Scancode0 = camera {zoom = 1.0}
+      | keyIs SDL.ScancodeUp = moveCamera (vec 0 moveStep) camera
+      | keyIs SDL.ScancodeDown = moveCamera (vec 0 (-moveStep)) camera
+      | keyIs SDL.ScancodeLeft = moveCamera (vec (-moveStep) 0) camera
+      | keyIs SDL.ScancodeRight = moveCamera (vec moveStep 0) camera
+      | keyIs SDL.ScancodeE = rotateCamera rotationStep camera
+      | keyIs SDL.ScancodeR = rotateCamera (-rotationStep) camera
+      | keyIs SDL.ScancodeEquals = zoomInCamera zoomStep camera
+      | keyIs SDL.ScancodeMinus, camera.zoom >= minZoom = zoomInCamera (-zoomStep) camera
+      | keyIs SDL.Scancode0 = camera {zoom = 1.0, rotation = 0, position = vec 0 0}
       | otherwise = camera
+    keyIs code = Just code == keyboard
     pointer' = fromMaybe w.pointer mouseMoved
     flip
       | Just spot <- spot = gridFlip spot grid
@@ -557,6 +554,12 @@ rotateCamera r cam = cam {rotation = cam.rotation + r}
 moveCamera :: WorldVec -> Camera -> Camera
 moveCamera v cam = cam {position = cam.position + v}
 
+zoomCameraTo :: Float -> Camera -> Camera
+zoomCameraTo s cam = cam {zoom = cam.zoom * s}
+
+zoomInCamera :: Float -> Camera -> Camera
+zoomInCamera s = zoomCameraTo (1 + s)
+
 newtype PPU = PPU Float
 
 worldSize :: PixelVec -> PPU -> WorldVec
@@ -565,15 +568,24 @@ worldSize (WithVec w h) (PPU ppu) =
       y = fromIntegral h / ppu
    in vec x y
 
-worldToNDC :: Camera -> WindowSize -> PPU -> G.Transform
-worldToNDC cam (WithVec w h) (PPU ppu) =
+cameraTr :: WindowSize -> PPU -> Camera -> G.Transform
+cameraTr (WithVec w h) (PPU ppu) cam =
   let WithVec x y = cam.position
       w2 = (fromIntegral w / 2) / ppu
       h2 = (fromIntegral h / 2) / ppu
+      dx = -(x / w2)
+      dy = -(y / h2)
       r = cam.rotation
       sx = (cam.zoom / w2)
       sy = (cam.zoom / h2)
-   in G.scaleXY sx (-sy) <> G.rotateZ (-r) <> G.translate (-(x / w2)) (y / h2) 0
+   in srt (sx, -sy) (-r) (dx, dy)
+
+srt :: (Float, Float) -> Float -> (Float, Float) -> G.Transform
+srt (sx, sy) r (x, y) = G.translate tx ty 0 <> r' <> s
+  where
+    r' = G.rotateZ r
+    s = G.scaleXY sx sy
+    G.WithVec3 tx ty _ = G.vec3 x y 0 `G.apply` (G.inverse s <> G.inverse r')
 
 pixToWorld :: Camera -> WindowSize -> PPU -> G.Transform
 pixToWorld cam (WithVec w h) (PPU ppu) =
@@ -583,7 +595,7 @@ pixToWorld cam (WithVec w h) (PPU ppu) =
       r = cam.rotation
       sx = cam.zoom / ppu
       sy = cam.zoom / ppu
-   in G.scaleXY sx (-sy) <> G.rotateZ r <> G.translate (x - w2) (y + h2) 0
+   in srt (sx, -sy) (-r) (x - w2, y + h2)
 
 pixPosToWorld :: Camera -> PixelVec -> WorldVec
 pixPosToWorld cam pos = let G.WithVec2 x y = tr pos (pixToWorld cam windowSize ppu) in vec x y
@@ -592,7 +604,7 @@ pixPosToWorld cam pos = let G.WithVec2 x y = tr pos (pixToWorld cam windowSize p
 sprites :: World -> [Tex.SpriteInWorld]
 sprites World {atlas, grid, gridStuff, pointer, cardSize, camera} =
   let mark x y = putInWorld (Atlas.sprite atlas "back-side") $ vec x y
-   in [mark 0 0, mark 0 1, mark 1 0]
+   in [mark 0 0, mark 0 1, mark 1 0, mark 2 2]
   where
     -- grd grid ++ maybeToList (highlight <$> spot pointerWorld) ++ [pointerInWorld]
 
@@ -663,8 +675,8 @@ renderSpriteInWorld
     where
       vert x y uv = let xy = vec @WorldVec x y in Vert.Vertex (ndc (tr xy m)) uv sprite.texture
       ndc (G.WithVec2 x y) =
-        let G.WithVec2 x' y' = tr @WorldVec (vec x y) (worldToNDC cam windowSize ppu) in vec x' y' :: NDCVec
-      m = G.scaleXY sx sy <> G.rotateZ rotation <> G.translate x y 0
+        let G.WithVec2 x' y' = tr @WorldVec (vec x y) (cameraTr windowSize ppu cam) in vec x' y' :: NDCVec
+      m = srt (sx, sy) rotation (x, y)
 
 descriptorSetLayout :: Vk.Device -> Word32 -> Managed Vk.DescriptorSetLayout
 descriptorSetLayout dev count = do
@@ -731,27 +743,6 @@ descriptorSet dev layout pool =
             VkDescriptorSetAllocateInfo.setLayouts = [layout]
           }
    in V.head <$> managed (Vk.withDescriptorSets dev info bracket)
-
-bindLights :: (MonadIO io) => Vk.Device -> Vk.DescriptorSet -> Vk.Buffer -> io ()
-bindLights dev set lights =
-  let info =
-        Vk.SomeStruct
-          Vk.zero
-            { VkWriteDescriptorSet.dstSet = set,
-              VkWriteDescriptorSet.dstBinding = 1, -- TODO: magic number, use a configurable value
-              VkWriteDescriptorSet.descriptorType = Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-              VkWriteDescriptorSet.descriptorCount = 1,
-              VkWriteDescriptorSet.bufferInfo = [bufferInfo],
-              VkWriteDescriptorSet.dstArrayElement = 0
-            }
-   in Vk.updateDescriptorSets dev [info] []
-  where
-    bufferInfo =
-      Vk.zero
-        { VkDescriptorBufferInfo.buffer = lights,
-          VkDescriptorBufferInfo.offset = 0,
-          VkDescriptorBufferInfo.range = Vk.WHOLE_SIZE -- TODO: better value ?
-        }
 
 bindViewport :: (MonadIO io) => Vk.Device -> Vk.DescriptorSet -> Vk.Buffer -> io ()
 bindViewport dev set viewport =

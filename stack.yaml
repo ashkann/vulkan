@@ -59,9 +59,10 @@ packages:
 # arch: x86_64
 #
 # Extra directories used by Stack for building
-# extra-include-dirs: [/Users/A.Nazary/Haskell/vulkan/imgui]
-# extra-lib-dirs: [/Users/A.Nazary/Haskell/vulkan/imgui]
-#
+# extra-include-dirs:
+  # - /Users/A.Nazary/VulkanSDK/1.4.313.1/macOS/include
+# extra-lib-dirs:
+  # - /Users/A.Nazary/VulkanSDK/1.4.313.1/macOS/lib
 # Allow a newer minor version of GHC than the snapshot specifies
 # compiler-check: newer-minor
 
@@ -73,21 +74,20 @@ packages:
 
 extra-deps:
   - vulkan-3.26.1
-  - vulkan-utils-0.5.10.6
+  # - vulkan-utils-0.5.10.6
   - VulkanMemoryAllocator-0.11.0.1
-  - dear-imgui-2.2.0
+  # - dear-imgui-2.2.0
   - geomancy-0.2.6.0
-  - gl-block-1.0
-  - ptrdiff-0
-  - lens-tutorial-1.0.5
+  - gl-block-1.0 # geomancy
+  - ptrdiff-0 # geomancy
 
 # build:
 #   executable-profiling: true  
 
-flags:
-  dear-imgui:
-    vulkan: true
-    sdl: true
-    opengl2: false
-    opengl3: false
-    glfw: false
+# flags:
+#   dear-imgui:
+#     vulkan: true
+#     sdl: true
+#     opengl2: false
+#     opengl3: false
+#     glfw: false

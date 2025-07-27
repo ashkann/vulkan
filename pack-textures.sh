@@ -1,10 +1,14 @@
 #!/usr/bin/env sh
-file=runnable-texturepacker.jar
-if [ ! -e "$file" ]; then
-    echo "$file not found, downloading..."
-    curl "https://libgdx-nightlies.s3.amazonaws.com/libgdx-runnables/$file" --output "$file"
+if [ -z "$1" ]
+  then
+    echo "Project name is required."
+    exit 1
+fi
+project=$1
+packer=runnable-texturepacker.jar
+if [ ! -e "$packer" ]; then
+    echo "$packer not found, downloading..."
+    curl "https://libgdx-nightlies.s3.amazonaws.com/libgdx-runnables/$packer" --output "$packer"
     echo "Download complete."
 fi
-# java -cp "$file" com.badlogic.gdx.tools.texturepacker.TexturePacker textures out atlas
-# java -cp "$file" com.badlogic.gdx.tools.texturepacker.TexturePacker textures/minesweeper out/minesweeper atlas
-java -cp "$file" com.badlogic.gdx.tools.texturepacker.TexturePacker textures/memory out/memory atlas
+java -cp "$packer" com.badlogic.gdx.tools.texturepacker.TexturePacker textures/$project out/$project atlas

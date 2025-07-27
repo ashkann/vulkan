@@ -2,17 +2,13 @@
 Trying to learn Vulkan and Haskell hand in hand by doing a 2D engine.
 
 # How to
-Compile the shaders, generate the atlas and run:
-```
-./run.sh
-```
 Compile the shaders:
 ```
-./compile_shaders.sh
+./compile-shaders.sh
 ```
 Generate the atlas
 ```
-./generate_atlas.sh
+./pack-texture.sh
 ```
 ![Screenshot](screenshot.gif)
 ## TODO (doubling as a roadmap)

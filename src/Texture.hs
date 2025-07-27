@@ -7,10 +7,10 @@
 {-# LANGUAGE NoFieldSelectors #-}
 
 module Texture
-  ( Texture (..),
-    DescriptorIndex,
+  ( DescriptorIndex,
     Sprite (..),
     SpriteInWorld (..),
+    SpriteInScreen (..),
     fromRGBA8PngFile,
     bind,
     withHostBuffer,
@@ -18,6 +18,7 @@ module Texture
     withImage,
     withImageAndView,
     putInWorld,
+    putInScreen,
   )
 where
 
@@ -31,6 +32,8 @@ import Data.Vector.Storable qualified as SV
 import Data.Word (Word32)
 import Foreign (Ptr, castPtr, copyArray, withForeignPtr)
 import Foreign.Storable (Storable)
+import GHC.Base qualified as G
+import Geomancy qualified as G
 import Measure
 import Utils
 import Vulkan qualified as Vk
@@ -46,18 +49,6 @@ import Vulkan.Zero qualified as Vk
 import VulkanMemoryAllocator qualified as Vma
 import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCreateInfo (..))
 import Prelude hiding (init, lookup)
-import qualified Geomancy as G
-import qualified GHC.Base as G
-
--- | TODO: remove the Texture and put everything into BoundTexture and rename it to Texture
-data Texture = Texture
-  { size :: PixelVec,
-    -- | TODO: Do we need to keep the image?
-    image :: Vk.Image,
-    -- | TODO: Do we need to keep the view?
-    view :: Vk.ImageView
-  }
-  deriving (Show)
 
 newtype DescriptorIndex = DescriptorIndex Word32 deriving (Storable)
 
@@ -76,12 +67,27 @@ data SpriteInWorld = SpriteInWorld
     scale :: G.Vec2
   }
 
+data SpriteInScreen = SpriteInScreen
+  { sprite :: Sprite,
+    origin :: LocalVec,
+    position :: NDCVec,
+    rotation :: Float,
+    scale :: G.Vec2
+  }
+
 -- | Put the sprite in the world with a given size.
 putInWorld ::
   Sprite ->
   WorldVec ->
   SpriteInWorld
 putInWorld sprite pos = SpriteInWorld {sprite = sprite, position = pos, origin = vec 0 0, rotation = 0, scale = G.vec2 1 1}
+
+putInScreen ::
+  Sprite ->
+  LocalVec ->  
+  NDCVec ->
+  SpriteInScreen
+putInScreen sprite origin pos = SpriteInScreen {sprite = sprite, position = pos, origin = origin, rotation = 0, scale = G.vec2 1 1}
 
 fromRGBA8PngFile :: Vma.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> FilePath -> Managed Vk.ImageView
 fromRGBA8PngFile allocator device pool queue path = do

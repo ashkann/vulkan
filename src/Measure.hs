@@ -81,6 +81,8 @@ class (Vec v) => Homo v where
 class (Vec u, Vec v, Homo u, Element v ~ Float) => Tr u v where
   tr :: G.Transform -> u -> v
   tr m v = let G.WithVec3 x' y' _ = G.apply (homo v) m in vec x' y'
+  tr2 :: G.Transform -> Element u -> Element u -> v
+  tr2 m x y = let u = vec @u x y in tr m u
 
 instance Vec PixelVec where
   type Element PixelVec = G.Element G.UVec2
@@ -203,7 +205,7 @@ localPosToNdc size origin position =
   where
     localToNdc ndcWidth factor x = x - ndcWidth * factor
 
-newtype PPU = PPU Float
+newtype PPU = PPU Float deriving Num
 
 pixelSizeToWorld :: PPU -> PixelVec -> WorldVec
 pixelSizeToWorld (PPU ppu) (WithVec w h) =

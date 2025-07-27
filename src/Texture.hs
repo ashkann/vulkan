@@ -19,6 +19,8 @@ module Texture
     withImageAndView,
     putInWorld,
     putInScreen,
+    rotateSprite,
+    spriteBottomRight,
   )
 where
 
@@ -56,12 +58,15 @@ newtype DescriptorIndex = DescriptorIndex Word32 deriving (Storable)
 data Sprite = Sprite
   { texture :: DescriptorIndex,
     region :: UVRegion,
-    resolution :: PixelVec
+    resolution :: PixelVec,
+    origin :: PixelVec
   }
+
+spriteBottomRight :: Sprite -> PixelVec
+spriteBottomRight (Sprite {resolution = WithVec w h}) = vec (w - 1) (h - 1)
 
 data SpriteInWorld = SpriteInWorld
   { sprite :: Sprite,
-    origin :: LocalVec,
     position :: WorldVec,
     rotation :: Float,
     scale :: G.Vec2
@@ -69,7 +74,6 @@ data SpriteInWorld = SpriteInWorld
 
 data SpriteInScreen = SpriteInScreen
   { sprite :: Sprite,
-    origin :: LocalVec,
     position :: NDCVec,
     rotation :: Float,
     scale :: G.Vec2
@@ -80,14 +84,16 @@ putInWorld ::
   Sprite ->
   WorldVec ->
   SpriteInWorld
-putInWorld sprite pos = SpriteInWorld {sprite = sprite, position = pos, origin = vec 0 0, rotation = 0, scale = G.vec2 1 1}
+putInWorld sprite pos = SpriteInWorld {sprite = sprite, position = pos, rotation = 0, scale = G.vec2 1 1}
+
+rotateSprite :: SpriteInWorld -> Float -> SpriteInWorld
+rotateSprite s r = s {rotation = r}
 
 putInScreen ::
   Sprite ->
-  LocalVec ->  
   NDCVec ->
   SpriteInScreen
-putInScreen sprite origin pos = SpriteInScreen {sprite = sprite, position = pos, origin = origin, rotation = 0, scale = G.vec2 1 1}
+putInScreen sprite pos = SpriteInScreen {sprite = sprite, position = pos, rotation = 0, scale = G.vec2 1 1}
 
 fromRGBA8PngFile :: Vma.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> FilePath -> Managed Vk.ImageView
 fromRGBA8PngFile allocator device pool queue path = do

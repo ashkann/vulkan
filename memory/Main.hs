@@ -43,7 +43,7 @@ import qualified Init
 import Measure
 import qualified SDL
 import qualified System.Random as Random
-import Texture (putInWorld)
+import Texture (putInWorld, rotateSprite)
 import qualified Texture as Tex
 import Utils
 import qualified Vertex as Vert
@@ -80,7 +80,7 @@ import qualified Vulkan.Zero as Vk
 import qualified VulkanMemoryAllocator as Vma
 import Prelude hiding (init)
 
-newtype DeltaTime = DeltaTime Float
+newtype TimeSeconds = TimeSeconds Float
 
 data Viewport = Viewport
   { viewportSize :: G.UVec2,
@@ -282,7 +282,7 @@ shuffle g0 init = do
 mkGrid :: [CardName] -> Grid
 mkGrid deck = Grid . Map.fromList $ zipWith f spots deck
   where
-    spots = [Spot (Row r, Column c) | r <- [0 .. 5], c <- [0 .. 5]]
+    spots = [Spot (Row r, Column c) | r <- [0 .. 5], c <- [0 .. 0]]
     f spot name = (spot, Card name FaceDown)
 
 world0 :: (MonadIO io) => Atlas.Atlas -> io World
@@ -467,7 +467,7 @@ mainLoop ::
   io () ->
   (w -> FrameData) ->
   (Int -> FrameData -> io ()) ->
-  (DeltaTime -> w -> io w) ->
+  (TimeSeconds -> w -> io w) ->
   (SDL.Event -> w -> io w) ->
   w ->
   io ()
@@ -490,7 +490,7 @@ mainLoop shutdown frameData frame worldTime worldEvent w0 =
           frame n $ frameData w
           w2 <- foldlM (flip worldEvent) w es
           t2 <- lockFrameRate 120 t
-          w3 <- let dt = fromIntegral (t2 - t) in worldTime (DeltaTime (dt / 1000)) w2
+          w3 <- let dt = fromIntegral (t2 - t) in worldTime (TimeSeconds (dt / 1000)) w2
           go (n + 1) t2 w3
 
 worldEvent :: (Monad io) => SDL.Event -> World -> io World
@@ -543,29 +543,32 @@ cardFlip :: Card -> Card
 cardFlip (Card name FaceUp) = Card name FaceDown
 cardFlip (Card name FaceDown) = Card name FaceUp
 
-worldTime :: (Monad io) => DeltaTime -> World -> io World
-worldTime (DeltaTime dt) w = return w {camera = camera'}
+worldTime :: (Monad io) => TimeSeconds -> World -> io World
+worldTime (TimeSeconds dt) w = return w {camera = camera'}
   where
     camera' = foldl (flip ($)) w.camera cameraActions
     cameraActions =
-      [moveCamera (vec 0 (moveStep * dt)) | Set.member SDL.ScancodeUp w.pressedKeys]
-        ++ [moveCamera (vec 0 (-moveStep * dt)) | Set.member SDL.ScancodeDown w.pressedKeys]
-        ++ [moveCamera (vec (-moveStep * dt) 0) | Set.member SDL.ScancodeLeft w.pressedKeys]
-        ++ [moveCamera (vec (moveStep * dt) 0) | Set.member SDL.ScancodeRight w.pressedKeys]
-        ++ [rotateCamera (rotationStep * dt) | Set.member SDL.ScancodeE w.pressedKeys]
-        ++ [rotateCamera (-rotationStep * dt) | Set.member SDL.ScancodeR w.pressedKeys]
+      [moveCamera (vec 0 (moveSpeed * dt)) | Set.member SDL.ScancodeUp w.pressedKeys]
+        ++ [moveCamera (vec 0 (-(moveSpeed * dt))) | Set.member SDL.ScancodeDown w.pressedKeys]
+        ++ [moveCamera (vec (-(moveSpeed * dt)) 0) | Set.member SDL.ScancodeLeft w.pressedKeys]
+        ++ [moveCamera (vec (moveSpeed * dt) 0) | Set.member SDL.ScancodeRight w.pressedKeys]
+        ++ [rotateCamera (rotationSpeed * dt) | Set.member SDL.ScancodeE w.pressedKeys]
+        ++ [rotateCamera (-(rotationSpeed * dt)) | Set.member SDL.ScancodeR w.pressedKeys]
         ++ [zoomInCamera (zoomStep * dt) | Set.member SDL.ScancodeEquals w.pressedKeys]
-        ++ [zoomInCamera (-zoomStep * dt) | Set.member SDL.ScancodeMinus w.pressedKeys, w.camera.zoom >= minZoom]
-    moveStep = 1.5
-    zoomStep = 0.1
+        ++ [zoomInCamera (-(zoomStep * dt)) | Set.member SDL.ScancodeMinus w.pressedKeys, w.camera.zoom >= minZoom]
+    moveSpeed = 5 -- World units / s
+    zoomStep = 1 -- 1 / s
     minZoom = 0.30
-    rotationStep = 0.1
+    rotationSpeed = (2 * pi) / 5 -- 360 in 5 seconds
 
 windowSize :: WindowSize
-windowSize = vec 1000 700
+windowSize = vec 600 400
 
 ppu :: PPU
-ppu = PPU 50
+ppu = PPU 100
+
+ppu_1 :: PPU -> Float
+ppu_1 (PPU ppu) = 1 / ppu
 
 data Camera = Camera {position :: WorldVec, rotation :: Float, zoom :: Float}
 
@@ -576,22 +579,21 @@ moveCamera :: WorldVec -> Camera -> Camera
 moveCamera v cam = cam {position = cam.position + v}
 
 zoomCameraTo :: Float -> Camera -> Camera
-zoomCameraTo s cam = cam {zoom = cam.zoom * s}
+zoomCameraTo z cam = cam {zoom = z}
 
 zoomInCamera :: Float -> Camera -> Camera
-zoomInCamera s = zoomCameraTo (1 + s)
+zoomInCamera s cam = zoomCameraTo (cam.zoom + s) cam
 
-ndcToWorld :: WindowSize -> PPU -> Camera -> G.Transform
-ndcToWorld (WithVec w h) (PPU ppu) cam =
-  let WithVec x y = cam.position
-      w2 = (fromIntegral w / 2) / ppu
-      h2 = (fromIntegral h / 2) / ppu
-      dx = -(x / w2)
-      dy = -(y / h2)
-      r = cam.rotation
-      sx = (cam.zoom / w2)
-      sy = (cam.zoom / h2)
-   in srt (sx, -sy) (-r) (dx, dy)
+srt :: (Float, Float) -> Float -> (Float, Float) -> G.Transform
+srt (sx, sy) r (tx, ty) = G.translate tx ty 0 <> G.rotateZ r <> G.scaleXY sx sy
+
+view :: Camera -> G.Transform
+view Camera {position = WithVec x y, rotation, zoom} = G.inverse $ srt (zoom, zoom) rotation (x, y)
+
+projection :: WindowSize -> PPU -> Float -> G.Transform
+projection (WithVec w h) (PPU ppu) zoom = G.scaleXY (s w) (-(s h))
+  where
+    s x = (2 * ppu * zoom) / fromIntegral x
 
 pixelToWorld :: WindowSize -> PPU -> Camera -> G.Transform
 pixelToWorld (WithVec w h) (PPU ppu) cam =
@@ -605,14 +607,6 @@ pixelToWorld (WithVec w h) (PPU ppu) cam =
       sy = cam.zoom / ppu
    in srt (sx, -sy) (-r) (dx, dy)
 
--- TODO: arg type must be VecX
-srt :: (Float, Float) -> Float -> (Float, Float) -> G.Transform
-srt (sx, sy) r (x, y) = G.translate tx ty 0 <> r' <> s
-  where
-    r' = G.rotateZ r
-    s = G.scaleXY sx sy
-    G.WithVec3 tx ty _ = G.vec3 x y 0 `G.apply` (G.inverse s <> G.inverse r')
-
 sprites :: World -> [Tex.SpriteInWorld]
 sprites World {atlas, grid = (Grid grid), gridStuff, pointer, cardSize, camera} = grd
   where
@@ -624,7 +618,12 @@ sprites World {atlas, grid = (Grid grid), gridStuff, pointer, cardSize, camera} 
           r = floor $ (y + 1) / (h + px)
           c = floor $ (x + 1) / (w + py)
        in if (0 <= r && r <= 5) && (0 <= c && c <= 5) then Just (Spot (Row r, Column c)) else Nothing -- TODO: hardcoded "5"
-    grd = uncurry putAt <$> Map.toList grid
+      -- grd = uncurry putAt <$> Map.toList grid
+    grd =
+      [ putAt (Spot (Row 0, Column 0)) (Card (CardName "1") FaceUp),
+        putAt (Spot (Row 1, Column 0)) (Card (CardName "2") FaceUp),
+        putAt (Spot (Row 0, Column 1)) (Card (CardName "3") FaceUp)
+      ]
     highlight spot =
       let border = putInWorld (Atlas.sprite atlas "border") pointerPosWorld
        in -- tr = transform $ pos spot + (topLeft :: NDCVec)
@@ -632,10 +631,10 @@ sprites World {atlas, grid = (Grid grid), gridStuff, pointer, cardSize, camera} 
       where
         GridStuff {topLeft = WithVec top left, padding = WithVec hPadding vPadding} = gridStuff
         WithVec w h = cardSize
-    putAt spot crd = putInWorld (card crd) (pos spot)
+    putAt (Spot (Row r, Column c)) crd = let s = putInWorld (card crd) pos in s
       where
-        pos (Spot (Row r, Column c)) = vec (fromIntegral c * (w + hPadding) + left) (fromIntegral r * (h + vPadding) + top) :: WorldVec
-
+        pos = vec (fromIntegral c) (fromIntegral r)
+        rot = fromIntegral c * (pi / 16.0)
         card (Card (CardName name) FaceUp) = Atlas.sprite atlas name
         card (Card _ FaceDown) = faceDown
         GridStuff {topLeft = WithVec top left, padding = WithVec hPadding vPadding} = gridStuff
@@ -645,50 +644,66 @@ sprites World {atlas, grid = (Grid grid), gridStuff, pointer, cardSize, camera} 
 
 screenSprites :: World -> [Tex.SpriteInScreen]
 screenSprites (World {pointer, atlas}) =
-  let p = Tex.putInScreen (Atlas.sprite atlas "pointer") topLeft (pixelPosToNdc windowSize pointer)
-      r0 = Tex.putInScreen (Atlas.spriteIndexed atlas "rectangle" 0) topLeft topLeft
-      r1 = Tex.putInScreen (Atlas.spriteIndexed atlas "rectangle" 1) topRight topRight
-      r2 = Tex.putInScreen (Atlas.spriteIndexed atlas "rectangle" 2) (vec 0 0) bottomRight
-      r3 = Tex.putInScreen (Atlas.spriteIndexed atlas "rectangle" 3) (vec 0 0) bottomLeft
-      r4 = Tex.putInScreen (Atlas.spriteIndexed atlas "rectangle" 4) (vec 0 0) center
-   in [ r0,
-        r1,
-        r2,
-        r3,
-        r4,
-        p
+  let -- ptr = (Atlas.sprite atlas "pointer") {Tex.origin = topLeft}
+      -- p = Tex.putInScreen  topLeft (pixelPosToNdc windowSize pointer)
+      r0 = (Atlas.spriteIndexed atlas "rectangle" 0) {Tex.origin = vec 0 0}
+      r1 = (Atlas.spriteIndexed atlas "rectangle" 1) {Tex.origin = vec 100 0}
+      r2 = (Atlas.spriteIndexed atlas "rectangle" 2) {Tex.origin = vec 100 50}
+      r3 = (Atlas.spriteIndexed atlas "rectangle" 3) {Tex.origin = vec 0 50}
+      r4 = (Atlas.spriteIndexed atlas "rectangle" 4) {Tex.origin = vec 50 25}
+   in [ Tex.putInScreen r0 topLeft,
+        Tex.putInScreen r1 topRight,
+        Tex.putInScreen r2 bottomRight,
+        Tex.putInScreen r3 bottomLeft,
+        Tex.putInScreen r4 (vec 0 0)
       ]
 
 screenVertices :: WindowSize -> Tex.SpriteInScreen -> SV.Vector Vert.Vertex
 screenVertices
-  windowSize
-  (Tex.SpriteInScreen {sprite, position = (WithVec x y), rotation, origin = WithVec ox oy, scale = (G.WithVec2 sx sy)}) =
-    let WithVec w h = pixelSizeToNdc windowSize sprite.resolution
+  (WithVec sw sh)
+  (Tex.SpriteInScreen {sprite, position = WithVec x y, rotation, scale = G.WithVec2 sx sy}) =
+    let WithVec w h = sprite.resolution
+        top = 0
+        left = 0
+        right = fromIntegral w
+        bottom = fromIntegral h
         UVReg2 auv buv cuv duv = sprite.region
-        a = vert x y auv -- top left
-        b = vert (x + w) y buv -- top right
-        c = vert (x + w) (y + h) cuv -- bottom right
-        d = vert x (y + h) duv -- bottom left
+        a = vert left top auv -- top left
+        b = vert right top buv -- top right
+        c = vert right bottom cuv -- bottom right
+        d = vert left bottom duv -- bottom left
      in SV.fromList [a, b, c, c, d, a]
     where
-      vert x y uv = let xy = vec @NDCVec x y in Vert.Vertex {xy = tr local xy, uv = uv, texture = sprite.texture}
-      local = srt (sx, sy) rotation (ox, oy)
+      vert x y uv =
+        let p = tr @NDCVec @NDCVec local (tr2 @WorldVec @NDCVec model x y)
+         in Vert.Vertex {xy = p, uv = uv, texture = sprite.texture}
+      model = let WithVec x y = sprite.origin in srt (2 / fromIntegral sw, 2 / fromIntegral sh) 0 (-fromIntegral x, -fromIntegral y)
+      local = srt (sx, sy) rotation (x, y)
 
 vertices :: Camera -> Tex.SpriteInWorld -> SV.Vector Vert.Vertex
 vertices
   cam
   (Tex.SpriteInWorld {sprite, position = (WithVec x y), rotation, scale = (G.WithVec2 sx sy)}) =
-    let WithVec w h = pixelSizeToWorld ppu sprite.resolution
+    let WithVec _w _h = sprite.resolution
+        top = 0
+        left = 0
+        right = fromIntegral _w - 1
+        bottom = fromIntegral _h - 1
         UVReg2 auv buv cuv duv = sprite.region
-        a = vert x y auv -- top left
-        b = vert (x + w) y buv -- top right
-        c = vert (x + w) (y - h) cuv -- bottom right
-        d = vert x (y - h) duv -- bottom left
+        a = vert left top auv -- top left
+        b = vert right top buv -- top right
+        c = vert right bottom cuv -- bottom right
+        d = vert left bottom duv -- bottom left
      in SV.fromList [a, b, c, c, d, a]
     where
-      vert x y uv = let xy = vec @WorldVec x y in Vert.Vertex {xy = tr (local <> world) xy, uv = uv, texture = sprite.texture}
-      local = srt (sx, sy) rotation (x, y)
-      world = ndcToWorld windowSize ppu cam
+      vert x y uv = Vert.Vertex {xy = tr2 @WorldVec transform x y, uv = uv, texture = sprite.texture}
+      model = let s = ppu_1 ppu; WithVec x y = sprite.origin in srt (s, -s) rotation (fromIntegral x, fromIntegral y) -- Pixel (object space) to parent
+      local = srt (sx, sy) rotation (x, y) -- Place in parent
+      v = view cam
+      p = projection windowSize ppu cam.zoom
+      transform = p <> v <> local <> model
+
+-- transform =  object <> local <> v <> p
 
 descriptorSetLayout :: Vk.Device -> Word32 -> Managed Vk.DescriptorSetLayout
 descriptorSetLayout dev count = do

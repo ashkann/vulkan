@@ -2,9 +2,8 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE NoFieldSelectors #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE NoFieldSelectors #-}
 
 module Atlas
   ( atlas,
@@ -148,9 +147,9 @@ withAtlas allocator device commandPool gfxQueue descSet sampler atlasDir = do
   return $ Atlas {texture = descIndex, regions = regions}
 
 sprite :: Atlas -> String -> Tex.Sprite
-sprite atlas name = lookuoOrFail (mkSprite atlas.texture)
+sprite atlas name = lookupOrFail (mkSprite atlas.texture)
   where
-    lookuoOrFail f = maybe (notFound name) f (lookup atlas.regions name)
+    lookupOrFail f = maybe (notFound name) f (lookup atlas.regions name)
     notFound name = error $ "Can't find region " ++ name ++ " in atlas"
 
 spriteIndexed :: Atlas -> String -> Word32 -> Tex.Sprite
@@ -163,5 +162,6 @@ mkSprite tex Region {region = reg, size = res} =
   Tex.Sprite
     { texture = tex,
       region = reg,
-      resolution = res
+      resolution = res,
+      origin = vec 0 0
     }

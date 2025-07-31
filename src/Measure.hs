@@ -51,11 +51,13 @@ import Foreign.Storable (Storable)
 import qualified Geomancy as G
 import qualified Geomancy.Elementwise as G
 import qualified Geomancy.Transform as G
+import SRT (SRT)
+import qualified SRT
 import Prelude hiding (lookup)
 
 newtype NDCVec = NDCVec G.Vec2 deriving (Show, Num, Storable)
 
-newtype PixelVec = PixelVec G.UVec2 deriving (Show, Num)
+newtype PixelVec = PixelVec G.Vec2 deriving (Show, Num)
 
 newtype UVVec = UVVec G.Vec2 deriving (Show, Storable, Num)
 
@@ -73,21 +75,20 @@ pattern WithVec x y <- (unvec -> (x, y))
 class Vec v where
   type Element v :: Type
   vec :: Element v -> Element v -> v
+  fromTuple :: (Element v, Element v) -> v
+  fromTuple (x, y) = vec x y
   unvec :: v -> (Element v, Element v)
 
-class (Vec v) => Homo v where
-  homo :: v -> G.Vec3
-
-class (Vec u, Vec v, Homo u, Element v ~ Float) => Tr u v where
-  tr :: G.Transform -> u -> v
-  tr m v = let G.WithVec3 x' y' _ = G.apply (homo v) m in vec x' y'
-  tr2 :: G.Transform -> Element u -> Element u -> v
-  tr2 m x y = let u = vec @u x y in tr m u
+class (Vec u, Vec v, Element v ~ Float, Element u ~ Float) => Tr u v where
+  tr :: SRT -> u -> v
+  tr m (WithVec x y) = tr2 @u m x y
+  tr2 :: SRT -> Element u -> Element u -> v
+  tr2 m x y = let (x', y') = SRT.apply m x y in vec x' y'
 
 instance Vec PixelVec where
-  type Element PixelVec = G.Element G.UVec2
-  vec = coerce G.uvec2
-  unvec (PixelVec v) = let G.WithUVec2 x y = v in (x, y)
+  type Element PixelVec = G.Element G.Vec2
+  vec = coerce G.vec2
+  unvec (PixelVec v) = let G.WithVec2 x y = v in (x, y)
 
 instance Vec NDCVec where
   type Element NDCVec = G.Element G.Vec2
@@ -113,15 +114,6 @@ instance Vec WorldVec where
   type Element WorldVec = G.Element G.Vec2
   vec = coerce G.vec2
   unvec (WorldVec v) = let G.WithVec2 x y = v in (x, y)
-
-instance Homo WorldVec where
-  homo (WithVec x y) = G.vec3 x y 1.0
-
-instance Homo NDCVec where
-  homo (WithVec x y) = G.vec3 x y 1.0
-
-instance Homo PixelVec where
-  homo (WithVec x y) = G.vec3 (fromIntegral x) (fromIntegral y) 1.0
 
 instance Tr NDCVec NDCVec
 
@@ -178,20 +170,20 @@ instance Transform NDCVec where
 
 pixelPosToTex :: PixelVec -> PixelVec -> UVVec
 pixelPosToTex (WithVec w h) (WithVec x y) =
-  let u = fromIntegral x / fromIntegral w
-      v = fromIntegral y / fromIntegral h
+  let u =  x /  w
+      v =  y /  h
    in vec u v
 
 pixelPosToNdc :: WindowSize -> PixelVec -> NDCVec
 pixelPosToNdc (WithVec w h) (WithVec x y) =
-  let nx = (fromIntegral x / fromIntegral w) * 2
-      ny = (fromIntegral y / fromIntegral h) * 2
+  let nx = ( x / fromIntegral w) * 2
+      ny = ( y / fromIntegral h) * 2
    in vec (nx - 1.0) (ny - 1.0)
 
 pixelSizeToNdc :: WindowSize -> PixelVec -> NDCVec
 pixelSizeToNdc (WithVec ww wh) (WithVec w h) =
-  let nw = fromIntegral w / fromIntegral ww
-      nh = fromIntegral h / fromIntegral wh
+  let nw =  w / fromIntegral ww
+      nh =  h / fromIntegral wh
    in vec (nw * 2.0) (nh * 2.0)
 
 localPosToNdc :: NDCVec -> LocalVec -> LocalVec -> NDCVec
@@ -205,12 +197,12 @@ localPosToNdc size origin position =
   where
     localToNdc ndcWidth factor x = x - ndcWidth * factor
 
-newtype PPU = PPU Float deriving Num
+newtype PPU = PPU Float deriving (Num)
 
 pixelSizeToWorld :: PPU -> PixelVec -> WorldVec
 pixelSizeToWorld (PPU ppu) (WithVec w h) =
-  let x = fromIntegral w / ppu
-      y = fromIntegral h / ppu
+  let x =  w / ppu
+      y =  h / ppu
    in vec x y
 
 class (Vec v, Element v ~ Float) => Normalized v where

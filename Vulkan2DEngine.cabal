@@ -15,6 +15,7 @@ executable memory
       Atlas
       Init
       Measure
+      SRT
       Texture
       Utils
       Vertex

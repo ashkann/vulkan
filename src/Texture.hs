@@ -100,12 +100,12 @@ fromRGBA8PngFile allocator device pool queue path = do
   JP.ImageRGBA8 (JP.Image width height pixels) <- liftIO $ JP.readPng path >>= either (sayErr "Texture" . show) return
   let w = fromIntegral width
       h = fromIntegral height
-      size = w * h * 4
+      size = round $ w * h * 4
       format = Vk.FORMAT_R8G8B8A8_SRGB
       imageSize = vec w h
   (image, view) <- withImageAndView allocator device imageSize format
   do
-    (staging, mem) <- withHostBuffer allocator (fromIntegral size)
+    (staging, mem) <- withHostBuffer allocator size
     liftIO $ copy pixels mem (fromIntegral size)
     copyBufferToImage device pool queue staging image width height
     return view
@@ -126,8 +126,8 @@ withImage allocator (WithVec width height) format = do
   (image, _, _) <-
     let dims =
           Vk.Extent3D
-            { VkExtent3D.width = width,
-              VkExtent3D.height = height,
+            { VkExtent3D.width = round width,
+              VkExtent3D.height = round height,
               VkExtent3D.depth = 1
             }
         usage = Vk.IMAGE_USAGE_TRANSFER_SRC_BIT .|. Vk.IMAGE_USAGE_TRANSFER_DST_BIT .|. Vk.IMAGE_USAGE_SAMPLED_BIT .|. Vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT -- Put only what we actually need

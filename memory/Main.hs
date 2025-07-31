@@ -38,10 +38,11 @@ import Foreign (Ptr, Storable, Word32, Word64)
 import Foreign.Storable (Storable (..), sizeOf)
 import qualified Foreign.Storable.Record as Store
 import qualified Geomancy as G
-import qualified Geomancy.Transform as G
 import qualified Init
 import Measure
 import qualified SDL
+import SRT (SRT, srt)
+import qualified SRT
 import qualified System.Random as Random
 import Texture (putInWorld, rotateSprite)
 import qualified Texture as Tex
@@ -441,7 +442,7 @@ withFrames device gfx allocator stagingBufferSize vertexBufferSize lightBufferSi
         vertexBuffer <- withGPUBuffer allocator vertexBufferSize Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
         viewportBuffer <- withGPUBuffer allocator lightBufferSize Vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT
         let WithVec w h = windowSize
-        (image, view) <- Tex.withImageAndView allocator device (vec w h) Init.imageFormat
+        (image, view) <- Tex.withImageAndView allocator device (vec (fromIntegral w) (fromIntegral h)) Init.imageFormat
         return
           Frame
             { pool = pool,
@@ -584,18 +585,15 @@ zoomCameraTo z cam = cam {zoom = z}
 zoomInCamera :: Float -> Camera -> Camera
 zoomInCamera s cam = zoomCameraTo (cam.zoom + s) cam
 
-srt :: (Float, Float) -> Float -> (Float, Float) -> G.Transform
-srt (sx, sy) r (tx, ty) = G.translate tx ty 0 <> G.rotateZ r <> G.scaleXY sx sy
+view :: Camera -> SRT
+view Camera {position = WithVec x y, rotation, zoom} = SRT.inv $ srt (zoom, zoom) rotation (x, y)
 
-view :: Camera -> G.Transform
-view Camera {position = WithVec x y, rotation, zoom} = G.inverse $ srt (zoom, zoom) rotation (x, y)
-
-projection :: WindowSize -> PPU -> Float -> G.Transform
-projection (WithVec w h) (PPU ppu) zoom = G.scaleXY (s w) (-(s h))
+projection :: WindowSize -> PPU -> Float -> SRT
+projection (WithVec w h) (PPU ppu) zoom = srt (s w, -(s h)) 0 (0, 0)
   where
     s x = (2 * ppu * zoom) / fromIntegral x
 
-pixelToWorld :: WindowSize -> PPU -> Camera -> G.Transform
+pixelToWorld :: WindowSize -> PPU -> Camera -> SRT
 pixelToWorld (WithVec w h) (PPU ppu) cam =
   let WithVec x y = cam.position
       w2 = (fromIntegral w / 2) / ppu
@@ -651,12 +649,17 @@ screenSprites (World {pointer, atlas}) =
       r2 = (Atlas.spriteIndexed atlas "rectangle" 2) {Tex.origin = vec 100 50}
       r3 = (Atlas.spriteIndexed atlas "rectangle" 3) {Tex.origin = vec 0 50}
       r4 = (Atlas.spriteIndexed atlas "rectangle" 4) {Tex.origin = vec 50 25}
-   in [ Tex.putInScreen r0 topLeft,
+   in --  in [ rot (pi / 16) $ Tex.putInScreen r0 topLeft,
+      --       scl (G.vec2 1.1 1.1) $ Tex.putInScreen r1 topRight,
+      [ Tex.putInScreen r0 topLeft,
         Tex.putInScreen r1 topRight,
         Tex.putInScreen r2 bottomRight,
         Tex.putInScreen r3 bottomLeft,
         Tex.putInScreen r4 (vec 0 0)
       ]
+  where
+    rot r s = s {Tex.rotation = r} :: Tex.SpriteInScreen
+    scl k s = s {Tex.scale = k} :: Tex.SpriteInScreen
 
 screenVertices :: WindowSize -> Tex.SpriteInScreen -> SV.Vector Vert.Vertex
 screenVertices
@@ -665,8 +668,8 @@ screenVertices
     let WithVec w h = sprite.resolution
         top = 0
         left = 0
-        right = fromIntegral w
-        bottom = fromIntegral h
+        right = w
+        bottom = h
         UVReg2 auv buv cuv duv = sprite.region
         a = vert left top auv -- top left
         b = vert right top buv -- top right
@@ -674,21 +677,19 @@ screenVertices
         d = vert left bottom duv -- bottom left
      in SV.fromList [a, b, c, c, d, a]
     where
-      vert x y uv =
-        let p = tr @NDCVec @NDCVec local (tr2 @WorldVec @NDCVec model x y)
-         in Vert.Vertex {xy = p, uv = uv, texture = sprite.texture}
-      model = let WithVec x y = sprite.origin in srt (2 / fromIntegral sw, 2 / fromIntegral sh) 0 (-fromIntegral x, -fromIntegral y)
+      vert x y uv = Vert.Vertex {xy = tr2 @WorldVec (local <> embed) x y, uv = uv, texture = sprite.texture}
+      embed = let WithVec ox oy = sprite.origin in srt (2 / fromIntegral sw, 2 / fromIntegral sh) 0 (-ox, -oy)
       local = srt (sx, sy) rotation (x, y)
 
 vertices :: Camera -> Tex.SpriteInWorld -> SV.Vector Vert.Vertex
 vertices
   cam
   (Tex.SpriteInWorld {sprite, position = (WithVec x y), rotation, scale = (G.WithVec2 sx sy)}) =
-    let WithVec _w _h = sprite.resolution
+    let WithVec w h = sprite.resolution
         top = 0
         left = 0
-        right = fromIntegral _w - 1
-        bottom = fromIntegral _h - 1
+        right = w
+        bottom = h
         UVReg2 auv buv cuv duv = sprite.region
         a = vert left top auv -- top left
         b = vert right top buv -- top right
@@ -697,7 +698,7 @@ vertices
      in SV.fromList [a, b, c, c, d, a]
     where
       vert x y uv = Vert.Vertex {xy = tr2 @WorldVec transform x y, uv = uv, texture = sprite.texture}
-      model = let s = ppu_1 ppu; WithVec x y = sprite.origin in srt (s, -s) rotation (fromIntegral x, fromIntegral y) -- Pixel (object space) to parent
+      model = let s = ppu_1 ppu; WithVec x y = sprite.origin in srt (s, -s) rotation (x, y) -- Pixel (object space) to parent
       local = srt (sx, sy) rotation (x, y) -- Place in parent
       v = view cam
       p = projection windowSize ppu cam.zoom

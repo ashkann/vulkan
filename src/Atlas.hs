@@ -50,8 +50,8 @@ mkRegion ::
 mkRegion (WithVec aw ah) (WithVec rx ry) size@(WithVec rw rh) =
   Region {region = uvReg (u rx) (v ry) (u $ rx + rw) (v $ ry + rh), size = size}
   where
-    u x = fromIntegral x / fromIntegral aw
-    v y = fromIntegral y / fromIntegral ah
+    u x = x / aw
+    v y = y / ah
 
 lookup :: Regions -> String -> Maybe Region
 lookup (Regions rs) name = let key = Key (name, Nothing) in M.lookup key rs
@@ -130,7 +130,7 @@ vec2P = do
   x <- word32P
   _ <- spaces >> char ',' >> spaces
   y <- word32P
-  let v = vec x y
+  let v = vec (fromIntegral x) (fromIntegral y)
   return v
 
 data Atlas = Atlas

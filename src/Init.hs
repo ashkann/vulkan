@@ -184,7 +184,7 @@ withSwapChain ::
   Vk.SurfaceKHR ->
   QueueFamilyIndex Graphics ->
   QueueFamilyIndex Present ->
-  WindowSize ->
+  ViewportSize ->
   Managed (Vk.SwapchainKHR, Vk.Extent2D, V.Vector Vk.Image)
 withSwapChain
   gpu

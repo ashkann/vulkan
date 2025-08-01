@@ -562,7 +562,7 @@ worldTime (TimeSeconds dt) w = return w {camera = camera'}
     minZoom = 0.30
     rotationSpeed = (2 * pi) / 5 -- 360 in 5 seconds
 
-windowSize :: WindowSize
+windowSize :: ViewportSize
 windowSize = vec 600 400
 
 ppu :: PPU
@@ -588,12 +588,12 @@ zoomInCamera s cam = zoomCameraTo (cam.zoom + s) cam
 view :: Camera -> SRT
 view Camera {position = WithVec x y, rotation, zoom} = SRT.inv $ srt (zoom, zoom) rotation (x, y)
 
-projection :: WindowSize -> PPU -> Float -> SRT
+projection :: ViewportSize -> PPU -> Float -> SRT
 projection (WithVec w h) (PPU ppu) zoom = srt (s w, -(s h)) 0 (0, 0)
   where
     s x = (2 * ppu * zoom) / fromIntegral x
 
-pixelToWorld :: WindowSize -> PPU -> Camera -> SRT
+pixelToWorld :: ViewportSize -> PPU -> Camera -> SRT
 pixelToWorld (WithVec w h) (PPU ppu) cam =
   let WithVec x y = cam.position
       w2 = (fromIntegral w / 2) / ppu
@@ -655,13 +655,13 @@ screenSprites (World {pointer, atlas}) =
         Tex.putInScreen r1 topRight,
         Tex.putInScreen r2 bottomRight,
         Tex.putInScreen r3 bottomLeft,
-        Tex.putInScreen r4 $ vec 0 0
+        Tex.putInScreen r4 center
       ]
   where
     rot r s = s {Tex.rotation = r} :: Tex.SpriteInScreen
     scl k s = s {Tex.scale = k} :: Tex.SpriteInScreen
 
-screenVertices :: WindowSize -> Tex.SpriteInScreen -> SV.Vector Vert.Vertex
+screenVertices :: ViewportSize -> Tex.SpriteInScreen -> SV.Vector Vert.Vertex
 screenVertices
   ws
   (Tex.SpriteInScreen {sprite, position = WithVec x y, rotation, scale = G.WithVec2 sx sy}) =

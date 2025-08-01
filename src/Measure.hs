@@ -36,7 +36,7 @@ module Measure
     uvReg,
     localPosToNdc,
     transform,
-    WindowSize,
+    ViewportSize,
     mkWindowSize,
     pattern UVReg2,
     pixelSizeToWorld,
@@ -63,7 +63,7 @@ newtype UVVec = UVVec G.Vec2 deriving (Show, Storable, Num)
 
 newtype LocalVec = LocalVec G.Vec2
 
-data WindowSize = WindowSize Word32 Word32 deriving (Show)
+data ViewportSize = ViewportSize Word32 Word32 deriving (Show)
 
 newtype WorldVec = WorldVec G.Vec2 deriving (Show, Num)
 
@@ -105,10 +105,10 @@ instance Vec UVVec where
   vec = coerce G.vec2
   unvec (UVVec v) = let G.WithVec2 x y = v in (x, y)
 
-instance Vec WindowSize where
-  type Element WindowSize = Word32
-  vec = WindowSize
-  unvec (WindowSize w h) = (w, h)
+instance Vec ViewportSize where
+  type Element ViewportSize = Word32
+  vec = ViewportSize
+  unvec (ViewportSize w h) = (w, h)
 
 instance Vec WorldVec where
   type Element WorldVec = G.Element G.Vec2
@@ -123,7 +123,7 @@ instance Tr WorldVec WorldVec
 
 instance Tr PixelVec WorldVec
 
-mkWindowSize :: Word32 -> Word32 -> Maybe WindowSize
+mkWindowSize :: Word32 -> Word32 -> Maybe ViewportSize
 mkWindowSize w h
   | w >= 0 && h >= 0 = Just $ vec w h
   | otherwise = Nothing
@@ -170,20 +170,20 @@ instance Transform NDCVec where
 
 pixelPosToTex :: PixelVec -> PixelVec -> UVVec
 pixelPosToTex (WithVec w h) (WithVec x y) =
-  let u =  x /  w
-      v =  y /  h
+  let u = x / w
+      v = y / h
    in vec u v
 
-pixelPosToNdc :: WindowSize -> PixelVec -> NDCVec
+pixelPosToNdc :: ViewportSize -> PixelVec -> NDCVec
 pixelPosToNdc (WithVec w h) (WithVec x y) =
-  let nx = ( x / fromIntegral w) * 2
-      ny = ( y / fromIntegral h) * 2
+  let nx = (x / fromIntegral w) * 2
+      ny = (y / fromIntegral h) * 2
    in vec (nx - 1.0) (ny - 1.0)
 
-pixelSizeToNdc :: WindowSize -> PixelVec -> NDCVec
+pixelSizeToNdc :: ViewportSize -> PixelVec -> NDCVec
 pixelSizeToNdc (WithVec ww wh) (WithVec w h) =
-  let nw =  w / fromIntegral ww
-      nh =  h / fromIntegral wh
+  let nw = w / fromIntegral ww
+      nh = h / fromIntegral wh
    in vec (nw * 2.0) (nh * 2.0)
 
 localPosToNdc :: NDCVec -> LocalVec -> LocalVec -> NDCVec
@@ -201,8 +201,8 @@ newtype PPU = PPU Float deriving (Num)
 
 pixelSizeToWorld :: PPU -> PixelVec -> WorldVec
 pixelSizeToWorld (PPU ppu) (WithVec w h) =
-  let x =  w / ppu
-      y =  h / ppu
+  let x = w / ppu
+      y = h / ppu
    in vec x y
 
 class (Vec v, Element v ~ Float) => Normalized v where
@@ -219,10 +219,7 @@ class (Vec v, Element v ~ Float) => Normalized v where
   bottomRight :: v
   bottomRight = vec (right @v) (bottom @v)
   center :: v
-  center =
-    let x = (right @v) + (left @v) / 2
-        y = (top @v) + (bottom @v) / 2
-     in vec x y
+  center = vec (x / 2) (y / 2) where x = right @v + left @v; y = top @v + bottom @v
 
 instance Normalized NDCVec where
   top = -1.0

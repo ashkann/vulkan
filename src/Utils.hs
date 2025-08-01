@@ -84,7 +84,7 @@ applicationName = "Vulkan 2D Engine"
 vulkanVersion :: Word32
 vulkanVersion = Vk.API_VERSION_1_2
 
-withSDL2VulkanWindow :: WindowSize -> Managed (SDL.Window, Vk.Instance, Vk.SurfaceKHR)
+withSDL2VulkanWindow :: ViewportSize -> Managed (SDL.Window, Vk.Instance, Vk.SurfaceKHR)
 withSDL2VulkanWindow  s = do
   withSDL
   window <- Utils.withWindow s
@@ -129,7 +129,7 @@ withSurface w v@(Vk.Instance v' _) = managed $ bracket create destroy
     destroy s = Vk.destroySurfaceKHR v s Nothing <* say "Vulkan" "Destroyed surface"
     create = Vk.SurfaceKHR <$> SDL.vkCreateSurface w (castPtr v') <* say "SDL" "Vulkan surface created"
 
-withWindow :: WindowSize -> Managed SDL.Window
+withWindow :: ViewportSize -> Managed SDL.Window
 withWindow (WithVec w h) =
   managed $
     bracket

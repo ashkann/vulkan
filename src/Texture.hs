@@ -21,6 +21,7 @@ module Texture
     putInScreen,
     rotateSprite,
     spriteBottomRight,
+    embedIntoScreen,
   )
 where
 
@@ -37,6 +38,7 @@ import Foreign.Storable (Storable)
 import GHC.Base qualified as G
 import Geomancy qualified as G
 import Measure
+import SRT (SRT, srt)
 import Utils
 import Vulkan qualified as Vk
 import Vulkan qualified as VkBufferCreateInfo (BufferCreateInfo (..))
@@ -94,6 +96,9 @@ putInScreen ::
   NDCVec ->
   SpriteInScreen
 putInScreen sprite pos = SpriteInScreen {sprite = sprite, position = pos, rotation = 0, scale = G.vec2 1 1}
+
+embedIntoScreen :: WindowSize -> PixelVec -> SRT
+embedIntoScreen (WithVec w h) (WithVec ox oy) = srt (2 / fromIntegral w, 2 / fromIntegral h) 0 (0, 0) <> srt (1, 1) 0 (-ox, -oy)
 
 fromRGBA8PngFile :: Vma.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> FilePath -> Managed Vk.ImageView
 fromRGBA8PngFile allocator device pool queue path = do

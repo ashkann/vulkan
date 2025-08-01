@@ -1,13 +1,13 @@
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE StrictData #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE StrictData #-}
 
-module SRT (
-    SRT,
+module SRT
+  ( SRT,
     srt,
     inv,
-    apply
-)
+    apply,
+  )
 where
 
 data SRT = SRT

@@ -655,7 +655,7 @@ screenSprites (World {pointer, atlas}) =
         Tex.putInScreen r1 topRight,
         Tex.putInScreen r2 bottomRight,
         Tex.putInScreen r3 bottomLeft,
-        Tex.putInScreen r4 (vec 0 0)
+        Tex.putInScreen r4 $ vec 0 0
       ]
   where
     rot r s = s {Tex.rotation = r} :: Tex.SpriteInScreen
@@ -663,7 +663,7 @@ screenSprites (World {pointer, atlas}) =
 
 screenVertices :: WindowSize -> Tex.SpriteInScreen -> SV.Vector Vert.Vertex
 screenVertices
-  (WithVec sw sh)
+  ws
   (Tex.SpriteInScreen {sprite, position = WithVec x y, rotation, scale = G.WithVec2 sx sy}) =
     let WithVec w h = sprite.resolution
         top = 0
@@ -678,7 +678,7 @@ screenVertices
      in SV.fromList [a, b, c, c, d, a]
     where
       vert x y uv = Vert.Vertex {xy = tr2 @WorldVec (local <> embed) x y, uv = uv, texture = sprite.texture}
-      embed = let WithVec ox oy = sprite.origin in srt (2 / fromIntegral sw, 2 / fromIntegral sh) 0 (-ox, -oy)
+      embed = Tex.embedIntoScreen ws sprite.origin
       local = srt (sx, sy) rotation (x, y)
 
 vertices :: Camera -> Tex.SpriteInWorld -> SV.Vector Vert.Vertex

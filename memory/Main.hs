@@ -43,6 +43,7 @@ import Measure
 import qualified SDL
 import SRT (SRT, srt)
 import qualified SRT
+import Sprite
 import qualified System.Random as Random
 import qualified Texture as Tex
 import Utils
@@ -79,7 +80,6 @@ import qualified Vulkan.CStruct.Extends as Vk
 import qualified Vulkan.Zero as Vk
 import qualified VulkanMemoryAllocator as Vma
 import Prelude hiding (init)
-import Sprite
 
 newtype TimeSeconds = TimeSeconds Float
 
@@ -642,22 +642,18 @@ sprites World {atlas, grid = (Grid grid), gridStuff, pointer, cardSize, camera} 
 
 screenSprites :: World -> [SpriteInScreen]
 screenSprites (World {pointer, atlas}) =
-  let -- ptr = (Atlas.sprite atlas "pointer") {Tex.origin = topLeft}
-      -- p = Tex.putInScreen  topLeft (pixelPosToNdc windowSize pointer)
-      r0 = (Atlas.spriteIndexed atlas "rectangle" 0) {Sprite.origin = vec 0 0}
-      r1 = (Atlas.spriteIndexed atlas "rectangle" 1) {Sprite.origin = vec 100 0}
-      r2 = (Atlas.spriteIndexed atlas "rectangle" 2) {Sprite.origin = vec 100 50}
-      r3 = (Atlas.spriteIndexed atlas "rectangle" 3) {Sprite.origin = vec 0 50}
-      r4 = (Atlas.spriteIndexed atlas "rectangle" 4) {Sprite.origin = vec 50 25}
-   in --  in [ rot (pi / 16) $ Tex.putInScreen r0 topLeft,
-      --       scl (G.vec2 1.1 1.1) $ Tex.putInScreen r1 topRight,
-      [ putInScreen r0 topLeft,
-        putInScreen r1 topRight,
-        putInScreen r2 bottomRight,
-        putInScreen r3 bottomLeft,
-        putInScreen r4 center
-      ]
+  [ putInScreen r0 topLeft,
+    putInScreen r1 topRight,
+    putInScreen r2 bottomRight,
+    putInScreen r3 bottomLeft,
+    putInScreen r4 center
+  ]
   where
+    r0 = (Atlas.spriteIndexed atlas "rectangle" 0) {Sprite.origin = vec 0 0}
+    r1 = let sprite = Atlas.spriteIndexed atlas "rectangle" 1; WithVec w _ = sprite.resolution in sprite {Sprite.origin = vec w 0}
+    r2 = let sprite = Atlas.spriteIndexed atlas "rectangle" 2; WithVec w h = sprite.resolution in sprite {Sprite.origin = vec w h}
+    r3 = let sprite = Atlas.spriteIndexed atlas "rectangle" 3; WithVec _ h = sprite.resolution in sprite {Sprite.origin = vec 0 h}
+    r4 = let sprite = Atlas.spriteIndexed atlas "rectangle" 4; WithVec w h = sprite.resolution in sprite {Sprite.origin = vec (w / 2) (h / 2)}
     rot r s = s {Sprite.rotation = r} :: SpriteInScreen
     scl k s = s {Sprite.scale = k} :: SpriteInScreen
 

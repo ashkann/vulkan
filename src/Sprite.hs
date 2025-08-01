@@ -1,4 +1,5 @@
 {-# LANGUAGE DuplicateRecordFields #-}
+
 module Sprite
   ( Sprite (..),
     SpriteInWorld (..),
@@ -6,15 +7,15 @@ module Sprite
     putInWorld,
     putInScreen,
     rotateSprite,
-    spriteBottomRight,
     embedIntoScreen,
+    bottomLeft,
   )
 where
 
+import qualified Geomancy as G
+import Measure
 import SRT (SRT, srt)
 import Texture
-import Measure
-import qualified Geomancy as G
 
 data Sprite = Sprite
   { texture :: DescriptorIndex,
@@ -22,10 +23,6 @@ data Sprite = Sprite
     resolution :: PixelVec,
     origin :: PixelVec
   }
-
-spriteBottomRight :: Sprite -> PixelVec
-spriteBottomRight (Sprite {resolution = WithVec w h}) = vec (w - 1) (h - 1)
-
 data SpriteInWorld = SpriteInWorld
   { sprite :: Sprite,
     position :: WorldVec,

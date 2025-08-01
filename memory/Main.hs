@@ -44,7 +44,6 @@ import qualified SDL
 import SRT (SRT, srt)
 import qualified SRT
 import qualified System.Random as Random
-import Texture (putInWorld, rotateSprite)
 import qualified Texture as Tex
 import Utils
 import qualified Vertex as Vert
@@ -80,6 +79,7 @@ import qualified Vulkan.CStruct.Extends as Vk
 import qualified Vulkan.Zero as Vk
 import qualified VulkanMemoryAllocator as Vma
 import Prelude hiding (init)
+import Sprite
 
 newtype TimeSeconds = TimeSeconds Float
 
@@ -289,7 +289,7 @@ mkGrid deck = Grid . Map.fromList $ zipWith f spots deck
 world0 :: (MonadIO io) => Atlas.Atlas -> io World
 world0 atlas = do
   deck <- liftIO $ mkSuffeledDeck 18
-  let faceDown = Tex.putInWorld (Atlas.sprite atlas "back-side")
+  let faceDown = putInWorld (Atlas.sprite atlas "back-side")
    in return $
         World
           { pointer = vec 0 0,
@@ -605,7 +605,7 @@ pixelToWorld (WithVec w h) (PPU ppu) cam =
       sy = cam.zoom / ppu
    in srt (sx, -sy) (-r) (dx, dy)
 
-sprites :: World -> [Tex.SpriteInWorld]
+sprites :: World -> [SpriteInWorld]
 sprites World {atlas, grid = (Grid grid), gridStuff, pointer, cardSize, camera} = grd
   where
     pointerPosWorld = tr (pixelToWorld windowSize ppu camera) pointer
@@ -640,31 +640,31 @@ sprites World {atlas, grid = (Grid grid), gridStuff, pointer, cardSize, camera} 
         WithVec w h = cardSize
     faceDown = Atlas.sprite atlas "back-side"
 
-screenSprites :: World -> [Tex.SpriteInScreen]
+screenSprites :: World -> [SpriteInScreen]
 screenSprites (World {pointer, atlas}) =
   let -- ptr = (Atlas.sprite atlas "pointer") {Tex.origin = topLeft}
       -- p = Tex.putInScreen  topLeft (pixelPosToNdc windowSize pointer)
-      r0 = (Atlas.spriteIndexed atlas "rectangle" 0) {Tex.origin = vec 0 0}
-      r1 = (Atlas.spriteIndexed atlas "rectangle" 1) {Tex.origin = vec 100 0}
-      r2 = (Atlas.spriteIndexed atlas "rectangle" 2) {Tex.origin = vec 100 50}
-      r3 = (Atlas.spriteIndexed atlas "rectangle" 3) {Tex.origin = vec 0 50}
-      r4 = (Atlas.spriteIndexed atlas "rectangle" 4) {Tex.origin = vec 50 25}
+      r0 = (Atlas.spriteIndexed atlas "rectangle" 0) {Sprite.origin = vec 0 0}
+      r1 = (Atlas.spriteIndexed atlas "rectangle" 1) {Sprite.origin = vec 100 0}
+      r2 = (Atlas.spriteIndexed atlas "rectangle" 2) {Sprite.origin = vec 100 50}
+      r3 = (Atlas.spriteIndexed atlas "rectangle" 3) {Sprite.origin = vec 0 50}
+      r4 = (Atlas.spriteIndexed atlas "rectangle" 4) {Sprite.origin = vec 50 25}
    in --  in [ rot (pi / 16) $ Tex.putInScreen r0 topLeft,
       --       scl (G.vec2 1.1 1.1) $ Tex.putInScreen r1 topRight,
-      [ Tex.putInScreen r0 topLeft,
-        Tex.putInScreen r1 topRight,
-        Tex.putInScreen r2 bottomRight,
-        Tex.putInScreen r3 bottomLeft,
-        Tex.putInScreen r4 center
+      [ putInScreen r0 topLeft,
+        putInScreen r1 topRight,
+        putInScreen r2 bottomRight,
+        putInScreen r3 bottomLeft,
+        putInScreen r4 center
       ]
   where
-    rot r s = s {Tex.rotation = r} :: Tex.SpriteInScreen
-    scl k s = s {Tex.scale = k} :: Tex.SpriteInScreen
+    rot r s = s {Sprite.rotation = r} :: SpriteInScreen
+    scl k s = s {Sprite.scale = k} :: SpriteInScreen
 
-screenVertices :: ViewportSize -> Tex.SpriteInScreen -> SV.Vector Vert.Vertex
+screenVertices :: ViewportSize -> SpriteInScreen -> SV.Vector Vert.Vertex
 screenVertices
   ws
-  (Tex.SpriteInScreen {sprite, position = WithVec x y, rotation, scale = G.WithVec2 sx sy}) =
+  (SpriteInScreen {sprite, position = WithVec x y, rotation, scale = G.WithVec2 sx sy}) =
     let WithVec w h = sprite.resolution
         top = 0
         left = 0
@@ -678,13 +678,13 @@ screenVertices
      in SV.fromList [a, b, c, c, d, a]
     where
       vert x y uv = Vert.Vertex {xy = tr2 @WorldVec (local <> embed) x y, uv = uv, texture = sprite.texture}
-      embed = Tex.embedIntoScreen ws sprite.origin
+      embed = embedIntoScreen ws sprite.origin
       local = srt (sx, sy) rotation (x, y)
 
-vertices :: Camera -> Tex.SpriteInWorld -> SV.Vector Vert.Vertex
+vertices :: Camera -> SpriteInWorld -> SV.Vector Vert.Vertex
 vertices
   cam
-  (Tex.SpriteInWorld {sprite, position = (WithVec x y), rotation, scale = (G.WithVec2 sx sy)}) =
+  (SpriteInWorld {sprite, position = (WithVec x y), rotation, scale = (G.WithVec2 sx sy)}) =
     let WithVec w h = sprite.resolution
         top = 0
         left = 0

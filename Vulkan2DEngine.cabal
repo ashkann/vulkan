@@ -15,6 +15,7 @@ executable memory
       Atlas
       Init
       Measure
+      Sprite
       SRT
       Texture
       Utils

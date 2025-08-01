@@ -30,6 +30,7 @@ import Utils (sayErr)
 import qualified Vulkan as Vk
 import qualified VulkanMemoryAllocator as Vk
 import Prelude hiding (lookup)
+import Sprite(Sprite(..))
 
 newtype Key = Key (String, Maybe Word32)
   deriving (Show)
@@ -146,20 +147,20 @@ withAtlas allocator device commandPool gfxQueue descSet sampler atlasDir = do
   [descIndex] <- Tex.bind device descSet [tex] sampler
   return $ Atlas {texture = descIndex, regions = regions}
 
-sprite :: Atlas -> String -> Tex.Sprite
+sprite :: Atlas -> String -> Sprite
 sprite atlas name = lookupOrFail (mkSprite atlas.texture)
   where
     lookupOrFail f = maybe (notFound name) f (lookup atlas.regions name)
     notFound name = error $ "Can't find region " ++ name ++ " in atlas"
 
-spriteIndexed :: Atlas -> String -> Word32 -> Tex.Sprite
+spriteIndexed :: Atlas -> String -> Word32 -> Sprite
 spriteIndexed (Atlas {texture = tex, regions = atlas}) name index =
   let reg = lookupIndexed atlas name index
    in mkSprite tex reg
 
-mkSprite :: Tex.DescriptorIndex -> Region -> Tex.Sprite
+mkSprite :: Tex.DescriptorIndex -> Region -> Sprite
 mkSprite tex Region {region = reg, size = res} =
-  Tex.Sprite
+  Sprite
     { texture = tex,
       region = reg,
       resolution = res,

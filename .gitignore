@@ -3,3 +3,4 @@ Vulkan2DEngine.cabal
 out/
 *~
 .DS_Store
+dist-newstyle

@@ -41,7 +41,7 @@ import qualified Geomancy as G
 import qualified Init
 import Measure
 import qualified SDL
-import SRT (SRT, srt, srt2affine)
+import SRT (Affine, SRT, srt, srt2affine)
 import qualified SRT
 import Sprite
 import qualified System.Random as Random
@@ -302,7 +302,7 @@ shuffle g0 init = do
 mkGrid :: [CardName] -> Grid
 mkGrid deck = Grid . Map.fromList $ zipWith f spots deck
   where
-    spots = [Spot (Row r, Column c) | r <- [0 .. 5], c <- [0 .. 0]]
+    spots = [Spot (Row r, Column c) | r <- [0 .. 5], c <- [0 .. 5]]
     f spot name = (spot, Card name FaceDown)
 
 world0 :: (MonadIO io) => Atlas.Atlas -> io World
@@ -582,7 +582,7 @@ worldTime (TimeSeconds dt) w = return w {camera = camera'}
     rotationSpeed = (2 * pi) / 5 -- 360 in 5 seconds
 
 windowSize :: ViewportSize
-windowSize = vec 800 400
+windowSize = vec 800 600
 
 ppu :: PPU
 ppu = PPU 100
@@ -604,11 +604,11 @@ zoomCameraTo z cam = cam {zoom = z}
 zoomInCamera :: Float -> Camera -> Camera
 zoomInCamera s cam = zoomCameraTo (cam.zoom + s) cam
 
-view :: Camera -> SRT
-view Camera {position = WithVec x y, rotation, zoom} = SRT.inv $ srt (zoom, zoom) rotation (x, y)
+view :: Camera -> Affine
+view Camera {position = WithVec x y, rotation, zoom} = srt2affine . SRT.inv $ srt (zoom, zoom) rotation (x, y)
 
-projection :: ViewportSize -> PPU -> Float -> SRT
-projection (WithVec w h) (PPU ppu) zoom = srt (s w, -(s h)) 0 (0, 0)
+projection :: ViewportSize -> PPU -> Float -> Affine
+projection (WithVec w h) (PPU ppu) zoom = srt2affine $ srt (s w, -(s h)) 0 (0, 0)
   where
     s x = (2 * ppu * zoom) / fromIntegral x
 
@@ -625,7 +625,7 @@ pixelToWorld (WithVec w h) (PPU ppu) cam =
    in srt (sx, -sy) (-r) (dx, dy)
 
 sprites :: World -> [SpriteInWorld]
-sprites World {atlas, grid = (Grid grid), gridStuff, pointer, cardSize, camera} = [] -- grd
+sprites World {atlas, grid = (Grid grid), gridStuff, pointer, cardSize, camera} = grd
   where
     pointerPosWorld = tr (srt2affine $ pixelToWorld windowSize ppu camera) pointer
     spot pos =
@@ -635,12 +635,12 @@ sprites World {atlas, grid = (Grid grid), gridStuff, pointer, cardSize, camera} 
           r = floor $ (y + 1) / (h + px)
           c = floor $ (x + 1) / (w + py)
        in if (0 <= r && r <= 5) && (0 <= c && c <= 5) then Just (Spot (Row r, Column c)) else Nothing -- TODO: hardcoded "5"
-      -- grd = uncurry putAt <$> Map.toList grid
-      -- grd =
-      --   [ putAt (Spot (Row 0, Column 0)) (Card (CardName "1") FaceUp),
-      --     putAt (Spot (Row 1, Column 0)) (Card (CardName "2") FaceUp),
-      --     putAt (Spot (Row 0, Column 1)) (Card (CardName "3") FaceUp)
-      --   ]
+    grd = uncurry putAt <$> Map.toList grid
+    -- grd =
+    --     [ putAt (Spot (Row 0, Column 0)) (Card (CardName "1") FaceUp),
+    --       putAt (Spot (Row 1, Column 0)) (Card (CardName "2") FaceUp),
+    --       putAt (Spot (Row 0, Column 1)) (Card (CardName "3") FaceUp)
+    --     ]
     highlight spot =
       let border = putInWorld (Atlas.sprite atlas "border") pointerPosWorld
        in -- tr = transform $ pos spot + (topLeft :: NDCVec)
@@ -696,25 +696,20 @@ screenVertices ws ss =
 vertices :: Camera -> SpriteInWorld -> SV.Vector Vert.Vertex
 vertices
   cam
-  (SpriteInWorld {sprite, position = (WithVec x y), rotation, scale = (G.WithVec2 sx sy)}) =
-    let WithVec w h = sprite.resolution
-        top = 0
-        left = 0
-        right = w
-        bottom = h
-        UVReg2 auv buv cuv duv = sprite.region
-        a = vert left top auv -- top left
-        b = vert right top buv -- top right
-        c = vert right bottom cuv -- bottom right
-        d = vert left bottom duv -- bottom left
+  ss@(SpriteInWorld {sprite, position = (WithVec x y), rotation, scale = (G.WithVec2 sx sy)}) =
+    let WithVec w h = ss.sprite.resolution
+        UVReg2 auv buv cuv duv = ss.sprite.region
+        a = vert 0 0 auv -- top left
+        b = vert w 0 buv -- top right
+        c = vert w h cuv -- bottom right
+        d = vert 0 h duv -- bottom left
      in SV.fromList [a, b, c, c, d, a]
     where
-      vert x y uv = Vert.Vertex {xy = tr2 @WorldVec transform x y, uv = uv, texture = sprite.texture}
-      model = let s = ppu_1 ppu; WithVec x y = sprite.origin in srt (s, -s) rotation (x, y) -- Pixel (object space) to parent
+      vert x y uv = Vert.Vertex {xy = tr2 @WorldVec model x y, uv = uv, texture = sprite.texture}
+      embed = let s = ppu_1 ppu; WithVec x y = sprite.origin in srt (s, -s) rotation (x, y) -- Pixel (object space) to parent
       local = srt (sx, sy) rotation (x, y) -- Place in parent
-      v = view cam
-      p = projection windowSize ppu cam.zoom
-      transform = srt2affine p <> srt2affine v <> srt2affine local <> srt2affine model
+      proj = projection windowSize ppu cam.zoom
+      model = proj <> view cam <> srt2affine local <> srt2affine embed
 
 -- transform =  object <> local <> v <> p
 

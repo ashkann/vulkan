@@ -133,9 +133,9 @@ main = main1
 main2 = do
   print ps2
   print $ SRT.apply local <$> corners
-  -- print $ SRT.apply proj <$> ps2
-  -- print $ SRT.apply proj . SRT.apply local <$> corners
-  -- print $ SRT.apply (proj <> local) <$> corners
+  print $ SRT.apply proj <$> ps2
+  print $ SRT.apply proj . SRT.apply local <$> corners
+  print $ SRT.apply (proj <> local) <$> corners
   where
     -- print $ SRT.apply proj (100, 200)
     -- print $ SRT.apply (proj <> local) p
@@ -661,11 +661,11 @@ sprites World {atlas, grid = (Grid grid), gridStuff, pointer, cardSize, camera} 
 
 screenSprites :: World -> [SpriteInScreen]
 screenSprites (World {pointer, atlas}) =
-  [ rot (-(pi / 4)) $ putInScreen r0 (vec 0 0),
-    putInScreen r1 (vec w 0),
-    putInScreen r2 (vec w h),
-    putInScreen r3 (vec 0 h),
-    rot (pi / 4) $ putInScreen r4 (vec (w / 2) (h / 2))
+  [ rot (pi / 4) $ putInScreen r0 (vec 0 0),
+    rot (pi / 8) $ putInScreen r1 (vec w 0),
+    rot (pi / 16) $ putInScreen r2 (vec w h),
+    rot (pi / 32) $ putInScreen r3 (vec 0 h),
+    rot (pi / 32) $ putInScreen r4 (vec (w / 2) (h / 2))
   ]
   where
     WithVec _w _h = windowSize

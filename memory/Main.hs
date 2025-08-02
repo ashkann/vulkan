@@ -660,17 +660,19 @@ sprites World {atlas, grid = (Grid grid), gridStuff, pointer, cardSize, camera} 
     faceDown = Atlas.sprite atlas "back-side"
 
 screenSprites :: World -> [SpriteInScreen]
-screenSprites (World {pointer, atlas}) =
+screenSprites (World {pointer = p, atlas}) =
   [ rot (pi / 4) $ putInScreen r0 (vec 0 0),
     rot (pi / 8) $ putInScreen r1 (vec w 0),
     rot (pi / 16) $ putInScreen r2 (vec w h),
     scl (G.vec2 0.5 2) . rot (pi / 32) $ putInScreen r3 (vec 0 h),
-    scl (G.vec2 2 0.5) . rot (pi / 32) $ putInScreen r4 (vec (w / 2) (h / 2))
+    scl (G.vec2 2 0.5) . rot (pi / 32) $ putInScreen r4 (vec (w / 2) (h / 2)),
+    putInScreen pointer p
   ]
   where
     WithVec _w _h = windowSize
     w = fromIntegral _w
     h = fromIntegral _h
+    pointer = Atlas.sprite atlas "pointer"
     r0 = f 0 $ \_ _ -> vec 0 0
     r1 = f 1 $ \w _ -> vec w 0
     r2 = f 2 vec

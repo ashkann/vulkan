@@ -1,25 +1,56 @@
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE StrictData #-}
 
 module SRT
   ( SRT,
+    Affine,
     srt,
     inv,
     apply,
+    affine,
+    srt2affine,
   )
 where
 
 data SRT = SRT
-  { sx :: Float,
-    sy :: Float,
+  { sx, sy :: Float,
     r :: Float,
-    tx :: Float,
-    ty :: Float
+    tx, ty :: Float
   }
 
 srt :: (Float, Float) -> Float -> (Float, Float) -> SRT
 srt (sx, sy) r (tx, ty) = SRT sx sy r tx ty
+
+data Affine = Affine
+  -- X  Y  | T
+  { xx, yx, tx :: Float,
+    xy, yy, ty :: Float
+  }
+
+apply :: Affine -> (Float, Float) -> (Float, Float)
+apply Affine {xx, xy, yx, yy, tx, ty} (x, y) = (x', y')
+  where
+    x' = xx * x + yx * y + tx
+    y' = xy * x + yy * y + ty
+
+affine :: (Float, Float) -> (Float, Float) -> (Float, Float) -> Affine
+affine (xx, xy) (yx, yy) (tx, ty) = Affine {xx, xy, yx, yy, tx, ty}
+
+srt2affine :: SRT -> Affine
+srt2affine (SRT {sx, sy, r, tx, ty}) =
+  Affine
+    { xx = sx * c,
+      xy = sx * s,
+      yx = -(sy * s),
+      yy = sy * c,
+      tx = tx,
+      ty = ty
+    }
+  where
+    c = cos r
+    s = sin r
 
 inv :: SRT -> SRT
 inv (SRT {sx, sy, r, tx, ty}) =
@@ -27,37 +58,20 @@ inv (SRT {sx, sy, r, tx, ty}) =
     { sx = 1 / sx,
       sy = 1 / sy,
       r = -r,
-      tx = -(x1 * c) - y1 * s,
-      ty = x1 * s - y1 * c
+      tx = -tx,
+      ty = -ty
     }
-  where
-    x1 = tx / sx
-    y1 = ty / sy
-    c = cos r
-    s = sin r
 
-instance Semigroup SRT where
+instance Semigroup Affine where
   (<>) a b =
-    SRT
-      { sx = a.sx * b.sx,
-        sy = a.sy * b.sy,
-        r = a.r + b.r,
-        tx = a.tx + a.sx * b.tx * c - a.sy * b.ty * s,
-        ty = a.ty + a.sx * b.tx * s + a.sy * b.ty * c
+    Affine
+      { xx = a.xx * b.xx + a.yx * b.xy,
+        xy = a.xy * b.xx + a.yy * b.xy,
+        yx = a.xx * b.yx + a.yx * b.yy,
+        yy = a.xy * b.yx + a.yy * b.yy,
+        tx = a.xx * b.tx + a.yx * b.ty + a.tx,
+        ty = a.xy * b.tx + a.yy * b.ty + a.ty
       }
-    where
-      c = cos a.r
-      s = sin a.r
-
-instance Monoid SRT where
-  mempty = SRT {sx = 1.0, sy = 1.0, r = 0, tx = 0.0, ty = 0.0}
-
-apply :: SRT -> Float -> Float -> (Float, Float)
-apply (SRT {sx, sy, r, tx, ty}) x y = (x2, y2)
-  where
-    x2 = sxx * c - syy * s + tx
-    y2 = sxx * s + syy * c + ty
-    s = sin r
-    c = cos r
-    sxx = sx * x
-    syy = sy * y
+      
+instance Monoid Affine where
+  mempty = Affine {xx = 1, xy = 0, yx = 0, yy = 1, tx = 0, ty = 0}

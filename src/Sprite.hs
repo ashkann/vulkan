@@ -1,4 +1,5 @@
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 
 module Sprite
   ( Sprite (..),
@@ -7,14 +8,14 @@ module Sprite
     putInWorld,
     putInScreen,
     rotateSprite,
-    embedIntoScreen,
     bottomLeft,
+    embedIntoScreen,
   )
 where
 
 import qualified Geomancy as G
 import Measure
-import SRT (SRT, srt)
+import SRT (srt, srt2affine, Affine)
 import Texture
 
 data Sprite = Sprite
@@ -23,6 +24,7 @@ data Sprite = Sprite
     resolution :: PixelVec,
     origin :: PixelVec
   }
+
 data SpriteInWorld = SpriteInWorld
   { sprite :: Sprite,
     position :: WorldVec,
@@ -32,7 +34,7 @@ data SpriteInWorld = SpriteInWorld
 
 data SpriteInScreen = SpriteInScreen
   { sprite :: Sprite,
-    position :: NDCVec,
+    position :: PixelVec,
     rotation :: Float,
     scale :: G.Vec2
   }
@@ -49,9 +51,15 @@ rotateSprite s r = s {rotation = r}
 
 putInScreen ::
   Sprite ->
-  NDCVec ->
+  PixelVec ->
   SpriteInScreen
 putInScreen sprite pos = SpriteInScreen {sprite = sprite, position = pos, rotation = 0, scale = G.vec2 1 1}
 
-embedIntoScreen :: ViewportSize -> PixelVec -> SRT
-embedIntoScreen (WithVec w h) (WithVec ox oy) = srt (2 / fromIntegral w, 2 / fromIntegral h) 0 (0, 0) <> srt (1, 1) 0 (-ox, -oy)
+embedIntoScreen :: SpriteInScreen -> Affine
+embedIntoScreen ss = a <> b
+  where
+    b = srt2affine pivot
+    a = srt2affine $ srt (sx, sy) ss.rotation (x, y)
+    pivot = let WithVec ox oy = ss.sprite.origin in srt (1, 1) 0 (-ox, -oy)
+    G.WithVec2 sx sy = ss.scale
+    WithVec x y = ss.position

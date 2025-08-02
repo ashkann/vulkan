@@ -51,7 +51,7 @@ import Foreign.Storable (Storable)
 import qualified Geomancy as G
 import qualified Geomancy.Elementwise as G
 import qualified Geomancy.Transform as G
-import SRT (SRT)
+import SRT (Affine)
 import qualified SRT
 import Prelude hiding (lookup)
 
@@ -80,10 +80,10 @@ class Vec v where
   unvec :: v -> (Element v, Element v)
 
 class (Vec u, Vec v, Element v ~ Float, Element u ~ Float) => Tr u v where
-  tr :: SRT -> u -> v
+  tr :: Affine -> u -> v
   tr m (WithVec x y) = tr2 @u m x y
-  tr2 :: SRT -> Element u -> Element u -> v
-  tr2 m x y = let (x', y') = SRT.apply m x y in vec x' y'
+  tr2 :: Affine -> Element u -> Element u -> v
+  tr2 m x y = let (x', y') = SRT.apply m (x, y) in vec x' y'
 
 instance Vec PixelVec where
   type Element PixelVec = G.Element G.Vec2
@@ -122,6 +122,8 @@ instance Tr WorldVec NDCVec
 instance Tr WorldVec WorldVec
 
 instance Tr PixelVec WorldVec
+
+instance Tr PixelVec NDCVec
 
 mkWindowSize :: Word32 -> Word32 -> Maybe ViewportSize
 mkWindowSize w h

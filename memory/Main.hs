@@ -128,7 +128,7 @@ data Frame = Frame
 
 -- TODO: run inside a MonadError instance
 main :: IO ()
-main = main1 
+main = main1
 
 main2 = do
   print ps2
@@ -664,8 +664,8 @@ screenSprites (World {pointer, atlas}) =
   [ rot (pi / 4) $ putInScreen r0 (vec 0 0),
     rot (pi / 8) $ putInScreen r1 (vec w 0),
     rot (pi / 16) $ putInScreen r2 (vec w h),
-    rot (pi / 32) $ putInScreen r3 (vec 0 h),
-    rot (pi / 32) $ putInScreen r4 (vec (w / 2) (h / 2))
+    scl (G.vec2 0.5 2) . rot (pi / 32) $ putInScreen r3 (vec 0 h),
+    scl (G.vec2 2 0.5) . rot (pi / 32) $ putInScreen r4 (vec (w / 2) (h / 2))
   ]
   where
     WithVec _w _h = windowSize

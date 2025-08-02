@@ -140,7 +140,9 @@ withWindow (WithVec w h) =
       SDL.defaultWindow
         { SDL.windowInitialSize = size,
           SDL.windowGraphicsContext = SDL.VulkanContext,
-          SDL.windowPosition = SDL.Centered
+          SDL.windowPosition = SDL.Centered,
+          SDL.windowBorder = False,
+          SDL.windowHighDPI = False
         }
     size = SDL.V2 (fromIntegral w) (fromIntegral h)
 

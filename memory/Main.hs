@@ -605,7 +605,7 @@ zoomInCamera :: Float -> Camera -> Camera
 zoomInCamera s cam = zoomCameraTo (cam.zoom + s) cam
 
 view :: Camera -> Affine
-view Camera {position = WithVec x y, rotation, zoom} = srt2affine . SRT.inv $ srt (zoom, zoom) rotation (x, y)
+view Camera {position = WithVec x y, rotation, zoom} = srt2affine $ srt (zoom, zoom) (-rotation) (-x, -y)
 
 projection :: ViewportSize -> PPU -> Float -> Affine
 projection (WithVec w h) (PPU ppu) zoom = srt2affine $ srt (s w, -(s h)) 0 (0, 0)
@@ -698,7 +698,7 @@ screenVertices ws ss =
 vertices :: Camera -> SpriteInWorld -> SV.Vector Vert.Vertex
 vertices
   cam
-  ss@(SpriteInWorld {sprite, position = (WithVec x y), rotation, scale = (G.WithVec2 sx sy)}) =
+  ss =
     let WithVec w h = ss.sprite.resolution
         UVReg2 auv buv cuv duv = ss.sprite.region
         a = vert 0 0 auv -- top left
@@ -707,13 +707,15 @@ vertices
         d = vert 0 h duv -- bottom left
      in SV.fromList [a, b, c, c, d, a]
     where
-      vert x y uv = Vert.Vertex {xy = tr2 @WorldVec model x y, uv = uv, texture = sprite.texture}
-      embed = let s = ppu_1 ppu; WithVec x y = sprite.origin in srt (s, -s) rotation (x, y) -- Pixel (object space) to parent
-      local = srt (sx, sy) rotation (x, y) -- Place in parent
+      vert x y uv = Vert.Vertex {xy = tr2 @WorldVec model x y, uv = uv, texture = ss.sprite.texture}
+      pivot = let WithVec ox oy = ss.sprite.origin in srt (1, 1) 0 (-ox, -oy)
+      local =
+        let s = ppu_1 ppu
+            G.WithVec2 sx sy = ss.scale
+            WithVec x y = ss.position
+         in srt (s * sx, -(s * sy)) ss.rotation (x, y) -- Place in world
       proj = projection windowSize ppu cam.zoom
-      model = proj <> view cam <> srt2affine local <> srt2affine embed
-
--- transform =  object <> local <> v <> p
+      model = proj <> view cam <> srt2affine local <> srt2affine pivot
 
 descriptorSetLayout :: Vk.Device -> Word32 -> Managed Vk.DescriptorSetLayout
 descriptorSetLayout dev count = do

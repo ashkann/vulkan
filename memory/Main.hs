@@ -605,12 +605,16 @@ zoomInCamera :: Float -> Camera -> Camera
 zoomInCamera s cam = zoomCameraTo (cam.zoom + s) cam
 
 view :: Camera -> Affine
-view Camera {position = WithVec x y, rotation, zoom} = srt2affine $ srt (zoom, zoom) (-rotation) (-x, -y)
-
-projection :: ViewportSize -> PPU -> Float -> Affine
-projection (WithVec w h) (PPU ppu) zoom = srt2affine $ srt (s w, -(s h)) 0 (0, 0)
+view Camera {position = WithVec x y, rotation, zoom = z} = zoomAndRotate <> lookAt
   where
-    s x = (2 * ppu * zoom) / fromIntegral x
+    lookAt = srt2affine $ srt (1, 1) 0 (-x, -y)
+    lookAt2 = srt2affine $ srt (1, 1) 0 (x, y)
+    zoomAndRotate = srt2affine $ srt (z, z) (-rotation) (0, 0)
+
+projection :: ViewportSize -> PPU -> Affine
+projection (WithVec w h) (PPU ppu) = srt2affine $ srt (s w, -(s h)) 0 (0, 0)
+  where
+    s x = (2 * ppu) / fromIntegral x
 
 pixelToWorld :: ViewportSize -> PPU -> Camera -> SRT
 pixelToWorld (WithVec w h) (PPU ppu) cam =
@@ -714,7 +718,7 @@ vertices
             G.WithVec2 sx sy = ss.scale
             WithVec x y = ss.position
          in srt (s * sx, -(s * sy)) ss.rotation (x, y) -- Place in world
-      proj = projection windowSize ppu cam.zoom
+      proj = projection windowSize ppu
       model = proj <> view cam <> srt2affine local <> srt2affine pivot
 
 descriptorSetLayout :: Vk.Device -> Word32 -> Managed Vk.DescriptorSetLayout

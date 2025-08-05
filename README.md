@@ -13,5 +13,5 @@ Generate the atlas
 Initial attemps
 ![](screenshots/screenshot.gif)
 
-Got the affine transformations and SRT right on the screen space
-![](screenshots/affine.png)
+Got the affine transformations and SRT right on the screen and world spaces
+![](screenshots/affine.gif)q

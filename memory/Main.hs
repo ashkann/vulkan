@@ -720,7 +720,7 @@ vertices
             WithVec x y = ss.position
          in srt (s * sx, -(s * sy)) ss.rotation (x, y) -- Place in world
       proj = projection windowSize ppu
-      model = proj <> view cam <> srt2affine local -- <> srt2affine pivot
+      model = proj <> view cam <> srt2affine local <> srt2affine pivot
 
 descriptorSetLayout :: Vk.Device -> Word32 -> Managed Vk.DescriptorSetLayout
 descriptorSetLayout dev count = do

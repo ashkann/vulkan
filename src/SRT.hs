@@ -7,7 +7,6 @@ module SRT
   ( SRT,
     Affine,
     srt,
-    inv,
     apply,
     affine,
     srt2affine,
@@ -51,16 +50,6 @@ srt2affine (SRT {sx, sy, r, tx, ty}) =
   where
     c = cos r
     s = sin r
-
-inv :: SRT -> SRT
-inv (SRT {sx, sy, r, tx, ty}) =
-  SRT
-    { sx = 1 / sx,
-      sy = 1 / sy,
-      r = -r,
-      tx = -tx,
-      ty = -ty
-    }
 
 instance Semigroup Affine where
   (<>) a b =

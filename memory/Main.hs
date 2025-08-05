@@ -596,7 +596,9 @@ rotateCamera :: Float -> Camera -> Camera
 rotateCamera r cam = cam {rotation = cam.rotation + r}
 
 moveCamera :: WorldVec -> Camera -> Camera
-moveCamera v cam = cam {position = cam.position + v}
+moveCamera (WithVec dx dy) cam = cam {position = cam.position + vec dxCam dyCam}
+  where
+    (dxCam, dyCam) = SRT.apply (srt2affine $ srt (1, 1) cam.rotation (0, 0)) (dx, dy)
 
 zoomCameraTo :: Float -> Camera -> Camera
 zoomCameraTo z cam = cam {zoom = z}
@@ -605,11 +607,10 @@ zoomInCamera :: Float -> Camera -> Camera
 zoomInCamera s cam = zoomCameraTo (cam.zoom + s) cam
 
 view :: Camera -> Affine
-view Camera {position = WithVec x y, rotation, zoom = z} = zoomAndRotate <> lookAt
+view Camera {position = WithVec x y, rotation, zoom = z} = rotateAndZoom <> lookAt
   where
     lookAt = srt2affine $ srt (1, 1) 0 (-x, -y)
-    lookAt2 = srt2affine $ srt (1, 1) 0 (x, y)
-    zoomAndRotate = srt2affine $ srt (z, z) (-rotation) (0, 0)
+    rotateAndZoom = srt2affine $ srt (z, z) (-rotation) (0, 0)
 
 projection :: ViewportSize -> PPU -> Affine
 projection (WithVec w h) (PPU ppu) = srt2affine $ srt (s w, -(s h)) 0 (0, 0)
@@ -654,7 +655,7 @@ sprites World {atlas, grid = (Grid grid), gridStuff, pointer, cardSize, camera} 
         WithVec w h = cardSize
     putAt (Spot (Row r, Column c)) crd = let s = putInWorld (card crd) pos in s
       where
-        pos = vec (fromIntegral c) (fromIntegral r)
+        pos = vec (fromIntegral c * 1.1) (fromIntegral r * 1.1)
         rot = fromIntegral c * (pi / 16.0)
         card (Card (CardName name) FaceUp) = Atlas.sprite atlas name
         card (Card _ FaceDown) = faceDown
@@ -712,14 +713,14 @@ vertices
      in SV.fromList [a, b, c, c, d, a]
     where
       vert x y uv = Vert.Vertex {xy = tr2 @WorldVec model x y, uv = uv, texture = ss.sprite.texture}
-      pivot = let WithVec ox oy = ss.sprite.origin in srt (1, 1) 0 (-ox, -oy)
+      pivot = let WithVec ox oy = ss.sprite.origin in srt (1, 1) 0 (ox, -oy)
       local =
         let s = ppu_1 ppu
             G.WithVec2 sx sy = ss.scale
             WithVec x y = ss.position
          in srt (s * sx, -(s * sy)) ss.rotation (x, y) -- Place in world
       proj = projection windowSize ppu
-      model = proj <> view cam <> srt2affine local <> srt2affine pivot
+      model = proj <> view cam <> srt2affine local -- <> srt2affine pivot
 
 descriptorSetLayout :: Vk.Device -> Word32 -> Managed Vk.DescriptorSetLayout
 descriptorSetLayout dev count = do

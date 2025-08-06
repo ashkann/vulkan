@@ -19,7 +19,7 @@
 
 module Main (main) where
 
-import Affine (Affine, SRT, apply, inverse, srt, srt2affine)
+import Affine (Affine, inverse, srt, srt2affine)
 import qualified Atlas
 import qualified Camera as Cam
 import Control.Concurrent (threadDelay)
@@ -36,7 +36,7 @@ import Data.Vector ((!))
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector.Storable as SV
-import Foreign (Ptr, Storable, Word32, Word64)
+import Foreign (Ptr, Word32, Word64)
 import Foreign.Storable (Storable (..), sizeOf)
 import qualified Foreign.Storable.Record as Store
 import qualified Geomancy as G
@@ -88,27 +88,13 @@ data Viewport = Viewport
     _padding :: Word64 -- TODO: remove and make the Storable instance handle it
   }
 
-viewportStore :: Store.Dictionary Viewport
-viewportStore =
-  Store.run $
-    Viewport
-      <$> Store.element (.viewportSize)
-      <*> Store.element (const 0)
-
-instance Storable Viewport where
-  sizeOf = Store.sizeOf viewportStore
-  alignment = Store.alignment viewportStore
-  peek = Store.peek viewportStore
-  poke = Store.poke viewportStore
-
 frameData :: World -> FrameData
 frameData world =
   FrameData
     { verts =
         let worldVerts = mconcat $ vertices world.camera <$> sprites world
             screenVerts = mconcat $ screenVertices windowSize <$> screenSprites world
-         in worldVerts SV.++ screenVerts,
-      viewport = Viewport {viewportSize = let WithVec w h = windowSize in G.uvec2 w h, _padding = 0} -- TODO: remove _padding = 0
+         in worldVerts SV.++ screenVerts
     }
 
 data Frame = Frame
@@ -324,10 +310,7 @@ world0 atlas = do
             pressedKeys = Set.empty
           }
 
-data FrameData = FrameData
-  { verts :: SV.Vector Vert.Vertex,
-    viewport :: Viewport
-  }
+data FrameData = FrameData {verts :: SV.Vector Vert.Vertex}
 
 frame ::
   (MonadIO io) =>
@@ -356,12 +339,10 @@ frame device gfx present pipeline pipelineLayout swp descSet f frameData = do
           targetImage,
           targetView
         } = f
-      FrameData {verts, viewport = viewport'} = frameData
+      FrameData {verts} = frameData
       (swapchain, swapchainExtent, swapchainImages) = swp
   waitForFrame device f
-  liftIO $ Utils.copyToGpu2 device pool gfx viewport staging viewport'
   liftIO $ Utils.copyToGpu device pool gfx vertex staging verts
-  -- say "Global light" $ show viewport'.globalLight
   recordRender renderCmd vertex viewport (targetImage, targetView) swapchainExtent (fromIntegral $ SV.length verts)
   index <- Vk.acquireNextImageKHR device swapchain maxBound imageAvailable Vk.zero >>= \(r, index) -> checkSwapchainIsOld r $> index
   let swapchainImage = swapchainImages ! fromIntegral index

@@ -1,14 +1,23 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE StrictData #-}
+{-# LANGUAGE NoFieldSelectors #-}
 
 module Camera
-  ( Camera(..),
-    rotateCamera,
-    moveCamera,
-    zoomCameraTo,
-    zoomInCamera,
+  ( Camera (..),
+    rotate,
+    move,
+    cameraZoom,
     view,
     defaultCamera,
+    moveUp,
+    moveDown,
+    moveLeft,
+    moveRight,
+    rotateCw,
+    rotateCcw,
+    zoomIn,
+    zoomOut,
   )
 where
 
@@ -20,19 +29,43 @@ data Camera = Camera {position :: WorldVec, rotation :: Float, zoom :: Float}
 defaultCamera :: Camera
 defaultCamera = Camera {position = vec 0 0, rotation = 0, zoom = 1}
 
-rotateCamera :: Float -> Camera -> Camera
-rotateCamera r cam = cam {rotation = cam.rotation + r}
+rotate :: Float -> Camera -> Camera
+rotate r cam = cam {rotation = cam.rotation + r}
 
-moveCamera :: WorldVec -> Camera -> Camera
-moveCamera (WithVec dx dy) cam = cam {position = cam.position + vec dxCam dyCam}
+rotateCcw :: Float -> Camera -> Camera
+rotateCcw = rotate
+
+rotateCw :: Float -> Camera -> Camera
+rotateCw dr = rotate (-dr)
+
+move :: WorldVec -> Camera -> Camera
+move (WithVec dx dy) cam = cam {position = cam.position + vec dxCam dyCam}
   where
     (dxCam, dyCam) = Affine.apply (srt2affine $ srt (1, 1) cam.rotation (0, 0)) (dx, dy)
 
-zoomCameraTo :: Float -> Camera -> Camera
-zoomCameraTo z cam = cam {zoom = z}
+moveUp :: Float -> Camera -> Camera
+moveUp d = move $ vec 0 d
 
-zoomInCamera :: Float -> Camera -> Camera
-zoomInCamera s cam = zoomCameraTo (cam.zoom + s) cam
+moveDown :: Float -> Camera -> Camera
+moveDown d = move $ vec 0 (-d)
+
+moveLeft :: Float -> Camera -> Camera
+moveLeft d = move $ vec (-d) 0
+
+moveRight :: Float -> Camera -> Camera
+moveRight d = move $ vec d 0
+
+zoomTo :: Float -> Camera -> Camera
+zoomTo z cam = cam {zoom = z}
+
+cameraZoom :: Float -> Camera -> Camera
+cameraZoom ds cam = zoomTo (cam.zoom + ds) cam
+
+zoomIn :: Float -> Camera -> Camera
+zoomIn = cameraZoom
+
+zoomOut :: Float -> Camera -> Camera
+zoomOut dz = cameraZoom (-dz)
 
 view :: Camera -> Affine
 view Camera {position = WithVec x y, rotation, zoom = z} = rotateAndZoom <> lookAt

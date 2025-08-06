@@ -564,22 +564,21 @@ cardFlip (Card name FaceUp) = Card name FaceDown
 cardFlip (Card name FaceDown) = Card name FaceUp
 
 worldTime :: (Monad io) => TimeSeconds -> World -> io World
-worldTime (TimeSeconds dt) w = return w {camera = camera'}
+worldTime (TimeSeconds dt) w = return w {camera = foldl (\cam act -> act cam) w.camera cameraActions}
   where
-    camera' = foldl (flip ($)) w.camera cameraActions
     cameraActions =
-      [Cam.moveCamera (vec 0 (moveSpeed * dt)) | Set.member SDL.ScancodeUp w.pressedKeys]
-        ++ [Cam.moveCamera (vec 0 (-(moveSpeed * dt))) | Set.member SDL.ScancodeDown w.pressedKeys]
-        ++ [Cam.moveCamera (vec (-(moveSpeed * dt)) 0) | Set.member SDL.ScancodeLeft w.pressedKeys]
-        ++ [Cam.moveCamera (vec (moveSpeed * dt) 0) | Set.member SDL.ScancodeRight w.pressedKeys]
-        ++ [Cam.rotateCamera (rotationSpeed * dt) | Set.member SDL.ScancodeE w.pressedKeys]
-        ++ [Cam.rotateCamera (-(rotationSpeed * dt)) | Set.member SDL.ScancodeR w.pressedKeys]
-        ++ [Cam.zoomInCamera (zoomStep * dt) | Set.member SDL.ScancodeEquals w.pressedKeys]
-        ++ [Cam.zoomInCamera (-(zoomStep * dt)) | Set.member SDL.ScancodeMinus w.pressedKeys, w.camera.zoom >= minZoom]
+      [Cam.moveUp $ moveSpeed * dt | Set.member SDL.ScancodeUp w.pressedKeys]
+        ++ [Cam.moveDown $ moveSpeed * dt | Set.member SDL.ScancodeDown w.pressedKeys]
+        ++ [Cam.moveLeft $ moveSpeed * dt | Set.member SDL.ScancodeLeft w.pressedKeys]
+        ++ [Cam.moveRight $ moveSpeed * dt | Set.member SDL.ScancodeRight w.pressedKeys]
+        ++ [Cam.rotateCcw $ rotationSpeed * dt | Set.member SDL.ScancodeE w.pressedKeys]
+        ++ [Cam.rotateCw $ rotationSpeed * dt | Set.member SDL.ScancodeR w.pressedKeys]
+        ++ [Cam.zoomIn $ zoomStep * dt | Set.member SDL.ScancodeEquals w.pressedKeys]
+        ++ [Cam.zoomOut $ zoomStep * dt | Set.member SDL.ScancodeMinus w.pressedKeys, w.camera.zoom >= minZoom]
     moveSpeed = 5 -- World units / s
-    zoomStep = 1 -- 1 / s
+    zoomStep = 1 -- 1x / s
+    rotationSpeed = 0.5 * pi -- Rad / s
     minZoom = 0.30
-    rotationSpeed = (2 * pi) / 5 -- 360 in 5 seconds
 
 windowSize :: ViewportSize
 windowSize = vec 800 600

@@ -19,7 +19,9 @@
 
 module Main (main) where
 
+import Affine (Affine, SRT, apply, srt, srt2affine)
 import qualified Atlas
+import qualified Camera as Cam
 import Control.Concurrent (threadDelay)
 import Control.Exception (bracket)
 import Control.Monad (when)
@@ -41,7 +43,6 @@ import qualified Geomancy as G
 import qualified Init
 import Measure
 import qualified SDL
-import Affine (Affine, SRT, srt, srt2affine, apply)
 import Sprite
 import qualified System.Random as Random
 import qualified Texture as Tex
@@ -79,7 +80,6 @@ import qualified Vulkan.CStruct.Extends as Vk
 import qualified Vulkan.Zero as Vk
 import qualified VulkanMemoryAllocator as Vma
 import Prelude hiding (init)
-import Camera
 
 newtype TimeSeconds = TimeSeconds Float
 
@@ -277,7 +277,7 @@ data World = World
     grid :: Grid,
     gridStuff :: GridStuff,
     cardSize :: WorldVec,
-    camera :: Camera,
+    camera :: Cam.Camera,
     pressedKeys :: Set.Set SDL.Scancode
   }
 
@@ -320,7 +320,7 @@ world0 atlas = do
                   padding = vec 0.2 0.2
                 },
             cardSize = vec 1.0 1.0,
-            camera = Camera {position = vec 0 0, rotation = 0, zoom = 1.0},
+            camera = Cam.defaultCamera,
             pressedKeys = Set.empty
           }
 
@@ -525,7 +525,7 @@ worldEvent e w@(World {grid, gridStuff, pointer, cardSize, camera, pressedKeys})
   where
     grid' = if mouseClicked then flip else grid
     camera'
-      | keyReleasedIs SDL.Scancode0 = camera {zoom = 1.0, rotation = 0, position = vec 0 0}
+      | keyReleasedIs SDL.Scancode0 = Cam.defaultCamera
       | otherwise = camera
     pressedKeys'
       | Just code <- keyPressed = Set.insert code pressedKeys
@@ -568,14 +568,14 @@ worldTime (TimeSeconds dt) w = return w {camera = camera'}
   where
     camera' = foldl (flip ($)) w.camera cameraActions
     cameraActions =
-      [moveCamera (vec 0 (moveSpeed * dt)) | Set.member SDL.ScancodeUp w.pressedKeys]
-        ++ [moveCamera (vec 0 (-(moveSpeed * dt))) | Set.member SDL.ScancodeDown w.pressedKeys]
-        ++ [moveCamera (vec (-(moveSpeed * dt)) 0) | Set.member SDL.ScancodeLeft w.pressedKeys]
-        ++ [moveCamera (vec (moveSpeed * dt) 0) | Set.member SDL.ScancodeRight w.pressedKeys]
-        ++ [rotateCamera (rotationSpeed * dt) | Set.member SDL.ScancodeE w.pressedKeys]
-        ++ [rotateCamera (-(rotationSpeed * dt)) | Set.member SDL.ScancodeR w.pressedKeys]
-        ++ [zoomInCamera (zoomStep * dt) | Set.member SDL.ScancodeEquals w.pressedKeys]
-        ++ [zoomInCamera (-(zoomStep * dt)) | Set.member SDL.ScancodeMinus w.pressedKeys, w.camera.zoom >= minZoom]
+      [Cam.moveCamera (vec 0 (moveSpeed * dt)) | Set.member SDL.ScancodeUp w.pressedKeys]
+        ++ [Cam.moveCamera (vec 0 (-(moveSpeed * dt))) | Set.member SDL.ScancodeDown w.pressedKeys]
+        ++ [Cam.moveCamera (vec (-(moveSpeed * dt)) 0) | Set.member SDL.ScancodeLeft w.pressedKeys]
+        ++ [Cam.moveCamera (vec (moveSpeed * dt) 0) | Set.member SDL.ScancodeRight w.pressedKeys]
+        ++ [Cam.rotateCamera (rotationSpeed * dt) | Set.member SDL.ScancodeE w.pressedKeys]
+        ++ [Cam.rotateCamera (-(rotationSpeed * dt)) | Set.member SDL.ScancodeR w.pressedKeys]
+        ++ [Cam.zoomInCamera (zoomStep * dt) | Set.member SDL.ScancodeEquals w.pressedKeys]
+        ++ [Cam.zoomInCamera (-(zoomStep * dt)) | Set.member SDL.ScancodeMinus w.pressedKeys, w.camera.zoom >= minZoom]
     moveSpeed = 5 -- World units / s
     zoomStep = 1 -- 1 / s
     minZoom = 0.30
@@ -590,34 +590,12 @@ ppu = PPU 100
 ppu_1 :: PPU -> Float
 ppu_1 (PPU ppu) = 1 / ppu
 
-data Camera = Camera {position :: WorldVec, rotation :: Float, zoom :: Float}
-
-rotateCamera :: Float -> Camera -> Camera
-rotateCamera r cam = cam {rotation = cam.rotation + r}
-
-moveCamera :: WorldVec -> Camera -> Camera
-moveCamera (WithVec dx dy) cam = cam {position = cam.position + vec dxCam dyCam}
-  where
-    (dxCam, dyCam) = Affine.apply (srt2affine $ srt (1, 1) cam.rotation (0, 0)) (dx, dy)
-
-zoomCameraTo :: Float -> Camera -> Camera
-zoomCameraTo z cam = cam {zoom = z}
-
-zoomInCamera :: Float -> Camera -> Camera
-zoomInCamera s cam = zoomCameraTo (cam.zoom + s) cam
-
-view :: Camera -> Affine
-view Camera {position = WithVec x y, rotation, zoom = z} = rotateAndZoom <> lookAt
-  where
-    lookAt = srt2affine $ srt (1, 1) 0 (-x, -y)
-    rotateAndZoom = srt2affine $ srt (z, z) (-rotation) (0, 0)
-
 projection :: ViewportSize -> PPU -> Affine
 projection (WithVec w h) (PPU ppu) = srt2affine $ srt (s w, -(s h)) 0 (0, 0)
   where
     s x = (2 * ppu) / fromIntegral x
 
-pixelToWorld :: ViewportSize -> PPU -> Camera -> SRT
+pixelToWorld :: ViewportSize -> PPU -> Cam.Camera -> SRT
 pixelToWorld (WithVec w h) (PPU ppu) cam =
   let WithVec x y = cam.position
       w2 = (fromIntegral w / 2) / ppu
@@ -700,7 +678,7 @@ screenVertices ws ss =
     vert x y uv = Vert.Vertex {xy = tr2 @PixelVec (srt2affine (projection ws) <> embedIntoScreen ss) x y, uv = uv, texture = ss.sprite.texture}
     projection (WithVec w h) = srt (2 / fromIntegral w, 2 / fromIntegral h) 0 (-1, -1)
 
-vertices :: Camera -> SpriteInWorld -> SV.Vector Vert.Vertex
+vertices :: Cam.Camera -> SpriteInWorld -> SV.Vector Vert.Vertex
 vertices
   cam
   ss =
@@ -720,7 +698,7 @@ vertices
             WithVec x y = ss.position
          in srt (s * sx, -(s * sy)) ss.rotation (x, y) -- Place in world
       proj = projection windowSize ppu
-      model = proj <> view cam <> srt2affine local <> srt2affine pivot
+      model = proj <> Cam.view cam <> srt2affine local <> srt2affine pivot
 
 descriptorSetLayout :: Vk.Device -> Word32 -> Managed Vk.DescriptorSetLayout
 descriptorSetLayout dev count = do

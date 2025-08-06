@@ -44,6 +44,8 @@ module Measure
   )
 where
 
+import Affine (Affine)
+import qualified Affine
 import Data.Coerce (coerce)
 import Data.Kind (Type)
 import Data.Word (Word32)
@@ -51,8 +53,6 @@ import Foreign.Storable (Storable)
 import qualified Geomancy as G
 import qualified Geomancy.Elementwise as G
 import qualified Geomancy.Transform as G
-import SRT (Affine)
-import qualified SRT
 import Prelude hiding (lookup)
 
 newtype NDCVec = NDCVec G.Vec2 deriving (Show, Num, Storable)
@@ -83,7 +83,7 @@ class (Vec u, Vec v, Element v ~ Float, Element u ~ Float) => Tr u v where
   tr :: Affine -> u -> v
   tr m (WithVec x y) = tr2 @u m x y
   tr2 :: Affine -> Element u -> Element u -> v
-  tr2 m x y = let (x', y') = SRT.apply m (x, y) in vec x' y'
+  tr2 m x y = let (x', y') = Affine.apply m (x, y) in vec x' y'
 
 instance Vec PixelVec where
   type Element PixelVec = G.Element G.Vec2

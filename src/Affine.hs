@@ -3,7 +3,7 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE StrictData #-}
 
-module SRT
+module Affine
   ( SRT,
     Affine,
     srt,

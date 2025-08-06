@@ -41,8 +41,7 @@ import qualified Geomancy as G
 import qualified Init
 import Measure
 import qualified SDL
-import SRT (Affine, SRT, srt, srt2affine)
-import qualified SRT
+import Affine (Affine, SRT, srt, srt2affine, apply)
 import Sprite
 import qualified System.Random as Random
 import qualified Texture as Tex
@@ -80,6 +79,7 @@ import qualified Vulkan.CStruct.Extends as Vk
 import qualified Vulkan.Zero as Vk
 import qualified VulkanMemoryAllocator as Vma
 import Prelude hiding (init)
+import Camera
 
 newtype TimeSeconds = TimeSeconds Float
 
@@ -130,22 +130,22 @@ data Frame = Frame
 main :: IO ()
 main = main1
 
-main2 = do
-  print ps2
-  print $ SRT.apply local <$> corners
-  print $ SRT.apply proj <$> ps2
-  print $ SRT.apply proj . SRT.apply local <$> corners
-  print $ SRT.apply (proj <> local) <$> corners
-  where
-    -- print $ SRT.apply proj (100, 200)
-    -- print $ SRT.apply (proj <> local) p
+-- main2 = do
+--   print ps2
+--   print $ SRT.apply local <$> corners
+--   print $ SRT.apply proj <$> ps2
+--   print $ SRT.apply proj . SRT.apply local <$> corners
+--   print $ SRT.apply (proj <> local) <$> corners
+--   where
+--     -- print $ SRT.apply proj (100, 200)
+--     -- print $ SRT.apply (proj <> local) p
 
-    proj = srt2affine $ srt (2 / fromIntegral sw, 2 / fromIntegral sh) 0 (0, 0)
-    local = srt2affine (srt (1, 1) (pi / 4) (fromIntegral sw / 2, fromIntegral sh / 2)) <> srt2affine (srt (1, 1) 0 (-pivx, -pivy))
-    (sw, sh) = (400, 200) :: (Word32, Word32)
-    corners = [(0, 0), (100, 0), (100, 100), (0, 100)] :: [(Float, Float)]
-    ps2 = [(200.0, 29.289322), (270.7107, 100.0), (200.0, 170.71068), (129.28932, 100.0)] :: [(Float, Float)]
-    (pivx, pivy) = (50, 50)
+--     proj = srt2affine $ srt (2 / fromIntegral sw, 2 / fromIntegral sh) 0 (0, 0)
+--     local = srt2affine (srt (1, 1) (pi / 4) (fromIntegral sw / 2, fromIntegral sh / 2)) <> srt2affine (srt (1, 1) 0 (-pivx, -pivy))
+--     (sw, sh) = (400, 200) :: (Word32, Word32)
+--     corners = [(0, 0), (100, 0), (100, 100), (0, 100)] :: [(Float, Float)]
+--     ps2 = [(200.0, 29.289322), (270.7107, 100.0), (200.0, 170.71068), (129.28932, 100.0)] :: [(Float, Float)]
+--     (pivx, pivy) = (50, 50)
 
 main1 = runManaged $ do
   (window, vulkan, surface) <- withSDL2VulkanWindow windowSize
@@ -598,7 +598,7 @@ rotateCamera r cam = cam {rotation = cam.rotation + r}
 moveCamera :: WorldVec -> Camera -> Camera
 moveCamera (WithVec dx dy) cam = cam {position = cam.position + vec dxCam dyCam}
   where
-    (dxCam, dyCam) = SRT.apply (srt2affine $ srt (1, 1) cam.rotation (0, 0)) (dx, dy)
+    (dxCam, dyCam) = Affine.apply (srt2affine $ srt (1, 1) cam.rotation (0, 0)) (dx, dy)
 
 zoomCameraTo :: Float -> Camera -> Camera
 zoomCameraTo z cam = cam {zoom = z}

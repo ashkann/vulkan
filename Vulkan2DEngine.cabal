@@ -12,11 +12,12 @@ build-type:     Simple
 executable memory
   main-is: Main.hs
   other-modules:
+      Affine
       Atlas
+      Camera
       Init
       Measure
       Sprite
-      SRT
       Texture
       Utils
       Vertex

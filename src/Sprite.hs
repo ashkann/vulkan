@@ -14,9 +14,9 @@ module Sprite
   )
 where
 
+import Affine (Affine, srt, srt2affine)
 import qualified Geomancy as G
 import Measure
-import SRT (srt, srt2affine, Affine)
 import Texture
 
 data Sprite = Sprite

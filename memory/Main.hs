@@ -36,7 +36,7 @@ import Data.Vector ((!))
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector.Storable as SV
-import Foreign (Ptr, Word32, Word64)
+import Foreign (Ptr, Word32)
 import Foreign.Storable (Storable (..), sizeOf)
 import qualified Geomancy as G
 import qualified Init
@@ -172,11 +172,10 @@ main1 = runManaged $ do
   pipeline <- createPipeline device swapchainExtent pipelineLayout
   presentQueue <- Vk.getDeviceQueue device present.index 0 <* say "Vulkan" "Got present queue"
 
-  let stagingBufferSize = 1048576
+  let stagingBufferSize = 1048576 
       maxVertCount = 1000
       vertexBufferSize = fromIntegral $ sizeOf (undefined :: Vert.Vertex) * maxVertCount
-      lightBufferSize = 1024
-  frames <- withFrames device gfx.index allocator stagingBufferSize vertexBufferSize lightBufferSize frameCount
+  frames <- withFrames device gfx.index allocator stagingBufferSize vertexBufferSize frameCount
   w0 <- liftIO $ world0 atlas
   let shutdown = say "Engine" "Shutting down ..." *> Vk.deviceWaitIdle device
    in say "Engine" "Entering the main loop"
@@ -401,10 +400,9 @@ withFrames ::
   Vma.Allocator ->
   Vk.DeviceSize ->
   Vk.DeviceSize ->
-  Vk.DeviceSize ->
   Int ->
   Managed (V.Vector Frame)
-withFrames device gfx allocator stagingBufferSize vertexBufferSize lightBufferSize frameCount = V.replicateM frameCount singleFrame
+withFrames device gfx allocator stagingBufferSize vertexBufferSize frameCount = V.replicateM frameCount singleFrame
   where
     singleFrame =
       do

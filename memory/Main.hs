@@ -38,7 +38,6 @@ import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector.Storable as SV
 import Foreign (Ptr, Word32, Word64)
 import Foreign.Storable (Storable (..), sizeOf)
-import qualified Foreign.Storable.Record as Store
 import qualified Geomancy as G
 import qualified Init
 import Measure
@@ -83,11 +82,6 @@ import Prelude hiding (init)
 
 newtype TimeSeconds = TimeSeconds Float
 
-data Viewport = Viewport
-  { viewportSize :: G.UVec2,
-    _padding :: Word64 -- TODO: remove and make the Storable instance handle it
-  }
-
 frameData :: World -> FrameData
 frameData world =
   FrameData
@@ -107,7 +101,6 @@ data Frame = Frame
     copyFinished :: Vk.Semaphore,
     staging :: (Vk.Buffer, Ptr ()),
     vertex :: Vk.Buffer,
-    viewport :: Vk.Buffer,
     targetImage :: Vk.Image,
     targetView :: Vk.ImageView
   }
@@ -335,7 +328,6 @@ frame device gfx present pipeline pipelineLayout swp descSet f frameData = do
           copyFinished,
           staging,
           vertex,
-          viewport,
           targetImage,
           targetView
         } = f
@@ -343,7 +335,7 @@ frame device gfx present pipeline pipelineLayout swp descSet f frameData = do
       (swapchain, swapchainExtent, swapchainImages) = swp
   waitForFrame device f
   liftIO $ Utils.copyToGpu device pool gfx vertex staging verts
-  recordRender renderCmd vertex viewport (targetImage, targetView) swapchainExtent (fromIntegral $ SV.length verts)
+  recordRender renderCmd vertex (targetImage, targetView) swapchainExtent (fromIntegral $ SV.length verts)
   index <- Vk.acquireNextImageKHR device swapchain maxBound imageAvailable Vk.zero >>= \(r, index) -> checkSwapchainIsOld r $> index
   let swapchainImage = swapchainImages ! fromIntegral index
    in recordCopyToSwapchain copyCmd targetImage swapchainImage swapchainExtent
@@ -378,13 +370,12 @@ frame device gfx present pipeline pipelineLayout swp descSet f frameData = do
         transitToCopyDst cmd swapchainImage
         copyImageToImage cmd offscreenImage swapchainImage extent
         transitToPresent cmd swapchainImage
-    recordRender cmd vertBuff viewportBuff target extent vertexCount =
+    recordRender cmd vertBuff target extent vertexCount =
       Vk.useCommandBuffer cmd Vk.zero $ do
         let (image, view) = target
         Vk.cmdBindPipeline cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
         Vk.cmdBindVertexBuffers cmd 0 [vertBuff] [0]
         Vk.cmdBindDescriptorSets cmd Vk.PIPELINE_BIND_POINT_GRAPHICS pipelineLayout 0 [descSet] []
-        bindViewport device descSet viewportBuff
         transitToRenderTarget cmd image
         let attachment =
               Vk.zero
@@ -440,7 +431,6 @@ withFrames device gfx allocator stagingBufferSize vertexBufferSize lightBufferSi
           let info = Vk.zero {VkFenceCreateInfo.flags = Vk.FENCE_CREATE_SIGNALED_BIT}
            in managed $ Vk.withFence device info Nothing bracket
         vertexBuffer <- withGPUBuffer allocator vertexBufferSize Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
-        viewportBuffer <- withGPUBuffer allocator lightBufferSize Vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT
         let WithVec w h = windowSize
         (image, view) <- Tex.withImageAndView allocator device (vec (fromIntegral w) (fromIntegral h)) Init.imageFormat
         return
@@ -454,7 +444,6 @@ withFrames device gfx allocator stagingBufferSize vertexBufferSize lightBufferSi
               copyFinished = copyFinished,
               staging = vertextStagingBuffer,
               vertex = vertexBuffer,
-              viewport = viewportBuffer,
               targetImage = image,
               targetView = view
             }

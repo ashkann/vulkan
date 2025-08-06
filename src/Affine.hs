@@ -10,6 +10,7 @@ module Affine
     apply,
     affine,
     srt2affine,
+    inverse,
   )
 where
 
@@ -27,6 +28,23 @@ data Affine = Affine
   { xx, yx, tx :: Float,
     xy, yy, ty :: Float
   }
+
+inverse :: Affine -> Affine
+inverse m =
+  Affine
+    { xx = xx,
+      xy = xy,
+      yx = yx,
+      yy = yy,
+      tx = -(xx * m.tx + xy * m.ty),
+      ty = -(yx * m.tx + yy * m.ty)
+    }
+  where
+    invDet = 1 / (m.xx * m.yy - m.xy * m.yx)
+    xx = m.yy * invDet
+    xy = -(m.xy * invDet)
+    yx = -(m.yx * invDet)
+    yy = m.xx * invDet
 
 apply :: Affine -> (Float, Float) -> (Float, Float)
 apply Affine {xx, xy, yx, yy, tx, ty} (x, y) = (x', y')
@@ -61,6 +79,6 @@ instance Semigroup Affine where
         tx = a.xx * b.tx + a.yx * b.ty + a.tx,
         ty = a.xy * b.tx + a.yy * b.ty + a.ty
       }
-      
+
 instance Monoid Affine where
   mempty = Affine {xx = 1, xy = 0, yx = 0, yy = 1, tx = 0, ty = 0}

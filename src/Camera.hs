@@ -4,7 +4,7 @@
 {-# LANGUAGE NoFieldSelectors #-}
 
 module Camera
-  ( Camera (..),
+  ( Camera(..),
     rotate,
     move,
     cameraZoom,

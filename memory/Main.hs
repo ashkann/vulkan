@@ -19,7 +19,7 @@
 
 module Main (main) where
 
-import Affine (Affine, SRT, apply, srt, srt2affine)
+import Affine (Affine, SRT, apply, inverse, srt, srt2affine)
 import qualified Atlas
 import qualified Camera as Cam
 import Control.Concurrent (threadDelay)
@@ -536,7 +536,7 @@ worldEvent e w@(World {grid, gridStuff, pointer, cardSize, camera, pressedKeys})
       | Just spot <- spot = gridFlip spot grid
       | otherwise = grid
     spot =
-      let WithVec x y = -gridStuff.topLeft + tr (srt2affine $ pixelToWorld windowSize ppu camera) pointer
+      let WithVec x y = -gridStuff.topLeft + tr (screenToWorld windowSize ppu camera) pointer
           WithVec px py = gridStuff.padding
           WithVec w h = cardSize
           r = floor $ (y + 1) / (h + px)
@@ -594,22 +594,17 @@ projection (WithVec w h) (PPU ppu) = srt2affine $ srt (s w, -(s h)) 0 (0, 0)
   where
     s x = (2 * ppu) / fromIntegral x
 
-pixelToWorld :: ViewportSize -> PPU -> Cam.Camera -> SRT
-pixelToWorld (WithVec w h) (PPU ppu) cam =
-  let WithVec x y = cam.position
-      w2 = (fromIntegral w / 2) / ppu
-      h2 = (fromIntegral h / 2) / ppu
-      dx = x - w2
-      dy = y + h2
-      r = cam.rotation
-      sx = cam.zoom / ppu
-      sy = cam.zoom / ppu
-   in srt (sx, -sy) (-r) (dx, dy)
+screenToWorld :: ViewportSize -> PPU -> Cam.Camera -> Affine
+screenToWorld vps@(WithVec w h) ppu cam = ndc2World <> pixels2Ndc
+  where
+    ndc2World = Affine.inverse (projection vps ppu <> Cam.view cam)
+    pixels2Ndc = srt2affine $ srt (s w, s h) 0 (-1, -1)
+    s x = 2 / fromIntegral x
 
 sprites :: World -> [SpriteInWorld]
 sprites World {atlas, grid = (Grid grid), gridStuff, pointer, cardSize, camera} = grd
   where
-    pointerPosWorld = tr (srt2affine $ pixelToWorld windowSize ppu camera) pointer
+    pointerPosWorld = tr (screenToWorld windowSize ppu camera) pointer
     spot pos =
       let WithVec x y = pos - gridStuff.topLeft
           WithVec w h = cardSize
@@ -618,11 +613,6 @@ sprites World {atlas, grid = (Grid grid), gridStuff, pointer, cardSize, camera} 
           c = floor $ (x + 1) / (w + py)
        in if (0 <= r && r <= 5) && (0 <= c && c <= 5) then Just (Spot (Row r, Column c)) else Nothing -- TODO: hardcoded "5"
     grd = uncurry putAt <$> Map.toList grid
-    -- grd =
-    --     [ putAt (Spot (Row 0, Column 0)) (Card (CardName "1") FaceUp),
-    --       putAt (Spot (Row 1, Column 0)) (Card (CardName "2") FaceUp),
-    --       putAt (Spot (Row 0, Column 1)) (Card (CardName "3") FaceUp)
-    --     ]
     highlight spot =
       let border = putInWorld (Atlas.sprite atlas "border") pointerPosWorld
        in -- tr = transform $ pos spot + (topLeft :: NDCVec)

@@ -5,12 +5,12 @@
 
 packages:
 - completed:
-    hackage: vulkan-3.26.1@sha256:74209384b562b5b1483b25243e82999f9d55de23b0c574df08495768c3a7ea12,33611
+    hackage: vulkan-3.26.4@sha256:60723619151ed887af07017c712bf9923e5475796b07e1aee8e9c909f4a3aa1a,34156
     pantry-tree:
-      sha256: 70c7685a9d8b290fc9dc931fb012f4d0c44ee6fd987f7b796eccbccde5237d2f
-      size: 93277
+      sha256: d88124b804534526aeb8da55d77d7161e751408815407ed9e3c16db1a5bb134c
+      size: 94192
   original:
-    hackage: vulkan-3.26.1
+    hackage: vulkan-3.26.4
 - completed:
     hackage: VulkanMemoryAllocator-0.11.0.1@sha256:8c3cbf3679dacbcf364a0775377e50599690ff2c25063e1d64a6be7135b72740,3465
     pantry-tree:
@@ -41,7 +41,7 @@ packages:
     hackage: ptrdiff-0
 snapshots:
 - completed:
-    sha256: a81fb3877c4f9031e1325eb3935122e608d80715dc16b586eb11ddbff8671ecd
-    size: 640086
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/21/25.yaml
-  original: lts-21.25
+    sha256: aa97dce5253937e4aa56100a0a9dc1f79a554cf543ad7cfab0afe6ed42de2f31
+    size: 724941
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/24/3.yaml
+  original: lts-24.3

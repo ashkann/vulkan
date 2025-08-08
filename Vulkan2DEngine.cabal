@@ -9,6 +9,45 @@ version:        0.1.0
 maintainer:     ashkan.kh.nazary@gmail.com
 build-type:     Simple
 
+executable font-atlas
+  main-is: Main.hs
+  other-modules:
+      Affine
+      Atlas
+      Camera
+      Init
+      Measure
+      Sprite
+      Texture
+      Utils
+      Vertex
+      Paths_Vulkan2DEngine
+  hs-source-dirs:
+      font-atlas
+      src
+  ghc-options: -Wall -Wcompat -Widentities -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -Wambiguous-fields -Wno-name-shadowing -optl-Wl,-rpath,/usr/local/lib
+  build-depends:
+      JuicyPixels
+    , VulkanMemoryAllocator
+    , base
+    , bytestring
+    , containers
+    , extra
+    , freetype2
+    , geomancy
+    , lens
+    , managed
+    , mtl
+    , parsec
+    , random
+    , sdl2
+    , storable-record
+    , text
+    , transformers
+    , vector
+    , vulkan
+  default-language: Haskell2010
+
 executable memory
   main-is: Main.hs
   other-modules:
@@ -33,6 +72,7 @@ executable memory
     , bytestring
     , containers
     , extra
+    , freetype2
     , geomancy
     , lens
     , managed

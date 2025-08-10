@@ -1,0 +1,6 @@
+config.mk
+*~
+*.[ao]
+*.swp
+dist/
+cabal-dev/

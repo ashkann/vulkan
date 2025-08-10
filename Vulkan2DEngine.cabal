@@ -41,6 +41,7 @@ executable font-atlas
     , parsec
     , random
     , sdl2
+    , storable-offset
     , storable-record
     , text
     , transformers
@@ -80,6 +81,7 @@ executable memory
     , parsec
     , random
     , sdl2
+    , storable-offset
     , storable-record
     , text
     , transformers

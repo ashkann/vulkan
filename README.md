@@ -14,4 +14,6 @@ Initial attemps
 ![](screenshots/screenshot.gif)
 
 Got the affine transformations and SRT right on the screen and world spaces
-![](screenshots/affine.gif)q
+![](screenshots/affine.gif)
+
+git clone -b cabalization --depth 1 --single-branch git@github.com:dagit/freetype2.git && rm -rf freetype2/.git/

@@ -25,6 +25,7 @@ dependencies:
   - lens
   - parsec
   - random
+  - storable-offset
   - freetype2
 
 ghc-options:

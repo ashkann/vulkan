@@ -2,11 +2,11 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE OverloadedLists #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE NoFieldSelectors #-}
-{-# LANGUAGE OverloadedStrings #-}
 
 module Init
   ( pickGPU,
@@ -22,11 +22,13 @@ module Init
 where
 
 import Control.Exception (bracket)
-import Control.Monad.Except (MonadError (catchError, throwError), forM_)
+import Control.Monad (forM_)
+import Control.Monad.Except (MonadError (catchError, throwError))
 import Control.Monad.Managed
 import Control.Monad.Trans.Except (ExceptT, runExceptT, throwE)
 import Control.Monad.Trans.Maybe (MaybeT (MaybeT, runMaybeT))
 import Data.Bits (Bits (zeroBits), (.&.), (.|.))
+import qualified Data.ByteString as BS (readFile)
 import Data.Coerce (coerce)
 import Data.Monoid (Alt (Alt, getAlt))
 import Data.Text (unpack)
@@ -56,7 +58,6 @@ import qualified Vulkan.Dynamic as Vk
 import qualified Vulkan.Zero as Vk
 import qualified VulkanMemoryAllocator as Vma
 import qualified VulkanMemoryAllocator as VmaAllocatorCreateInfo (AllocatorCreateInfo (..))
-import qualified Data.ByteString  as BS (readFile)
 
 presentMode :: Vk.PresentModeKHR
 presentMode = Vk.PRESENT_MODE_FIFO_KHR

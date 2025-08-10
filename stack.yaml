@@ -18,6 +18,7 @@
 # resolver: ./custom-snapshot.yaml
 # resolver: https://example.com/snapshots/2018-01-01.yaml
 resolver: lts-22.44
+allow-newer: true
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -80,6 +81,8 @@ extra-deps:
   - geomancy-0.2.6.0
   - gl-block-1.0 # geomancy
   - ptrdiff-0 # geomancy
+  - storable-offset-0.1.0.0
+  - freetype2
 
 # build:
 #   executable-profiling: true  

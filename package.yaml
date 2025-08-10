@@ -25,6 +25,7 @@ dependencies:
   - lens
   - parsec
   - random
+  - pcf-font
 
 ghc-options:
   - -Wall
@@ -44,11 +45,11 @@ executables:
   #   source-dirs:
   #     - app
   #     - src
-  # atlas-parser:
-  #   main: Main.hs
-  #   source-dirs:
-  #     - atlas-parser
-  #     - src
+  atlas-parser:
+    main: Main.hs
+    source-dirs:
+      - font-atlas
+      - src
   # minesweeper:
   #   main: Main.hs
   #   source-dirs:

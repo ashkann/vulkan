@@ -10,8 +10,11 @@ Generate the atlas
 ```
 ./pack-texture.sh
 ```
-Initial attemps
+### Initial attempts
 ![](screenshots/screenshot.gif)
 
-Got the affine transformations and SRT right on the screen and world spaces
-![](screenshots/affine.gif)q
+### Got the affine transformations and SRT right on the screen and world spaces
+![](screenshots/affine.gif)
+
+### First line of text from GNU unifont
+![](screenshots/first-line-of-text.png)

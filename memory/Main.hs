@@ -628,8 +628,8 @@ screenSprites (World {pointer = p, atlas, font}) =
     rot r s = s {Sprite.rotation = r} :: SpriteInScreen
     scl k s = s {Sprite.scale = k} :: SpriteInScreen
     f i piv = let sprite = Atlas.spriteIndexed atlas "rectangle" i; WithVec w h = sprite.resolution in sprite {Sprite.origin = piv w h}
-    (txt2, _) = write 0 "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`"
-    write x0 str = runState (traverse (\ch -> state (\x -> let g = glyph font ch; out = putInScreen g (vec x 0) in (out, x + 8))) str) x0
+    (txt2, _) = write 10 10 "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`"
+    write x0 y0 str = runState (traverse (\ch -> state (\x -> let g = glyph font ch; out = putInScreen g (vec x y0) in (out, x + 8))) str) x0
     glyph font ch = Atlas.sprite font $ printf "U+%04X" (ord ch)
 
 screenVertices :: ViewportSize -> SpriteInScreen -> SV.Vector Vert.Vertex

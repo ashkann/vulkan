@@ -8,7 +8,7 @@
 
 module Atlas
   ( atlas,
-    Atlas (..),
+    Atlas,
     withAtlas,
     sprite,
     spriteIndexed,
@@ -160,7 +160,7 @@ sprite atlas name = lookupOrFail (mkSprite atlas.texture)
 spriteIndexed :: Atlas -> String -> Word32 -> Sprite
 spriteIndexed (Atlas {texture = tex, regions = atlas}) name index =
   let reg = lookupIndexed atlas name index
-   in mkSprite tex reg
+   in mkSprite tex reg 
 
 mkSprite :: Tex.DescriptorIndex -> Region -> Sprite
 mkSprite tex Region {region = reg, size = res} =

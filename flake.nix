@@ -18,7 +18,7 @@
                 buildInputs = [
                     pkgs.git
                     pkgs.stack
-                    clangGcc
+                    # clangGcc
                     pkgs.vulkan-headers
                     pkgs.vulkan-loader
                 ];

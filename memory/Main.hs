@@ -20,13 +20,16 @@
 module Main (main) where
 
 import Affine (Affine, inverse, srt, srt2affine)
+import Atlas (Atlas)
 import qualified Atlas
 import qualified Camera as Cam
 import Control.Concurrent (threadDelay)
 import Control.Exception (bracket)
 import Control.Monad (when)
 import Control.Monad.Managed (Managed, MonadIO (liftIO), managed, runManaged)
+import Control.Monad.State.Lazy (MonadState (state), runState)
 import Data.Bits ((.|.))
+import Data.Char (ord)
 import Data.Foldable (foldlM)
 import Data.Functor (($>))
 import qualified Data.Map.Strict as Map
@@ -44,6 +47,7 @@ import Measure
 import qualified SDL
 import Sprite
 import qualified System.Random as Random
+import Text.Printf (printf)
 import qualified Texture as Tex
 import Utils
 import qualified Vertex as Vert
@@ -147,7 +151,7 @@ main1 = runManaged $ do
   gfxQueue <- Vk.getDeviceQueue device gfx.index 0 <* say "Vulkan" "Got graphics queue"
 
   [atlas, font] <- Atlas.withAtlas allocator device commandPool gfxQueue descSet sampler ["out/memory/atlas.atlas", "out/font.atlas"]
-  say "Engine" "Atlas loaded"
+  say "Engine" "Atlases loaded"
 
   SDL.showWindow window <* say "SDL" "Show window"
   SDL.raiseWindow window <* say "SDL" "Raise window"
@@ -176,7 +180,7 @@ main1 = runManaged $ do
       maxVertCount = 1000
       vertexBufferSize = fromIntegral $ sizeOf (undefined :: Vert.Vertex) * maxVertCount
   frames <- withFrames device gfx.index allocator stagingBufferSize vertexBufferSize frameCount
-  w0 <- liftIO $ world0 atlas
+  w0 <- liftIO $ world0 atlas font
   let shutdown = say "Engine" "Shutting down ..." *> Vk.deviceWaitIdle device
    in say "Engine" "Entering the main loop"
         *> mainLoop
@@ -201,7 +205,7 @@ main1 = runManaged $ do
 --   | n >= 0 && n <= 999 = Just $ Score (toEnum $ n `div` 100, toEnum $ (n `div` 10) `mod` 10, toEnum $ n `mod` 10)
 --   | otherwise = Nothing
 
--- ashkan :: Atlas.Atlas -> Int -> [Object]
+-- ashkan :: Atlas -> Int -> [Object]
 -- ashkan atlas n =
 --   let digits = Map.fromList [(d, Atlas.spriteIndexed atlas "digit" (fromIntegral . fromEnum $ d) Measure.texCenter windowSize) | d <- [D0 .. D9]]
 --       score (Score (a, b, c)) = [x, y, z]
@@ -251,7 +255,8 @@ data GridStuff = GridStuff
 
 data World = World
   { pointer :: PixelVec,
-    atlas :: Atlas.Atlas,
+    atlas :: Atlas,
+    font :: Atlas,
     grid :: Grid,
     gridStuff :: GridStuff,
     cardSize :: WorldVec,
@@ -283,14 +288,15 @@ mkGrid deck = Grid . Map.fromList $ zipWith f spots deck
     spots = [Spot (Row r, Column c) | r <- [0 .. 5], c <- [0 .. 5]]
     f spot name = (spot, Card name FaceDown)
 
-world0 :: (MonadIO io) => Atlas.Atlas -> io World
-world0 atlas = do
+world0 :: (MonadIO io) => Atlas -> Atlas -> io World
+world0 atlas font = do
   deck <- liftIO $ mkSuffeledDeck 18
   let faceDown = putInWorld (Atlas.sprite atlas "back-side")
    in return $
         World
           { pointer = vec 0 0,
             atlas = atlas,
+            font = font,
             grid = mkGrid (V.toList deck),
             gridStuff =
               GridStuff
@@ -600,7 +606,7 @@ sprites World {atlas, grid = (Grid grid), gridStuff, pointer, cardSize, camera} 
     faceDown = Atlas.sprite atlas "back-side"
 
 screenSprites :: World -> [SpriteInScreen]
-screenSprites (World {pointer = p, atlas}) =
+screenSprites (World {pointer = p, atlas, font}) =
   [ rot (pi / 4) $ putInScreen r0 (vec 0 0),
     rot (pi / 8) $ putInScreen r1 (vec w 0),
     rot (pi / 16) $ putInScreen r2 (vec w h),
@@ -608,6 +614,7 @@ screenSprites (World {pointer = p, atlas}) =
     scl (G.vec2 2 0.5) . rot (pi / 32) $ putInScreen r4 (vec (w / 2) (h / 2)),
     putInScreen pointer p
   ]
+    ++ txt2
   where
     WithVec _w _h = windowSize
     w = fromIntegral _w
@@ -621,6 +628,9 @@ screenSprites (World {pointer = p, atlas}) =
     rot r s = s {Sprite.rotation = r} :: SpriteInScreen
     scl k s = s {Sprite.scale = k} :: SpriteInScreen
     f i piv = let sprite = Atlas.spriteIndexed atlas "rectangle" i; WithVec w h = sprite.resolution in sprite {Sprite.origin = piv w h}
+    (txt2, _) = write 0 "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`"
+    write x0 str = runState (traverse (\ch -> state (\x -> let g = glyph font ch; out = putInScreen g (vec x 0) in (out, x + 8))) str) x0
+    glyph font ch = Atlas.sprite font $ printf "U+%04X" (ord ch)
 
 screenVertices :: ViewportSize -> SpriteInScreen -> SV.Vector Vert.Vertex
 screenVertices ws ss =

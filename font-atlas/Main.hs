@@ -10,8 +10,8 @@ import Data.Char (chr)
 import Data.Foldable (foldl')
 import Data.Functor (($>))
 import Graphics.Text.PCF
-import Utils (sayErr)
 import Text.Printf (printf)
+import Utils (sayErr)
 
 {--
 atlas.png
@@ -47,7 +47,7 @@ main = do
       (pure (0, [], atlas))
       [min .. max]
   JP.writePng "font.png" =<< JP.freezeImage image2
-  let atlas =
+  let header =
         [ "",
           "font.png",
           "size: " ++ show width ++ "," ++ " " ++ show glyph_height,
@@ -67,7 +67,7 @@ main = do
             ]
         )
           =<< regions
-  writeFile "font.atlas" $ unwords $ (++ "\n") <$> atlas ++ rs
+  writeFile "font.atlas" $ mconcat ((++ "\n") <$> (header ++ rs))
   where
     ashkan x0 y0 glyph image = foldPCFGlyphPixels glyph (\x y pix imgM -> do img <- imgM; JP.writePixel img (x0 + x) (y0 + y) (color pix) $> img) $ pure image
     color b = JP.PixelRGBA8 255 255 255 $ if b then 255 else 0

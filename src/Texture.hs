@@ -8,7 +8,7 @@
 
 module Texture
   ( DescriptorIndex,
-    fromRGBA8PngFile,
+    fromPngRGBA8File,
     bind,
     withHostBuffer,
     withImageView,
@@ -44,10 +44,10 @@ import VulkanMemoryAllocator qualified as Vma
 import VulkanMemoryAllocator qualified as VmaAllocationCreateInfo (AllocationCreateInfo (..))
 import Prelude hiding (init, lookup)
 
-newtype DescriptorIndex = DescriptorIndex Word32 deriving (Storable)
+newtype DescriptorIndex = DescriptorIndex Word32 deriving (Storable, Show)
 
-fromRGBA8PngFile :: Vma.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> FilePath -> Managed Vk.ImageView
-fromRGBA8PngFile allocator device pool queue path = do
+fromPngRGBA8File :: Vma.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> FilePath -> Managed Vk.ImageView
+fromPngRGBA8File allocator device pool queue path = do
   JP.ImageRGBA8 (JP.Image width height pixels) <- liftIO $ JP.readPng path >>= either (sayErr "Texture" . show) return
   let w = fromIntegral width
       h = fromIntegral height

@@ -3,6 +3,7 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE StrictData #-}
 {-# LANGUAGE NoFieldSelectors #-}
 
 module Atlas
@@ -22,6 +23,8 @@ import Data.Functor ((<&>))
 import qualified Data.Map.Strict as M
 import Data.Word (Word32)
 import Measure
+import Sprite (Sprite (..))
+import System.FilePath (replaceFileName)
 import Text.Parsec (anyChar, char, digit, endOfLine, eof, many1, manyTill, optionMaybe, parse, string, (<?>))
 import Text.Parsec.Char (spaces)
 import Text.Parsec.String (Parser, parseFromFile)
@@ -30,7 +33,6 @@ import Utils (sayErr)
 import qualified Vulkan as Vk
 import qualified VulkanMemoryAllocator as Vk
 import Prelude hiding (lookup)
-import Sprite(Sprite(..))
 
 newtype Key = Key (String, Maybe Word32)
   deriving (Show)
@@ -140,12 +142,14 @@ data Atlas = Atlas
   }
 
 -- TODO: find a way to reduce parameter count
-withAtlas :: Vk.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> Vk.DescriptorSet -> Vk.Sampler -> String -> Managed Atlas
-withAtlas allocator device commandPool gfxQueue descSet sampler atlasDir = do
-  (textureFile, regions) <- either (sayErr "Atlas") return =<< runExceptT (atlas $ atlasDir ++ "/atlas.atlas")
-  tex <- Tex.fromRGBA8PngFile allocator device commandPool gfxQueue $ atlasDir ++ "/" ++ textureFile -- TODO:: remove "out/""
-  [descIndex] <- Tex.bind device descSet [tex] sampler
-  return $ Atlas {texture = descIndex, regions = regions}
+withAtlas :: Vk.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> Vk.DescriptorSet -> Vk.Sampler -> [FilePath] -> Managed [Atlas]
+withAtlas allocator device cmdPool gfx set sampler atlasFiles = do
+  (texs, regions) <- unzip <$> traverse (\x -> do (a, b) <- parse x; view <- f x a; return (view, b)) atlasFiles
+  idxs <- Tex.bind device set texs sampler
+  return $ zipWith Atlas idxs regions
+  where
+    parse f = either (sayErr "Atlas") return =<< runExceptT (atlas f)
+    f atlasFilePath imageFileName = Tex.fromPngRGBA8File allocator device cmdPool gfx $ replaceFileName atlasFilePath imageFileName
 
 sprite :: Atlas -> String -> Sprite
 sprite atlas name = lookupOrFail (mkSprite atlas.texture)

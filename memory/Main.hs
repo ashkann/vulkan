@@ -146,7 +146,7 @@ main1 = runManaged $ do
   sampler <- Utils.repeatingSampler device
   gfxQueue <- Vk.getDeviceQueue device gfx.index 0 <* say "Vulkan" "Got graphics queue"
 
-  atlas <- Atlas.withAtlas allocator device commandPool gfxQueue descSet sampler "out/memory"
+  [atlas, font] <- Atlas.withAtlas allocator device commandPool gfxQueue descSet sampler ["out/memory/atlas.atlas", "out/font.atlas"]
   say "Engine" "Atlas loaded"
 
   SDL.showWindow window <* say "SDL" "Show window"
@@ -172,7 +172,7 @@ main1 = runManaged $ do
   pipeline <- createPipeline device swapchainExtent pipelineLayout
   presentQueue <- Vk.getDeviceQueue device present.index 0 <* say "Vulkan" "Got present queue"
 
-  let stagingBufferSize = 1048576 
+  let stagingBufferSize = 1048576
       maxVertCount = 1000
       vertexBufferSize = fromIntegral $ sizeOf (undefined :: Vert.Vertex) * maxVertCount
   frames <- withFrames device gfx.index allocator stagingBufferSize vertexBufferSize frameCount

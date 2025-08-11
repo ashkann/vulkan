@@ -33,6 +33,7 @@ executable atlas-parser
     , bytestring
     , containers
     , extra
+    , filepath
     , geomancy
     , lens
     , managed
@@ -72,6 +73,7 @@ executable memory
     , bytestring
     , containers
     , extra
+    , filepath
     , geomancy
     , lens
     , managed

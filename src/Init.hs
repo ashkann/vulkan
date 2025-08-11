@@ -22,10 +22,11 @@ module Init
 where
 
 import Control.Exception (bracket)
-import Control.Monad.Except (MonadError (catchError, throwError), forM_)
+import Control.Monad.Except (MonadError (catchError, throwError))
 import Control.Monad.Managed
 import Control.Monad.Trans.Except (ExceptT, runExceptT, throwE)
 import Control.Monad.Trans.Maybe (MaybeT (MaybeT, runMaybeT))
+import Control.Monad(forM_)
 import Data.Bits (Bits (zeroBits), (.&.), (.|.))
 import Data.Coerce (coerce)
 import Data.Monoid (Alt (Alt, getAlt))

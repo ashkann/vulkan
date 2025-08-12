@@ -77,7 +77,7 @@ instance Storable Vertex where
   poke = Store.poke vertexStore
 
 defaultColor :: Color
-defaultColor = Color (G.vec4 1 1 1 1) -- Opaue white
+defaultColor = Color (G.vec4 1 1 1 1) -- Opaque white
 
 vertex :: NDCVec -> UVVec -> Tex.DescriptorIndex -> Vertex
 vertex xy uv tex = Vertex {xy = xy, uv = uv, texture = tex, color = defaultColor}

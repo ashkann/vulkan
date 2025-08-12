@@ -16,7 +16,7 @@ module Sprite
     rotateSprite,
     bottomLeft,
     embedIntoScreen,
-    projection
+    projection,
   )
 where
 
@@ -26,7 +26,7 @@ import Control.Monad.Reader
 import qualified Geomancy as G
 import Measure
 import Texture
-import Vertex (Render (..), quad, vertex)
+import Vertex (Quad, Render (..), Vertex, quad, vertex)
 
 data Sprite = Sprite
   { texture :: DescriptorIndex,
@@ -75,40 +75,38 @@ embedIntoScreen ss = a <> b
     WithVec x y = ss.position
 
 instance (MonadReader ViewportSize m) => Render m SpriteInScreen where
-  render ss = do
-    ws <- ask
-    let WithVec w h = ss.sprite.resolution
-        UVReg2 auv buv cuv duv = ss.sprite.region
-        a = vert ws 0 0 auv -- top left
-        b = vert ws w 0 buv -- top right
-        c = vert ws w h cuv -- bottom right
-        d = vert ws 0 h duv -- bottom left
-    return $ quad a b c d
+  render ss = asks (toQuad ss.sprite . vert)
     where
-      vert ws x y uv = let xy = tr2 @PixelVec (projection ws <> embedIntoScreen ss) x y in vertex xy uv ss.sprite.texture
+      f t = (projection t <> model)
+      vert t x y uv = let xy = tr2 @PixelVec (f t) x y in vertex xy uv ss.sprite.texture
       projection (WithVec w h) = srt2affine $ srt (2 / fromIntegral w, 2 / fromIntegral h) 0 (-1, -1)
+      model =
+        let G.WithVec2 sx sy = ss.scale
+            WithVec x y = ss.position
+            WithVec ox oy = ss.sprite.origin
+            pivot = srt2affine $ srt (1, 1) 0 (-ox, -oy)
+            local = srt2affine $ srt (sx, sy) ss.rotation (x, y)
+         in local <> pivot
 
 instance (MonadReader (Camera, PPU, ViewportSize) m) => Render m SpriteInWorld where
-  render
-    ss = do
-      (cam, ppu, vps) <- ask
-      let WithVec w h = ss.sprite.resolution
-          UVReg2 auv buv cuv duv = ss.sprite.region
-          a = vert cam ppu vps 0 0 auv -- top left
-          b = vert cam ppu vps w 0 buv -- top right
-          c = vert cam ppu vps w h cuv -- bottom right
-          d = vert cam ppu vps 0 h duv -- bottom left
-      return $ quad a b c d
-      where
-        vert cam ppu vps x y uv = let xy = tr2 @WorldVec (model cam ppu vps) x y in vertex xy uv ss.sprite.texture
-        pivot = let WithVec ox oy = ss.sprite.origin in srt (1, 1) 0 (-ox, -oy)
-        local ppu =
-          let s = ppu_1 ppu
-              G.WithVec2 sx sy = ss.scale
-              WithVec x y = ss.position
-           in srt (s * sx, -(s * sy)) ss.rotation (x, y) -- Place in world
-        model cam ppu vps = projection vps ppu <> view cam <> srt2affine (local ppu) <> srt2affine pivot
-        ppu_1 (PPU ppu) = 1 / ppu
+  render ss = asks (toQuad ss.sprite . vert)
+    where
+      f t = model t
+      vert t x y uv = let xy = tr2 @WorldVec (f t) x y in vertex xy uv ss.sprite.texture
+      model (cam, ppu@(PPU _ppu), vps) =
+        let s = 1 / _ppu
+            G.WithVec2 sx sy = ss.scale
+            WithVec x y = ss.position
+            local = srt2affine $ srt (s * sx, -(s * sy)) ss.rotation (x, y) -- Place in world
+            WithVec ox oy = ss.sprite.origin
+            pivot = srt2affine $ srt (1, 1) 0 (-ox, -oy)
+         in projection vps ppu <> view cam <> local <> pivot
+
+toQuad :: Sprite -> (Float -> Float -> UVVec -> Vertex) -> Quad
+toQuad s vert = quad (vert 0 0 a) (vert w 0 b) (vert w h c) (vert 0 h d)
+  where
+    WithVec w h = s.resolution
+    UVReg2 a b c d = s.region
 
 projection :: ViewportSize -> PPU -> Affine
 projection (WithVec w h) (PPU ppu) = srt2affine $ srt (s w, -(s h)) 0 (0, 0)

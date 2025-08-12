@@ -29,7 +29,7 @@ import Control.Concurrent (threadDelay)
 import Control.Exception (bracket)
 import Control.Monad (when)
 import Control.Monad.Managed (Managed, MonadIO (liftIO), managed, runManaged)
-import Control.Monad.Reader (MonadReader (ask), runReader)
+import Control.Monad.Reader (MonadReader (ask), Reader, asks, runReader)
 import Control.Monad.State.Lazy (MonadState (state), runState)
 import Data.Bits ((.|.))
 import Data.Char (ord)
@@ -92,7 +92,7 @@ frameData world =
   where
     worldVerts = f (world.camera, ppu, windowSize) <$> worldSprites world
     screenVerts = f windowSize <$> screenSprites world
-    f t s = Vert.vertices $ runReader (Vert.render s) t
+    f t s = runReader (Vert.render s) t
 
 data Frame = Frame
   { pool :: Vk.CommandPool,
@@ -595,6 +595,18 @@ worldSprites World {atlas, grid = (Grid grid), gridStuff, pointer, cardSize, cam
         -- pos2 (Spot (Row r, Column c)) = vec (fromIntegral c * (w + hPadding) + left) (fromIntegral r * (h + vPadding) + top)
         WithVec w h = cardSize
     faceDown = Atlas.sprite atlas "back-side"
+
+data Ch = Ch {ch :: Char, color :: Vert.Color}
+
+ch :: Char -> Vert.Color -> Ch
+ch char col = Ch {ch = char, color = col}
+
+-- instance (MonadReader Atlas m) =>  Vert.Render m Ch where
+--   render Ch {ch, color} = asks (\font -> glyph font ch)
+--     where
+--     (txt2, _) = write 10 10 "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`"
+--     write x0 y0 str = runState (traverse (\ch -> state (\x -> let g = glyph font ch; out = putInScreen g (vec x y0) in (out, x + 8))) str) x0
+--     glyph font ch = Atlas.sprite font $ printf "U+%04X" (ord ch)
 
 screenSprites :: World -> [SpriteInScreen]
 screenSprites (World {pointer = p, atlas, font}) =

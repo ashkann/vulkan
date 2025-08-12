@@ -1,7 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE StrictData #-}
@@ -12,10 +11,9 @@ module Vertex
     vertex,
     vertexColored,
     grpahicsPipelineVertexInputState,
-    Quad,
-    quad,
-    vertices,
-    Render(..),
+    Render (..),
+    opaqueColor,
+    Color,
   )
 where
 
@@ -38,27 +36,13 @@ import qualified Vulkan.Zero as Vk
 
 newtype Color = Color G.Vec4 deriving (Show, Storable)
 
+opaqueColor :: Float -> Float -> Float -> Color
+opaqueColor r g b = Color $ G.vec4 r g b 1.0
+
 data Vertex = Vertex {xy :: NDCVec, uv :: UVVec, color :: Color, texture :: Tex.DescriptorIndex}
 
-data Quad = Quad {a, b, c, d :: Vertex}
-
-quad ::
-  -- | Top left cornder, a
-  Vertex ->
-  -- | Top right cornder, b
-  Vertex ->
-  -- | Bottom right cornder, c
-  Vertex ->
-  -- | Bottom left cornder, d
-  Vertex ->
-  Quad
-quad a b c d = Quad {a, b, c, d}
-
-vertices :: Quad -> SV.Vector Vertex
-vertices (Quad a b c d) = [a, b, c, c, d, a]
-
 class Render m s where
-  render :: s -> m Quad
+  render :: s -> m (SV.Vector Vertex)
 
 vertexStore :: Store.Dictionary Vertex
 vertexStore =

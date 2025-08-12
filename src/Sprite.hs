@@ -24,10 +24,11 @@ where
 import Affine (Affine, srt, srt2affine)
 import Camera (Camera, view)
 import Control.Monad.Reader
+import qualified Data.Vector.Storable as SV
 import qualified Geomancy as G
 import Measure
 import Texture
-import Vertex (Quad, Render (..), Vertex, quad, vertex)
+import Vertex (Render (..), Vertex, vertex)
 
 data Sprite = Sprite
   { texture :: DescriptorIndex,
@@ -67,7 +68,7 @@ putInScreen ::
 putInScreen sprite pos = SpriteInScreen {sprite = sprite, position = pos, rotation = 0, scale = G.vec2 1 1}
 
 instance (MonadReader ViewportSize m) => Render m SpriteInScreen where
-  render obj = asks (toQuad obj.sprite . vert)
+  render obj = asks (quad obj.sprite . vert)
     where
       vert t = ash @PixelVec (projection t <> model) obj.sprite.texture
       projection (WithVec w h) = srt2affine $ srt (2 / fromIntegral w, 2 / fromIntegral h) 0 (-1, -1)
@@ -80,7 +81,7 @@ instance (MonadReader ViewportSize m) => Render m SpriteInScreen where
          in local <> pivot
 
 instance (MonadReader (Camera, PPU, ViewportSize) m) => Render m SpriteInWorld where
-  render obj = asks (toQuad obj.sprite . vert)
+  render obj = asks (quad obj.sprite . vert)
     where
       vert t = ash @WorldVec (model t) obj.sprite.texture
       model (cam, ppu@(PPU _ppu), vps) =
@@ -95,11 +96,15 @@ instance (MonadReader (Camera, PPU, ViewportSize) m) => Render m SpriteInWorld w
 ash :: forall u. (Tr u NDCVec) => Affine -> DescriptorIndex -> Element u -> Element u -> UVVec -> Vertex
 ash tr tex x y uv = vertex (tr2 @u tr x y) uv tex
 
-toQuad :: Sprite -> (Float -> Float -> UVVec -> Vertex) -> Quad
-toQuad s vert = quad (vert 0 0 a) (vert w 0 b) (vert w h c) (vert 0 h d)
+quad :: Sprite -> (Float -> Float -> UVVec -> Vertex) -> SV.Vector Vertex
+quad s vert = SV.fromList [va, vb, vc, vc, vd, va]
   where
     WithVec w h = s.resolution
     UVReg2 a b c d = s.region
+    va = vert 0 0 a
+    vb = vert w 0 b
+    vc = vert w h c
+    vd = vert 0 h d
 
 projection :: ViewportSize -> PPU -> Affine
 projection (WithVec w h) (PPU ppu) = srt2affine $ srt (s w, -(s h)) 0 (0, 0)

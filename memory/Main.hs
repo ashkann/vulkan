@@ -762,36 +762,7 @@ createPipeline ::
 createPipeline dev extent layout = do
   (vert, frag) <- Init.withShaders dev
   (_, res) <-
-    let vertextAttribute format location offset =
-          Vk.zero
-            { VkVertexInputAttributeDescription.binding = 0,
-              VkVertexInputAttributeDescription.location = location,
-              VkVertexInputAttributeDescription.format = format,
-              VkVertexInputAttributeDescription.offset = fromIntegral offset
-            }
-        posSize = sizeOf (undefined :: NDCVec)
-        texCordSize = sizeOf (undefined :: UVVec)
-        texIndexSize = sizeOf (undefined :: Tex.DescriptorIndex)
-        attributes =
-          [ vertextAttribute Vk.FORMAT_R32G32_SFLOAT 0 (0 :: Int), -- position
-            vertextAttribute Vk.FORMAT_R32G32_SFLOAT 1 posSize, -- texture coordinates
-            vertextAttribute Vk.FORMAT_R32_UINT 2 (posSize + texCordSize), -- texture index
-            vertextAttribute Vk.FORMAT_R32G32B32A32_SFLOAT 3 (posSize + texCordSize + texIndexSize) -- color
-          ]
-        vertexInputInfo =
-          Just $
-            Vk.SomeStruct
-              Vk.zero
-                { VkPipelineVertexInputStateCreateInfo.vertexBindingDescriptions =
-                    [ Vk.zero
-                        { VkVertexInputBindingDescription.binding = 0,
-                          VkVertexInputBindingDescription.stride = fromIntegral $ sizeOf (undefined :: Vert.Vertex),
-                          VkVertexInputBindingDescription.inputRate = Vk.VERTEX_INPUT_RATE_VERTEX
-                        }
-                    ],
-                  VkPipelineVertexInputStateCreateInfo.vertexAttributeDescriptions = attributes
-                }
-        dynamicRendering =
+    let dynamicRendering =
           Vk.zero
             { VkPipelineRenderingCreateInfo.colorAttachmentFormats = [Init.imageFormat]
             }
@@ -860,7 +831,7 @@ createPipeline dev extent layout = do
         pipelineCreateInfo =
           Vk.zero
             { VkGraphicsPipelineCreateInfo.stages = [vert, frag],
-              VkGraphicsPipelineCreateInfo.vertexInputState = vertexInputInfo,
+              VkGraphicsPipelineCreateInfo.vertexInputState = Just Vert.grpahicsPipelineVertexInputState,
               VkGraphicsPipelineCreateInfo.inputAssemblyState = inputAssembly,
               VkGraphicsPipelineCreateInfo.viewportState = viewport,
               VkGraphicsPipelineCreateInfo.rasterizationState = rasterization,

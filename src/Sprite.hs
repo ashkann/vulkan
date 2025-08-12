@@ -1,8 +1,10 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -15,7 +17,6 @@ module Sprite
     putInScreen,
     rotateSprite,
     bottomLeft,
-    embedIntoScreen,
     projection,
   )
 where
@@ -65,42 +66,34 @@ putInScreen ::
   SpriteInScreen
 putInScreen sprite pos = SpriteInScreen {sprite = sprite, position = pos, rotation = 0, scale = G.vec2 1 1}
 
-embedIntoScreen :: SpriteInScreen -> Affine
-embedIntoScreen ss = a <> b
-  where
-    b = srt2affine pivot
-    a = srt2affine $ srt (sx, sy) ss.rotation (x, y)
-    pivot = let WithVec ox oy = ss.sprite.origin in srt (1, 1) 0 (-ox, -oy)
-    G.WithVec2 sx sy = ss.scale
-    WithVec x y = ss.position
-
 instance (MonadReader ViewportSize m) => Render m SpriteInScreen where
-  render ss = asks (toQuad ss.sprite . vert)
+  render obj = asks (toQuad obj.sprite . vert)
     where
-      f t = (projection t <> model)
-      vert t x y uv = let xy = tr2 @PixelVec (f t) x y in vertex xy uv ss.sprite.texture
+      vert t = ash @PixelVec (projection t <> model) obj.sprite.texture
       projection (WithVec w h) = srt2affine $ srt (2 / fromIntegral w, 2 / fromIntegral h) 0 (-1, -1)
       model =
-        let G.WithVec2 sx sy = ss.scale
-            WithVec x y = ss.position
-            WithVec ox oy = ss.sprite.origin
+        let G.WithVec2 sx sy = obj.scale
+            WithVec x y = obj.position
+            WithVec ox oy = obj.sprite.origin
             pivot = srt2affine $ srt (1, 1) 0 (-ox, -oy)
-            local = srt2affine $ srt (sx, sy) ss.rotation (x, y)
+            local = srt2affine $ srt (sx, sy) obj.rotation (x, y)
          in local <> pivot
 
 instance (MonadReader (Camera, PPU, ViewportSize) m) => Render m SpriteInWorld where
-  render ss = asks (toQuad ss.sprite . vert)
+  render obj = asks (toQuad obj.sprite . vert)
     where
-      f t = model t
-      vert t x y uv = let xy = tr2 @WorldVec (f t) x y in vertex xy uv ss.sprite.texture
+      vert t = ash @WorldVec (model t) obj.sprite.texture
       model (cam, ppu@(PPU _ppu), vps) =
         let s = 1 / _ppu
-            G.WithVec2 sx sy = ss.scale
-            WithVec x y = ss.position
-            local = srt2affine $ srt (s * sx, -(s * sy)) ss.rotation (x, y) -- Place in world
-            WithVec ox oy = ss.sprite.origin
+            G.WithVec2 sx sy = obj.scale
+            WithVec x y = obj.position
+            local = srt2affine $ srt (s * sx, -(s * sy)) obj.rotation (x, y) -- Place in world
+            WithVec ox oy = obj.sprite.origin
             pivot = srt2affine $ srt (1, 1) 0 (-ox, -oy)
          in projection vps ppu <> view cam <> local <> pivot
+
+ash :: forall u. (Tr u NDCVec) => Affine -> DescriptorIndex -> Element u -> Element u -> UVVec -> Vertex
+ash tr tex x y uv = vertex (tr2 @u tr x y) uv tex
 
 toQuad :: Sprite -> (Float -> Float -> UVVec -> Vertex) -> Quad
 toQuad s vert = quad (vert 0 0 a) (vert w 0 b) (vert w h c) (vert 0 h d)

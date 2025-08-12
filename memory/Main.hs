@@ -769,8 +769,8 @@ createPipeline dev extent layout = do
               VkVertexInputAttributeDescription.format = format,
               VkVertexInputAttributeDescription.offset = fromIntegral offset
             }
-        posSize = sizeOf (undefined :: G.Vec2)
-        texCordSize = sizeOf (undefined :: G.Vec2)
+        posSize = sizeOf (undefined :: NDCVec)
+        texCordSize = sizeOf (undefined :: UVVec)
         texIndexSize = sizeOf (undefined :: Tex.DescriptorIndex)
         attributes =
           [ vertextAttribute Vk.FORMAT_R32G32_SFLOAT 0 (0 :: Int), -- position

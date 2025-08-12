@@ -642,7 +642,7 @@ screenVertices ws ss =
       d = vert 0 h duv -- bottom left
    in SV.fromList [a, b, c, c, d, a]
   where
-    vert x y uv = Vert.Vertex {xy = tr2 @PixelVec (srt2affine (projection ws) <> embedIntoScreen ss) x y, uv = uv, texture = ss.sprite.texture}
+    vert x y uv = let xy = tr2 @PixelVec (srt2affine (projection ws) <> embedIntoScreen ss) x y in Vert.vertex xy uv ss.sprite.texture
     projection (WithVec w h) = srt (2 / fromIntegral w, 2 / fromIntegral h) 0 (-1, -1)
 
 vertices :: Cam.Camera -> SpriteInWorld -> SV.Vector Vert.Vertex
@@ -657,7 +657,7 @@ vertices
         d = vert 0 h duv -- bottom left
      in SV.fromList [a, b, c, c, d, a]
     where
-      vert x y uv = Vert.Vertex {xy = tr2 @WorldVec model x y, uv = uv, texture = ss.sprite.texture}
+      vert x y uv = let xy = tr2 @WorldVec model x y in Vert.vertex xy uv ss.sprite.texture
       pivot = let WithVec ox oy = ss.sprite.origin in srt (1, 1) 0 (ox, -oy)
       local =
         let s = ppu_1 ppu
@@ -771,10 +771,12 @@ createPipeline dev extent layout = do
             }
         posSize = sizeOf (undefined :: G.Vec2)
         texCordSize = sizeOf (undefined :: G.Vec2)
+        texIndexSize = sizeOf (undefined :: Tex.DescriptorIndex)
         attributes =
           [ vertextAttribute Vk.FORMAT_R32G32_SFLOAT 0 (0 :: Int), -- position
             vertextAttribute Vk.FORMAT_R32G32_SFLOAT 1 posSize, -- texture coordinates
-            vertextAttribute Vk.FORMAT_R32_UINT 2 (posSize + texCordSize) -- texture index
+            vertextAttribute Vk.FORMAT_R32_UINT 2 (posSize + texCordSize), -- texture index
+            vertextAttribute Vk.FORMAT_R32G32B32A32_SFLOAT 3 (posSize + texCordSize + texIndexSize) -- color
           ]
         vertexInputInfo =
           Just $

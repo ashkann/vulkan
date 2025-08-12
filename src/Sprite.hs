@@ -68,9 +68,9 @@ putInScreen ::
 putInScreen sprite pos = SpriteInScreen {sprite = sprite, position = pos, rotation = 0, scale = G.vec2 1 1}
 
 instance (MonadReader ViewportSize m) => Render m SpriteInScreen where
-  render obj = asks (quad obj.sprite . vert)
+  render obj = asks (vertices obj.sprite . vert)
     where
-      vert t = ash @PixelVec (projection t <> model) obj.sprite.texture
+      vert t = tr2 @PixelVec (projection t <> model)
       projection (WithVec w h) = srt2affine $ srt (2 / fromIntegral w, 2 / fromIntegral h) 0 (-1, -1)
       model =
         let G.WithVec2 sx sy = obj.scale
@@ -81,9 +81,9 @@ instance (MonadReader ViewportSize m) => Render m SpriteInScreen where
          in local <> pivot
 
 instance (MonadReader (Camera, PPU, ViewportSize) m) => Render m SpriteInWorld where
-  render obj = asks (quad obj.sprite . vert)
+  render obj = asks (vertices obj.sprite . vert)
     where
-      vert t = ash @WorldVec (model t) obj.sprite.texture
+      vert t = tr2 @WorldVec (model t)
       model (cam, ppu@(PPU _ppu), vps) =
         let s = 1 / _ppu
             G.WithVec2 sx sy = obj.scale
@@ -93,18 +93,15 @@ instance (MonadReader (Camera, PPU, ViewportSize) m) => Render m SpriteInWorld w
             pivot = srt2affine $ srt (1, 1) 0 (-ox, -oy)
          in projection vps ppu <> view cam <> local <> pivot
 
-ash :: forall u. (Tr u NDCVec) => Affine -> DescriptorIndex -> Element u -> Element u -> UVVec -> Vertex
-ash tr tex x y uv = vertex (tr2 @u tr x y) uv tex
-
-quad :: Sprite -> (Float -> Float -> UVVec -> Vertex) -> SV.Vector Vertex
-quad s vert = SV.fromList [va, vb, vc, vc, vd, va]
+vertices :: Sprite -> (Float -> Float -> NDCVec) -> SV.Vector Vertex
+vertices s xy = SV.fromList [va, vb, vc, vc, vd, va]
   where
     WithVec w h = s.resolution
     UVReg2 a b c d = s.region
-    va = vert 0 0 a
-    vb = vert w 0 b
-    vc = vert w h c
-    vd = vert 0 h d
+    va = vertex (xy 0 0) a s.texture
+    vb = vertex (xy w 0) b s.texture
+    vc = vertex (xy w h) c s.texture
+    vd = vertex (xy 0 h) d s.texture
 
 projection :: ViewportSize -> PPU -> Affine
 projection (WithVec w h) (PPU ppu) = srt2affine $ srt (s w, -(s h)) 0 (0, 0)

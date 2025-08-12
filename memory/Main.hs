@@ -4,6 +4,9 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedRecordDot #-}
@@ -15,6 +18,7 @@
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE NoFieldSelectors #-}
 
 module Main (main) where
@@ -27,6 +31,7 @@ import Control.Concurrent (threadDelay)
 import Control.Exception (bracket)
 import Control.Monad (when)
 import Control.Monad.Managed (Managed, MonadIO (liftIO), managed, runManaged)
+import Control.Monad.Reader (MonadReader (ask), runReader)
 import Control.Monad.State.Lazy (MonadState (state), runState)
 import Data.Bits ((.|.))
 import Data.Char (ord)
@@ -67,15 +72,12 @@ import qualified Vulkan as VkGraphicsPipelineCreateInfo (GraphicsPipelineCreateI
 import qualified Vulkan as VkPipelineColorBlendStateCreateInfo (PipelineColorBlendStateCreateInfo (..))
 import qualified Vulkan as VkPipelineLayoutCreateInfo (PipelineLayoutCreateInfo (..))
 import qualified Vulkan as VkPipelineRenderingCreateInfo (PipelineRenderingCreateInfo (..))
-import qualified Vulkan as VkPipelineVertexInputStateCreateInfo (PipelineVertexInputStateCreateInfo (..))
 import qualified Vulkan as VkPresentInfoKHR (PresentInfoKHR (..))
 import qualified Vulkan as VkRect2D (Rect2D (..))
 import qualified Vulkan as VkRenderingAttachmentInfo (RenderingAttachmentInfo (..))
 import qualified Vulkan as VkRenderingInfo (RenderingInfo (..))
 import qualified Vulkan as VkSubmitInfo (SubmitInfo (..))
 import qualified Vulkan as VkVPipelineMultisampleStateCreateInfo (PipelineMultisampleStateCreateInfo (..))
-import qualified Vulkan as VkVertexInputAttributeDescription (VertexInputAttributeDescription (..))
-import qualified Vulkan as VkVertexInputBindingDescription (VertexInputBindingDescription (..))
 import qualified Vulkan as VkViewport (Viewport (..))
 import qualified Vulkan as VkWriteDescriptorSet (WriteDescriptorSet (..))
 import Vulkan.CStruct.Extends (pattern (:&), pattern (::&))
@@ -632,18 +634,51 @@ screenSprites (World {pointer = p, atlas, font}) =
     write x0 y0 str = runState (traverse (\ch -> state (\x -> let g = glyph font ch; out = putInScreen g (vec x y0) in (out, x + 8))) str) x0
     glyph font ch = Atlas.sprite font $ printf "U+%04X" (ord ch)
 
+data Quad = Quad {a, b, c, d :: Vert.Vertex}
+
+class Render m t where
+  render :: t -> m Quad
+
+instance (MonadReader ViewportSize m) => Render m SpriteInScreen where
+  render ss = do
+    ws <- ask
+    let WithVec w h = ss.sprite.resolution
+        UVReg2 auv buv cuv duv = ss.sprite.region
+        a = vert ws 0 0 auv -- top left
+        b = vert ws w 0 buv -- top right
+        c = vert ws w h cuv -- bottom right
+        d = vert ws 0 h duv -- bottom left
+    return $ Quad {a, b, c, d}
+    where
+      vert ws x y uv = let xy = tr2 @PixelVec (projection ws <> embedIntoScreen ss) x y in Vert.vertex xy uv ss.sprite.texture
+      projection (WithVec w h) = srt2affine $ srt (2 / fromIntegral w, 2 / fromIntegral h) 0 (-1, -1)
+
+instance (MonadReader Cam.Camera m) => Render m SpriteInWorld where
+  render
+    ss = do
+      cam <- ask
+      let WithVec w h = ss.sprite.resolution
+          UVReg2 auv buv cuv duv = ss.sprite.region
+          a = vert cam 0 0 auv -- top left
+          b = vert cam w 0 buv -- top right
+          c = vert cam w h cuv -- bottom right
+          d = vert cam 0 h duv -- bottom left
+      return $ Quad {a, b, c, d}
+      where
+        vert cam x y uv = let xy = tr2 @WorldVec (model cam) x y in Vert.vertex xy uv ss.sprite.texture
+        pivot = let WithVec ox oy = ss.sprite.origin in srt (1, 1) 0 (-ox, -oy)
+        local =
+          let s = ppu_1 ppu
+              G.WithVec2 sx sy = ss.scale
+              WithVec x y = ss.position
+           in srt (s * sx, -(s * sy)) ss.rotation (x, y) -- Place in world
+        proj = projection windowSize ppu
+        model cam = proj <> Cam.view cam <> srt2affine local <> srt2affine pivot
+
 screenVertices :: ViewportSize -> SpriteInScreen -> SV.Vector Vert.Vertex
-screenVertices ws ss =
-  let WithVec w h = ss.sprite.resolution
-      UVReg2 auv buv cuv duv = ss.sprite.region
-      a = vert 0 0 auv -- top left
-      b = vert w 0 buv -- top right
-      c = vert w h cuv -- bottom right
-      d = vert 0 h duv -- bottom left
-   in SV.fromList [a, b, c, c, d, a]
+screenVertices ws ss = [q.a, q.b, q.c, q.c, q.d, q.a]
   where
-    vert x y uv = let xy = tr2 @PixelVec (projection ws <> embedIntoScreen ss) x y in Vert.vertex xy uv ss.sprite.texture
-    projection (WithVec w h) = srt2affine $ srt (2 / fromIntegral w, 2 / fromIntegral h) 0 (-1, -1)
+    q = runReader (render ss) ws
 
 vertices :: Cam.Camera -> SpriteInWorld -> SV.Vector Vert.Vertex
 vertices

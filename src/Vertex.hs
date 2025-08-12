@@ -25,14 +25,13 @@ import qualified Vulkan as Vk
     VertexInputAttributeDescription (..),
     VertexInputRate (VERTEX_INPUT_RATE_VERTEX),
   )
--- import qualified Vulkan as VkVertexInputAttributeDescription (VertexInputAttributeDescription (..))
 import qualified Vulkan as VkVertexInputBindingDescription (VertexInputBindingDescription (..))
 import qualified Vulkan.CStruct.Extends as Vk
 import qualified Vulkan.Zero as Vk
 
 newtype Color = Color G.Vec4 deriving (Show, Storable)
 
-data Vertex = Vertex {xy :: NDCVec, uv :: UVVec, texture :: Tex.DescriptorIndex, color :: Color}
+data Vertex = Vertex {xy :: NDCVec, uv :: UVVec, color :: Color, texture :: Tex.DescriptorIndex}
 
 vertexStore :: Store.Dictionary Vertex
 vertexStore =
@@ -40,8 +39,8 @@ vertexStore =
     Vertex
       <$> Store.element (.xy)
       <*> Store.element (.uv)
-      <*> Store.element (.texture)
       <*> Store.element (.color)
+      <*> Store.element (.texture)
 
 -- TODO: automate the layout according to Vulkan spec
 instance Storable Vertex where
@@ -70,22 +69,22 @@ grpahicsPipelineVertexInputState =
                 VkVertexInputBindingDescription.inputRate = Vk.VERTEX_INPUT_RATE_VERTEX
               }
           ],
-        Vk.vertexAttributeDescriptions = attributes
+        Vk.vertexAttributeDescriptions =
+          [ attr Vk.FORMAT_R32G32_SFLOAT 0 positionOffset,
+            attr Vk.FORMAT_R32G32_SFLOAT 1 uvOffset,
+            attr Vk.FORMAT_R32G32B32A32_SFLOAT 2 colorOffset,
+            attr Vk.FORMAT_R32_UINT 3 textureIndexOffset
+          ]
       }
   where
-    vertextAttribute format location offset =
+    attr format location offset =
       Vk.zero
         { Vk.binding = 0,
           Vk.location = location,
           Vk.format = format,
           Vk.offset = fromIntegral offset
         }
-    posSize = sizeOf (undefined :: NDCVec)
-    texCordSize = sizeOf (undefined :: UVVec)
-    texIndexSize = sizeOf (undefined :: Tex.DescriptorIndex)
-    attributes =
-      [ vertextAttribute Vk.FORMAT_R32G32_SFLOAT 0 (0 :: Int), -- position
-        vertextAttribute Vk.FORMAT_R32G32_SFLOAT 1 posSize, -- texture coordinates
-        vertextAttribute Vk.FORMAT_R32_UINT 2 (posSize + texCordSize), -- texture index
-        vertextAttribute Vk.FORMAT_R32G32B32A32_SFLOAT 3 (posSize + texCordSize + texIndexSize) -- color
-      ]
+    positionOffset = 0
+    uvOffset = positionOffset + sizeOf (undefined :: NDCVec)
+    colorOffset = uvOffset + sizeOf (undefined :: UVVec)
+    textureIndexOffset = colorOffset + sizeOf (undefined :: Color)

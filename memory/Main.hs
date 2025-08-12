@@ -642,8 +642,8 @@ screenVertices ws ss =
       d = vert 0 h duv -- bottom left
    in SV.fromList [a, b, c, c, d, a]
   where
-    vert x y uv = let xy = tr2 @PixelVec (srt2affine (projection ws) <> embedIntoScreen ss) x y in Vert.vertex xy uv ss.sprite.texture
-    projection (WithVec w h) = srt (2 / fromIntegral w, 2 / fromIntegral h) 0 (-1, -1)
+    vert x y uv = let xy = tr2 @PixelVec (projection ws <> embedIntoScreen ss) x y in Vert.vertex xy uv ss.sprite.texture
+    projection (WithVec w h) = srt2affine $ srt (2 / fromIntegral w, 2 / fromIntegral h) 0 (-1, -1)
 
 vertices :: Cam.Camera -> SpriteInWorld -> SV.Vector Vert.Vertex
 vertices
@@ -658,7 +658,7 @@ vertices
      in SV.fromList [a, b, c, c, d, a]
     where
       vert x y uv = let xy = tr2 @WorldVec model x y in Vert.vertex xy uv ss.sprite.texture
-      pivot = let WithVec ox oy = ss.sprite.origin in srt (1, 1) 0 (ox, -oy)
+      pivot = let WithVec ox oy = ss.sprite.origin in srt (1, 1) 0 (-ox, -oy)
       local =
         let s = ppu_1 ppu
             G.WithVec2 sx sy = ss.scale

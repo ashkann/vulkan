@@ -5,7 +5,6 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedLists #-}
@@ -90,12 +89,11 @@ newtype TimeSeconds = TimeSeconds Float
 
 frameData :: World -> FrameData
 frameData world =
-  FrameData
-    { verts =
-        let worldVerts = mconcat $ vertices world.camera <$> sprites world
-            screenVerts = mconcat $ screenVertices windowSize <$> screenSprites world
-         in worldVerts SV.++ screenVerts
-    }
+  FrameData {verts = mconcat worldVerts SV.++ mconcat screenVerts}
+  where
+    worldVerts = f (world.camera, ppu, windowSize) <$> worldSprites world
+    screenVerts = f windowSize <$> screenSprites world
+    f t s = Vert.vertices $ runReader (Vert.render s) t
 
 data Frame = Frame
   { pool :: Vk.CommandPool,
@@ -562,14 +560,6 @@ windowSize = vec 800 600
 ppu :: PPU
 ppu = PPU 100
 
-ppu_1 :: PPU -> Float
-ppu_1 (PPU ppu) = 1 / ppu
-
-projection :: ViewportSize -> PPU -> Affine
-projection (WithVec w h) (PPU ppu) = srt2affine $ srt (s w, -(s h)) 0 (0, 0)
-  where
-    s x = (2 * ppu) / fromIntegral x
-
 screenToWorld :: ViewportSize -> PPU -> Cam.Camera -> Affine
 screenToWorld vps@(WithVec w h) ppu cam = ndc2World <> pixels2Ndc
   where
@@ -577,8 +567,8 @@ screenToWorld vps@(WithVec w h) ppu cam = ndc2World <> pixels2Ndc
     pixels2Ndc = srt2affine $ srt (s w, s h) 0 (-1, -1)
     s x = 2 / fromIntegral x
 
-sprites :: World -> [SpriteInWorld]
-sprites World {atlas, grid = (Grid grid), gridStuff, pointer, cardSize, camera} = grd
+worldSprites :: World -> [SpriteInWorld]
+worldSprites World {atlas, grid = (Grid grid), gridStuff, pointer, cardSize, camera} = grd
   where
     pointerPosWorld = tr (screenToWorld windowSize ppu camera) pointer
     spot pos =
@@ -633,74 +623,6 @@ screenSprites (World {pointer = p, atlas, font}) =
     (txt2, _) = write 10 10 "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`"
     write x0 y0 str = runState (traverse (\ch -> state (\x -> let g = glyph font ch; out = putInScreen g (vec x y0) in (out, x + 8))) str) x0
     glyph font ch = Atlas.sprite font $ printf "U+%04X" (ord ch)
-
-data Quad = Quad {a, b, c, d :: Vert.Vertex}
-
-class Render m t where
-  render :: t -> m Quad
-
-instance (MonadReader ViewportSize m) => Render m SpriteInScreen where
-  render ss = do
-    ws <- ask
-    let WithVec w h = ss.sprite.resolution
-        UVReg2 auv buv cuv duv = ss.sprite.region
-        a = vert ws 0 0 auv -- top left
-        b = vert ws w 0 buv -- top right
-        c = vert ws w h cuv -- bottom right
-        d = vert ws 0 h duv -- bottom left
-    return $ Quad {a, b, c, d}
-    where
-      vert ws x y uv = let xy = tr2 @PixelVec (projection ws <> embedIntoScreen ss) x y in Vert.vertex xy uv ss.sprite.texture
-      projection (WithVec w h) = srt2affine $ srt (2 / fromIntegral w, 2 / fromIntegral h) 0 (-1, -1)
-
-instance (MonadReader Cam.Camera m) => Render m SpriteInWorld where
-  render
-    ss = do
-      cam <- ask
-      let WithVec w h = ss.sprite.resolution
-          UVReg2 auv buv cuv duv = ss.sprite.region
-          a = vert cam 0 0 auv -- top left
-          b = vert cam w 0 buv -- top right
-          c = vert cam w h cuv -- bottom right
-          d = vert cam 0 h duv -- bottom left
-      return $ Quad {a, b, c, d}
-      where
-        vert cam x y uv = let xy = tr2 @WorldVec (model cam) x y in Vert.vertex xy uv ss.sprite.texture
-        pivot = let WithVec ox oy = ss.sprite.origin in srt (1, 1) 0 (-ox, -oy)
-        local =
-          let s = ppu_1 ppu
-              G.WithVec2 sx sy = ss.scale
-              WithVec x y = ss.position
-           in srt (s * sx, -(s * sy)) ss.rotation (x, y) -- Place in world
-        proj = projection windowSize ppu
-        model cam = proj <> Cam.view cam <> srt2affine local <> srt2affine pivot
-
-screenVertices :: ViewportSize -> SpriteInScreen -> SV.Vector Vert.Vertex
-screenVertices ws ss = [q.a, q.b, q.c, q.c, q.d, q.a]
-  where
-    q = runReader (render ss) ws
-
-vertices :: Cam.Camera -> SpriteInWorld -> SV.Vector Vert.Vertex
-vertices
-  cam
-  ss =
-    let WithVec w h = ss.sprite.resolution
-        UVReg2 auv buv cuv duv = ss.sprite.region
-        a = vert 0 0 auv -- top left
-        b = vert w 0 buv -- top right
-        c = vert w h cuv -- bottom right
-        d = vert 0 h duv -- bottom left
-     in SV.fromList [a, b, c, c, d, a]
-    where
-      vert x y uv = let xy = tr2 @WorldVec model x y in Vert.vertex xy uv ss.sprite.texture
-      pivot = let WithVec ox oy = ss.sprite.origin in srt (1, 1) 0 (-ox, -oy)
-      local =
-        let s = ppu_1 ppu
-            G.WithVec2 sx sy = ss.scale
-            WithVec x y = ss.position
-         in srt (s * sx, -(s * sy)) ss.rotation (x, y) -- Place in world
-      proj = projection windowSize ppu
-      model = proj <> Cam.view cam <> srt2affine local <> srt2affine pivot
 
 descriptorSetLayout :: Vk.Device -> Word32 -> Managed Vk.DescriptorSetLayout
 descriptorSetLayout dev count = do

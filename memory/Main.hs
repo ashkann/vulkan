@@ -139,9 +139,9 @@ main1 = runManaged $ do
      in managed $ Vk.withCommandPool device info Nothing bracket
   allocator <- Init.withMemoryAllocator vulkan gpu device <* say "Vulkan" "Created VMA allocator"
   let descriptorCount = 16
-  descSetLayout <- descriptorSetLayout device descriptorCount
-  descPool <- descriptorPool device 1000
-  descSet <- descriptorSet device descSetLayout descPool
+  descSetLayout <- Init.descriptorSetLayout device descriptorCount
+  descPool <- Init.descriptorPool device 1000
+  descSet <- Init.descriptorSet device descSetLayout descPool
   sampler <- Utils.repeatingSampler device
   gfxQueue <- Vk.getDeviceQueue device gfx.index 0 <* say "Vulkan" "Got graphics queue"
 
@@ -168,7 +168,7 @@ main1 = runManaged $ do
   pipelineLayout <-
     let info = Vk.zero {VkPipelineLayoutCreateInfo.setLayouts = [descSetLayout]}
      in managed $ Vk.withPipelineLayout device info Nothing bracket
-  pipeline <- createPipeline device swapchainExtent pipelineLayout
+  pipeline <- Init.createPipeline device swapchainExtent pipelineLayout Vert.grpahicsPipelineVertexInputState
   presentQueue <- Vk.getDeviceQueue device present.index 0 <* say "Vulkan" "Got present queue"
 
   let stagingBufferSize = 1048576
@@ -607,7 +607,7 @@ worldR w@World {pointer, atlas, font, grid = (Grid grid), gridStuff, cardSize, c
         WithVec _w _h = windowSize
         w = fromIntegral _w
         h = fromIntegral _h
-        r0 = f 0 $ \_ _ -> vec 0 0s
+        r0 = f 0 $ \_ _ -> vec 0 0
         r1 = f 1 $ \w _ -> vec w 0
         r2 = f 2 vec
         r3 = f 3 $ \_ h -> vec 0 h
@@ -654,193 +654,9 @@ data R game = forall obj. (Render2 game obj) => R obj
 
 class Render2 game obj where
   render2 :: game -> obj -> SV.Vector Vert.Vertex
-  render3 :: game -> R game -> SV.Vector Vert.Vertex
-  render3 g (R obj) = render2 g obj
 
 instance (Has game a, Vert.Render a obj) => Render2 game obj where
   render2 game = Vert.render (get game)
-
--- screenSprites :: World -> [SpriteInScreen
-
-descriptorSetLayout :: Vk.Device -> Word32 -> Managed Vk.DescriptorSetLayout
-descriptorSetLayout dev count = do
-  let flags = Vk.DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT .|. Vk.DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT
-      textures =
-        Vk.zero
-          { VkDescriptorSetLayoutBinding.binding = 0, -- TODO: hardcoded
-            VkDescriptorSetLayoutBinding.descriptorCount = count,
-            VkDescriptorSetLayoutBinding.descriptorType = Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VkDescriptorSetLayoutBinding.stageFlags = Vk.SHADER_STAGE_FRAGMENT_BIT
-          }
-      lights =
-        Vk.zero
-          { VkDescriptorSetLayoutBinding.binding = 1, -- TODO: hardcoded
-            VkDescriptorSetLayoutBinding.descriptorCount = 1,
-            VkDescriptorSetLayoutBinding.descriptorType = Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            VkDescriptorSetLayoutBinding.stageFlags = Vk.SHADER_STAGE_FRAGMENT_BIT
-          }
-      viewport =
-        Vk.zero
-          { VkDescriptorSetLayoutBinding.binding = 2, -- TODO: hardcoded
-            VkDescriptorSetLayoutBinding.descriptorCount = 1,
-            VkDescriptorSetLayoutBinding.descriptorType = Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            VkDescriptorSetLayoutBinding.stageFlags = Vk.SHADER_STAGE_FRAGMENT_BIT
-          }
-      bindings = [textures, lights, viewport]
-      flagsInfo =
-        Vk.zero
-          { VkDescriptorSetLayoutBindingFlagsCreateInfo.bindingFlags = flags <$ bindings
-          }
-      layoutInfo =
-        Vk.zero
-          { VkDescriptorSetLayoutCreateInfo.bindings = bindings,
-            VkDescriptorSetLayoutCreateInfo.flags = Vk.DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT
-          }
-          ::& flagsInfo :& ()
-  managed $ Vk.withDescriptorSetLayout dev layoutInfo Nothing bracket
-
-descriptorPool :: Vk.Device -> Word32 -> Managed Vk.DescriptorPool
-descriptorPool dev textureCount =
-  let poolSize typ =
-        Vk.zero
-          { VkDescriptorPoolSize.descriptorCount = textureCount,
-            VkDescriptorPoolSize.type' = typ
-          }
-      types =
-        [ Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-          Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER
-        ]
-      info =
-        Vk.zero
-          { VkDescriptorPoolCreateInfo.poolSizes = poolSize <$> types,
-            VkDescriptorPoolCreateInfo.maxSets = 1,
-            VkDescriptorPoolCreateInfo.flags =
-              Vk.DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT .|. Vk.DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT
-          }
-   in managed $ Vk.withDescriptorPool dev info Nothing bracket
-
-descriptorSet :: Vk.Device -> Vk.DescriptorSetLayout -> Vk.DescriptorPool -> Managed Vk.DescriptorSet
-descriptorSet dev layout pool =
-  let info =
-        Vk.zero
-          { VkDescriptorSetAllocateInfo.descriptorPool = pool,
-            VkDescriptorSetAllocateInfo.setLayouts = [layout]
-          }
-   in V.head <$> managed (Vk.withDescriptorSets dev info bracket)
-
-bindViewport :: (MonadIO io) => Vk.Device -> Vk.DescriptorSet -> Vk.Buffer -> io ()
-bindViewport dev set viewport =
-  let info =
-        Vk.SomeStruct
-          Vk.zero
-            { VkWriteDescriptorSet.dstSet = set,
-              VkWriteDescriptorSet.dstBinding = 2, -- TODO: magic number, use a configurable value
-              VkWriteDescriptorSet.descriptorType = Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-              VkWriteDescriptorSet.descriptorCount = 1,
-              VkWriteDescriptorSet.bufferInfo = [bufferInfo],
-              VkWriteDescriptorSet.dstArrayElement = 0
-            }
-   in Vk.updateDescriptorSets dev [info] []
-  where
-    bufferInfo =
-      Vk.zero
-        { VkDescriptorBufferInfo.buffer = viewport,
-          VkDescriptorBufferInfo.offset = 0,
-          VkDescriptorBufferInfo.range = Vk.WHOLE_SIZE -- TODO: better value ?
-        }
-
-createPipeline ::
-  Vk.Device ->
-  Vk.Extent2D ->
-  Vk.PipelineLayout ->
-  Managed Vk.Pipeline
-createPipeline dev extent layout = do
-  (vert, frag) <- Init.withShaders dev
-  (_, res) <-
-    let dynamicRendering =
-          Vk.zero
-            { VkPipelineRenderingCreateInfo.colorAttachmentFormats = [Init.imageFormat]
-            }
-        inputAssembly =
-          Just
-            Vk.zero
-              { Vk.topology = Vk.PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
-                Vk.primitiveRestartEnable = False
-              }
-        viewport =
-          Just . Vk.SomeStruct $
-            Vk.zero
-              { Vk.viewports =
-                  [ Vk.Viewport
-                      { VkViewport.x = 0,
-                        VkViewport.y = 0,
-                        VkViewport.width = realToFrac (VkExtent2D.width extent),
-                        VkViewport.height = realToFrac (VkExtent2D.height extent),
-                        VkViewport.minDepth = 0,
-                        VkViewport.maxDepth = 1
-                      }
-                  ],
-                Vk.scissors =
-                  [Vk.Rect2D {VkRect2D.offset = Vk.Offset2D 0 0, VkRect2D.extent = extent}]
-              }
-        rasterization =
-          Just . Vk.SomeStruct $
-            Vk.zero
-              { Vk.depthClampEnable = False,
-                Vk.rasterizerDiscardEnable = False,
-                Vk.lineWidth = 1,
-                Vk.polygonMode = Vk.POLYGON_MODE_FILL,
-                Vk.cullMode = Vk.CULL_MODE_NONE,
-                Vk.frontFace = Vk.FRONT_FACE_CLOCKWISE,
-                Vk.depthBiasEnable = False
-              }
-        multisample =
-          Just . Vk.SomeStruct $
-            Vk.zero
-              { VkVPipelineMultisampleStateCreateInfo.sampleShadingEnable = False,
-                VkVPipelineMultisampleStateCreateInfo.rasterizationSamples = Vk.SAMPLE_COUNT_1_BIT,
-                VkVPipelineMultisampleStateCreateInfo.minSampleShading = 1,
-                VkVPipelineMultisampleStateCreateInfo.sampleMask = [maxBound]
-              }
-        colorBlend =
-          Just . Vk.SomeStruct $
-            Vk.zero
-              { VkPipelineColorBlendStateCreateInfo.logicOpEnable = False,
-                VkPipelineColorBlendStateCreateInfo.attachments =
-                  [ Vk.zero
-                      { Vk.colorWriteMask =
-                          Vk.COLOR_COMPONENT_R_BIT
-                            .|. Vk.COLOR_COMPONENT_G_BIT
-                            .|. Vk.COLOR_COMPONENT_B_BIT
-                            .|. Vk.COLOR_COMPONENT_A_BIT,
-                        Vk.srcColorBlendFactor = Vk.BLEND_FACTOR_SRC_ALPHA,
-                        Vk.dstColorBlendFactor = Vk.BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
-                        Vk.colorBlendOp = Vk.BLEND_OP_ADD,
-                        Vk.srcAlphaBlendFactor = Vk.BLEND_FACTOR_ONE,
-                        Vk.dstAlphaBlendFactor = Vk.BLEND_FACTOR_ZERO,
-                        Vk.alphaBlendOp = Vk.BLEND_OP_ADD,
-                        Vk.blendEnable = True
-                      }
-                  ]
-              }
-        pipelineCreateInfo =
-          Vk.zero
-            { VkGraphicsPipelineCreateInfo.stages = [vert, frag],
-              VkGraphicsPipelineCreateInfo.vertexInputState = Just Vert.grpahicsPipelineVertexInputState,
-              VkGraphicsPipelineCreateInfo.inputAssemblyState = inputAssembly,
-              VkGraphicsPipelineCreateInfo.viewportState = viewport,
-              VkGraphicsPipelineCreateInfo.rasterizationState = rasterization,
-              VkGraphicsPipelineCreateInfo.multisampleState = multisample,
-              VkGraphicsPipelineCreateInfo.depthStencilState = Nothing,
-              VkGraphicsPipelineCreateInfo.colorBlendState = colorBlend,
-              VkGraphicsPipelineCreateInfo.dynamicState = Nothing,
-              VkGraphicsPipelineCreateInfo.layout = layout,
-              VkGraphicsPipelineCreateInfo.subpass = 0,
-              VkGraphicsPipelineCreateInfo.basePipelineHandle = Vk.zero
-            }
-            ::& dynamicRendering :& ()
-     in managed $ Vk.withGraphicsPipelines dev Vk.zero [Vk.SomeStruct pipelineCreateInfo] Nothing bracket
-  return $ V.head res
 
 clearColor :: Vk.ClearValue
 clearColor = Vk.Color (Vk.Float32 1.0 0.0 1.0 0)

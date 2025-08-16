@@ -10,7 +10,6 @@
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -29,9 +28,6 @@ import Control.Concurrent (threadDelay)
 import Control.Exception (bracket)
 import Control.Monad (when)
 import Control.Monad.Managed (Managed, MonadIO (liftIO), managed, runManaged)
-import Control.Monad.State.Lazy (MonadState (state), runState)
-import Data.Bits ((.|.))
-import Data.Char (ord)
 import Data.Foldable (foldlM)
 import Data.Functor (($>))
 import qualified Data.Map.Strict as Map
@@ -49,36 +45,21 @@ import Measure
 import qualified SDL
 import Sprite
 import qualified System.Random as Random
-import Text.Printf (printf)
 import qualified Texture as Tex
 import Txt
 import Utils
 import qualified Vertex as Vert
 import qualified Vulkan as Vk
 import qualified Vulkan as VkCommandPoolCreateInfo (CommandPoolCreateInfo (..))
-import qualified Vulkan as VkDescriptorBufferInfo (DescriptorBufferInfo (..))
-import qualified Vulkan as VkDescriptorPoolCreateInfo (DescriptorPoolCreateInfo (..))
-import qualified Vulkan as VkDescriptorPoolSize (DescriptorPoolSize (..))
-import qualified Vulkan as VkDescriptorSetAllocateInfo (DescriptorSetAllocateInfo (..))
-import qualified Vulkan as VkDescriptorSetLayoutBinding (DescriptorSetLayoutBinding (..))
-import qualified Vulkan as VkDescriptorSetLayoutBindingFlagsCreateInfo (DescriptorSetLayoutBindingFlagsCreateInfo (..))
-import qualified Vulkan as VkDescriptorSetLayoutCreateInfo (DescriptorSetLayoutCreateInfo (..))
 import qualified Vulkan as VkDevice (Device (..))
 import qualified Vulkan as VkExtent2D (Extent2D (..))
 import qualified Vulkan as VkFenceCreateInfo (FenceCreateInfo (..))
-import qualified Vulkan as VkGraphicsPipelineCreateInfo (GraphicsPipelineCreateInfo (..))
-import qualified Vulkan as VkPipelineColorBlendStateCreateInfo (PipelineColorBlendStateCreateInfo (..))
 import qualified Vulkan as VkPipelineLayoutCreateInfo (PipelineLayoutCreateInfo (..))
-import qualified Vulkan as VkPipelineRenderingCreateInfo (PipelineRenderingCreateInfo (..))
 import qualified Vulkan as VkPresentInfoKHR (PresentInfoKHR (..))
 import qualified Vulkan as VkRect2D (Rect2D (..))
 import qualified Vulkan as VkRenderingAttachmentInfo (RenderingAttachmentInfo (..))
 import qualified Vulkan as VkRenderingInfo (RenderingInfo (..))
 import qualified Vulkan as VkSubmitInfo (SubmitInfo (..))
-import qualified Vulkan as VkVPipelineMultisampleStateCreateInfo (PipelineMultisampleStateCreateInfo (..))
-import qualified Vulkan as VkViewport (Viewport (..))
-import qualified Vulkan as VkWriteDescriptorSet (WriteDescriptorSet (..))
-import Vulkan.CStruct.Extends (pattern (:&), pattern (::&))
 import qualified Vulkan.CStruct.Extends as Vk
 import qualified Vulkan.Zero as Vk
 import qualified VulkanMemoryAllocator as Vma
@@ -87,8 +68,7 @@ import Prelude hiding (init)
 newtype TimeSeconds = TimeSeconds Float
 
 frameData :: Game -> World -> FrameData
-frameData g world =
-  FrameData {verts = mconcat $ (\(R s) -> render2 g s) <$> worldR world}
+frameData g w = FrameData {verts = mconcat $ (\(R s) -> render2 g s) <$> world w}
 
 data Frame = Frame
   { pool :: Vk.CommandPool,
@@ -562,8 +542,8 @@ screenToWorld vps@(WithVec w h) ppu cam = ndc2World <> pixels2Ndc
     pixels2Ndc = srt2affine $ srt (s w, s h) 0 (-1, -1)
     s x = 2 / fromIntegral x
 
-worldR :: World -> [R Game]
-worldR w@World {pointer, atlas, font, grid = (Grid grid), gridStuff, cardSize, camera} = grd ++ screenR
+world :: World -> [R Game]
+world w@World {pointer, atlas, font, grid = (Grid grid), gridStuff, cardSize, camera} = grd ++ screenR
   where
     pointerPosWorld = tr (screenToWorld windowSize ppu camera) pointer
     spot pos =

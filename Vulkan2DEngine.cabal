@@ -19,6 +19,7 @@ executable atlas-parser
       Measure
       Sprite
       Texture
+      Txt
       Utils
       Vertex
       Paths_Vulkan2DEngine
@@ -59,6 +60,7 @@ executable memory
       Measure
       Sprite
       Texture
+      Txt
       Utils
       Vertex
       Paths_Vulkan2DEngine

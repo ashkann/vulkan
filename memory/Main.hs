@@ -51,6 +51,7 @@ import Sprite
 import qualified System.Random as Random
 import Text.Printf (printf)
 import qualified Texture as Tex
+import Txt
 import Utils
 import qualified Vertex as Vert
 import qualified Vulkan as Vk
@@ -89,7 +90,8 @@ frameData :: Game -> World -> FrameData
 frameData g world =
   FrameData {verts = mconcat worldVerts SV.++ mconcat screenVerts}
   where
-    worldVerts = Vert.render (world.camera, ppu, windowSize) <$> worldSprites world
+    -- worldVerts = Vert.render (world.camera, ppu, windowSize) <$> worldSprites world
+    worldVerts = (\(R s) -> render2 g s) <$> worldSprites world
     screenVerts = (\(R s) -> render2 g s) <$> screenR world
 
 data Frame = Frame
@@ -182,7 +184,7 @@ main1 = runManaged $ do
    in say "Engine" "Entering the main loop"
         *> mainLoop
           shutdown
-          (frameData $ Game {windowSize = windowSize, font = font})
+          (\w -> frameData (Game {windowSize = windowSize, font = font, camera = w.camera, ppu = ppu}) w)
           ( \frameNumber frameData ->
               do
                 let index = frameNumber `mod` frameCount
@@ -535,7 +537,7 @@ cardFlip (Card name FaceUp) = Card name FaceDown
 cardFlip (Card name FaceDown) = Card name FaceUp
 
 worldTime :: (Monad io) => TimeSeconds -> World -> io World
-worldTime (TimeSeconds dt) w = return w {camera = foldl (\cam act -> act cam) w.camera cameraActions}
+worldTime (TimeSeconds dt) w = return $ w {camera = foldl (\cam act -> act cam) w.camera cameraActions}
   where
     cameraActions =
       [Cam.moveUp $ moveSpeed * dt | Set.member SDL.ScancodeUp w.pressedKeys]
@@ -564,7 +566,7 @@ screenToWorld vps@(WithVec w h) ppu cam = ndc2World <> pixels2Ndc
     pixels2Ndc = srt2affine $ srt (s w, s h) 0 (-1, -1)
     s x = 2 / fromIntegral x
 
-worldSprites :: World -> [SpriteInWorld]
+worldSprites :: World -> [R Game]
 worldSprites World {atlas, grid = (Grid grid), gridStuff, pointer, cardSize, camera} = grd
   where
     pointerPosWorld = tr (screenToWorld windowSize ppu camera) pointer
@@ -575,7 +577,7 @@ worldSprites World {atlas, grid = (Grid grid), gridStuff, pointer, cardSize, cam
           r = floor $ (y + 1) / (h + px)
           c = floor $ (x + 1) / (w + py)
        in if (0 <= r && r <= 5) && (0 <= c && c <= 5) then Just (Spot (Row r, Column c)) else Nothing -- TODO: hardcoded "5"
-    grd = uncurry putAt <$> Map.toList grid
+    grd = R . (uncurry putAt) <$> Map.toList grid
     highlight spot =
       let border = putInWorld (Atlas.sprite atlas "border") pointerPosWorld
        in -- tr = transform $ pos spot + (topLeft :: NDCVec)
@@ -594,17 +596,6 @@ worldSprites World {atlas, grid = (Grid grid), gridStuff, pointer, cardSize, cam
         WithVec w h = cardSize
     faceDown = Atlas.sprite atlas "back-side"
 
-data Txt = Txt {txt :: String, color :: Vert.Color, xy :: PixelVec}
-
--- instance (MonadReader (Atlas, ViewportSize) m) => Vert.Render m Txt where
-instance Vert.Render (ViewportSize, Atlas) Txt where
-  render (vps, font) Txt {txt, color, xy = WithVec x0 y0} =
-    let (text, _) = write font x0 y0 txt
-     in mconcat $ Vert.renderColored vps color <$> text
-    where
-      write font x0 y0 str = runState (traverse (\ch -> state (\x -> let g = glyph font ch; out = putInScreen g (vec x y0) in (out, x + 8))) str) x0
-      glyph font ch = Atlas.sprite font $ printf "U+%04X" (ord ch)
-
 data R game = forall obj. (Render2 game obj) => R obj
 
 class Has game a where
@@ -612,7 +603,9 @@ class Has game a where
 
 data Game = Game
   { windowSize :: ViewportSize,
-    font :: Atlas
+    font :: Atlas,
+    camera :: Cam.Camera,
+    ppu :: PPU
   }
 
 instance Has Game ViewportSize where
@@ -621,8 +614,17 @@ instance Has Game ViewportSize where
 instance Has Game Atlas where
   get = (.font)
 
+instance Has Game Cam.Camera where
+  get = (.camera)
+
+instance Has Game PPU where
+  get = (.ppu)
+
 instance (Has game a, Has game b) => Has game (a, b) where
   get game = (get game, get game)
+
+instance (Has game (a, b), Has game c) => Has game (a, b, c) where
+  get game = let (a, b) = get game in (a, b, get game)
 
 class Render2 game obj where
   render2 :: game -> obj -> SV.Vector Vert.Vertex
@@ -658,11 +660,11 @@ screenR (World {pointer = p, atlas}) =
     scl k s = s {Sprite.scale = k} :: SpriteInScreen
     str = "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`"
     f i piv = let sprite = Atlas.spriteIndexed atlas "rectangle" i; WithVec w h = sprite.resolution in sprite {Sprite.origin = piv w h}
-    y0 line = 10 + (line * 16)
-    txt1 = Txt {txt = str, color = Vert.opaqueColor 1.0 1.0 1.0, xy = vec 10 (y0 0)}
-    txt2 = Txt {txt = str, color = Vert.opaqueColor 1.0 0.0 0.0, xy = vec 10 (y0 1)}
-    txt3 = Txt {txt = str, color = Vert.opaqueColor 0.0 1.0 0.0, xy = vec 10 (y0 2)}
-    txt4 = Txt {txt = str, color = Vert.opaqueColor 0.0 0.0 1.0, xy = vec 10 (y0 3)}
+    y0 line = let y = line * 16 in vec 10 (10 + y)
+    txt1 = text str (Vert.opaqueColor 1.0 1.0 1.0) (y0 0)
+    txt2 = text str (Vert.opaqueColor 1.0 0.0 0.0) (y0 1)
+    txt3 = text str (Vert.opaqueColor 0.0 1.0 0.0) (y0 2)
+    txt4 = text str (Vert.opaqueColor 0.0 0.0 1.0) (y0 3)
 
 descriptorSetLayout :: Vk.Device -> Word32 -> Managed Vk.DescriptorSetLayout
 descriptorSetLayout dev count = do

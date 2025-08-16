@@ -29,7 +29,6 @@ import Control.Concurrent (threadDelay)
 import Control.Exception (bracket)
 import Control.Monad (when)
 import Control.Monad.Managed (Managed, MonadIO (liftIO), managed, runManaged)
-import Control.Monad.Reader (MonadReader (ask), Reader, asks, runReader)
 import Control.Monad.State.Lazy (MonadState (state), runState)
 import Data.Bits ((.|.))
 import Data.Char (ord)
@@ -86,13 +85,12 @@ import Prelude hiding (init)
 
 newtype TimeSeconds = TimeSeconds Float
 
-frameData :: World -> FrameData
-frameData world =
+frameData :: Game -> World -> FrameData
+frameData g world =
   FrameData {verts = mconcat worldVerts SV.++ mconcat screenVerts}
   where
-    worldVerts = f (world.camera, ppu, windowSize) <$> worldSprites world
-    screenVerts = f windowSize <$> screenSprites world
-    f t s = runReader (Vert.render s) t
+    worldVerts = Vert.render (world.camera, ppu, windowSize) <$> worldSprites world
+    screenVerts = (\(R s) -> render2 g s) <$> screenSprites world
 
 data Frame = Frame
   { pool :: Vk.CommandPool,
@@ -184,7 +182,7 @@ main1 = runManaged $ do
    in say "Engine" "Entering the main loop"
         *> mainLoop
           shutdown
-          frameData
+          (frameData $ Game {windowSize = windowSize, font = font})
           ( \frameNumber frameData ->
               do
                 let index = frameNumber `mod` frameCount
@@ -596,28 +594,53 @@ worldSprites World {atlas, grid = (Grid grid), gridStuff, pointer, cardSize, cam
         WithVec w h = cardSize
     faceDown = Atlas.sprite atlas "back-side"
 
-data Ch = Ch {ch :: Char, color :: Vert.Color}
+data Txt = Txt {txt :: String, color :: Vert.Color, xy :: PixelVec}
 
-ch :: Char -> Vert.Color -> Ch
-ch char col = Ch {ch = char, color = col}
+-- instance (MonadReader (Atlas, ViewportSize) m) => Vert.Render m Txt where
+instance Vert.Render (ViewportSize, Atlas) Txt where
+  render (vps, font) Txt {txt, color} =
+    let (text, _) = write font 10 10 txt
+     in mconcat $ Vert.render vps <$> text
+    where
+      write font x0 y0 str = runState (traverse (\ch -> state (\x -> let g = glyph font ch; out = putInScreen g (vec x y0) in (out, x + 8))) str) x0
+      glyph font ch = Atlas.sprite font $ printf "U+%04X" (ord ch)
 
--- instance (MonadReader Atlas m) =>  Vert.Render m Ch where
---   render Ch {ch, color} = asks (\font -> glyph font ch)
---     where
---     (txt2, _) = write 10 10 "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`"
---     write x0 y0 str = runState (traverse (\ch -> state (\x -> let g = glyph font ch; out = putInScreen g (vec x y0) in (out, x + 8))) str) x0
---     glyph font ch = Atlas.sprite font $ printf "U+%04X" (ord ch)
+data R game = forall obj. (Render2 game obj) => R obj
 
-screenSprites :: World -> [SpriteInScreen]
-screenSprites (World {pointer = p, atlas, font}) =
-  [ rot (pi / 4) $ putInScreen r0 (vec 0 0),
-    rot (pi / 8) $ putInScreen r1 (vec w 0),
-    rot (pi / 16) $ putInScreen r2 (vec w h),
-    scl (G.vec2 0.5 2) . rot (pi / 32) $ putInScreen r3 (vec 0 h),
-    scl (G.vec2 2 0.5) . rot (pi / 32) $ putInScreen r4 (vec (w / 2) (h / 2)),
-    putInScreen pointer p
+class Has game a where
+  get :: game -> a
+
+data Game = Game
+  { windowSize :: ViewportSize,
+    font :: Atlas
+  }
+
+instance Has Game ViewportSize where
+  get = (.windowSize)
+
+instance Has Game Atlas where
+  get = (.font)
+
+instance (Has game a, Has game b) => Has game (a, b) where
+  get game = (get game, get game)
+
+class Render2 game obj where
+  render2 :: game -> obj -> SV.Vector Vert.Vertex
+
+instance (Has game a, Vert.Render a obj) => Render2 game obj where
+  render2 game = Vert.render (get game)
+
+-- screenSprites :: World -> [SpriteInScreen]
+screenSprites :: World -> [R Game]
+screenSprites (World {pointer = p, atlas}) =
+  [ R $ rot (pi / 4) $ putInScreen r0 (vec 0 0),
+    R $ rot (pi / 8) $ putInScreen r1 (vec w 0),
+    R $ rot (pi / 16) $ putInScreen r2 (vec w h),
+    R $ scl (G.vec2 0.5 2) . rot (pi / 32) $ putInScreen r3 (vec 0 h),
+    R $ scl (G.vec2 2 0.5) . rot (pi / 32) $ putInScreen r4 (vec (w / 2) (h / 2)),
+    R $ putInScreen pointer p,
+    R txt2
   ]
-    ++ txt2
   where
     WithVec _w _h = windowSize
     w = fromIntegral _w
@@ -631,9 +654,7 @@ screenSprites (World {pointer = p, atlas, font}) =
     rot r s = s {Sprite.rotation = r} :: SpriteInScreen
     scl k s = s {Sprite.scale = k} :: SpriteInScreen
     f i piv = let sprite = Atlas.spriteIndexed atlas "rectangle" i; WithVec w h = sprite.resolution in sprite {Sprite.origin = piv w h}
-    (txt2, _) = write 10 10 "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`"
-    write x0 y0 str = runState (traverse (\ch -> state (\x -> let g = glyph font ch; out = putInScreen g (vec x y0) in (out, x + 8))) str) x0
-    glyph font ch = Atlas.sprite font $ printf "U+%04X" (ord ch)
+    txt2 = Txt {txt = "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`", color = Vert.opaqueColor 1.0 1.0 1.0, xy = vec 10 10}
 
 descriptorSetLayout :: Vk.Device -> Word32 -> Managed Vk.DescriptorSetLayout
 descriptorSetLayout dev count = do

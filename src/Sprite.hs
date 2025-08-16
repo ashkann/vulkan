@@ -67,10 +67,10 @@ putInScreen ::
   SpriteInScreen
 putInScreen sprite pos = SpriteInScreen {sprite = sprite, position = pos, rotation = 0, scale = G.vec2 1 1}
 
-instance (MonadReader ViewportSize m) => Render m SpriteInScreen where
-  render obj = asks (vertices obj.sprite . vert)
+instance Render ViewportSize SpriteInScreen where
+  render vps obj = vertices obj.sprite (xy vps)
     where
-      vert t = tr2 @PixelVec (projection t <> model)
+      xy t = tr2 @PixelVec (projection t <> model)
       projection (WithVec w h) = srt2affine $ srt (2 / fromIntegral w, 2 / fromIntegral h) 0 (-1, -1)
       model =
         let G.WithVec2 sx sy = obj.scale
@@ -80,10 +80,10 @@ instance (MonadReader ViewportSize m) => Render m SpriteInScreen where
             local = srt2affine $ srt (sx, sy) obj.rotation (x, y)
          in local <> pivot
 
-instance (MonadReader (Camera, PPU, ViewportSize) m) => Render m SpriteInWorld where
-  render obj = asks (vertices obj.sprite . vert)
+instance Render (Camera, PPU, ViewportSize) SpriteInWorld where
+  render env obj = vertices obj.sprite (xy env)
     where
-      vert t = tr2 @WorldVec (model t)
+      xy t = tr2 @WorldVec (model t)
       model (cam, ppu@(PPU _ppu), vps) =
         let s = 1 / _ppu
             G.WithVec2 sx sy = obj.scale

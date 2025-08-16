@@ -5,6 +5,7 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE NoFieldSelectors #-}
+{-# LANGUAGE FunctionalDependencies #-}
 
 module Vertex
   ( Vertex (..),
@@ -41,8 +42,8 @@ opaqueColor r g b = Color $ G.vec4 r g b 1.0
 
 data Vertex = Vertex {xy :: NDCVec, uv :: UVVec, color :: Color, texture :: Tex.DescriptorIndex}
 
-class Render m s where
-  render :: s -> m (SV.Vector Vertex)
+class Render a obj | obj -> a where
+  render :: a -> obj -> SV.Vector Vertex
 
 vertexStore :: Store.Dictionary Vertex
 vertexStore =

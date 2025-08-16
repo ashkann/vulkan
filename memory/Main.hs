@@ -88,11 +88,7 @@ newtype TimeSeconds = TimeSeconds Float
 
 frameData :: Game -> World -> FrameData
 frameData g world =
-  FrameData {verts = mconcat worldVerts SV.++ mconcat screenVerts}
-  where
-    -- worldVerts = Vert.render (world.camera, ppu, windowSize) <$> worldSprites world
-    worldVerts = (\(R s) -> render2 g s) <$> worldSprites world
-    screenVerts = (\(R s) -> render2 g s) <$> screenR world
+  FrameData {verts = mconcat $ (\(R s) -> render2 g s) <$> worldR world}
 
 data Frame = Frame
   { pool :: Vk.CommandPool,
@@ -566,8 +562,8 @@ screenToWorld vps@(WithVec w h) ppu cam = ndc2World <> pixels2Ndc
     pixels2Ndc = srt2affine $ srt (s w, s h) 0 (-1, -1)
     s x = 2 / fromIntegral x
 
-worldSprites :: World -> [R Game]
-worldSprites World {atlas, grid = (Grid grid), gridStuff, pointer, cardSize, camera} = grd
+worldR :: World -> [R Game]
+worldR w@World {pointer, atlas, font, grid = (Grid grid), gridStuff, cardSize, camera} = grd ++ screenR
   where
     pointerPosWorld = tr (screenToWorld windowSize ppu camera) pointer
     spot pos =
@@ -595,8 +591,36 @@ worldSprites World {atlas, grid = (Grid grid), gridStuff, pointer, cardSize, cam
         -- pos2 (Spot (Row r, Column c)) = vec (fromIntegral c * (w + hPadding) + left) (fromIntegral r * (h + vPadding) + top)
         WithVec w h = cardSize
     faceDown = Atlas.sprite atlas "back-side"
-
-data R game = forall obj. (Render2 game obj) => R obj
+    screenR =
+      [ R $ rot (pi / 4) $ putInScreen r0 (vec 0 0),
+        R $ rot (pi / 8) $ putInScreen r1 (vec w 0),
+        R $ rot (pi / 16) $ putInScreen r2 (vec w h),
+        R $ scl (G.vec2 0.5 2) . rot (pi / 32) $ putInScreen r3 (vec 0 h),
+        R $ scl (G.vec2 2 0.5) . rot (pi / 32) $ putInScreen r4 (vec (w / 2) (h / 2)),
+        R txt1,
+        R txt2,
+        R txt3,
+        R txt4,
+        R $ putInScreen (Atlas.sprite atlas "pointer") pointer
+      ]
+      where
+        WithVec _w _h = windowSize
+        w = fromIntegral _w
+        h = fromIntegral _h
+        r0 = f 0 $ \_ _ -> vec 0 0s
+        r1 = f 1 $ \w _ -> vec w 0
+        r2 = f 2 vec
+        r3 = f 3 $ \_ h -> vec 0 h
+        r4 = f 4 $ \w h -> vec (w / 2) (h / 2)
+        rot r s = s {Sprite.rotation = r} :: SpriteInScreen
+        scl k s = s {Sprite.scale = k} :: SpriteInScreen
+        str = "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`"
+        f i piv = let sprite = Atlas.spriteIndexed atlas "rectangle" i; WithVec w h = sprite.resolution in sprite {Sprite.origin = piv w h}
+        y0 line = let y = line * 16 in vec 10 (10 + y)
+        txt1 = text str (Vert.opaqueColor 1.0 1.0 1.0) (y0 0)
+        txt2 = text str (Vert.opaqueColor 1.0 0.0 0.0) (y0 1)
+        txt3 = text str (Vert.opaqueColor 0.0 1.0 0.0) (y0 2)
+        txt4 = text str (Vert.opaqueColor 0.0 0.0 1.0) (y0 3)
 
 class Has game a where
   get :: game -> a
@@ -626,45 +650,17 @@ instance (Has game a, Has game b) => Has game (a, b) where
 instance (Has game (a, b), Has game c) => Has game (a, b, c) where
   get game = let (a, b) = get game in (a, b, get game)
 
+data R game = forall obj. (Render2 game obj) => R obj
+
 class Render2 game obj where
   render2 :: game -> obj -> SV.Vector Vert.Vertex
+  render3 :: game -> R game -> SV.Vector Vert.Vertex
+  render3 g (R obj) = render2 g obj
 
 instance (Has game a, Vert.Render a obj) => Render2 game obj where
   render2 game = Vert.render (get game)
 
--- screenSprites :: World -> [SpriteInScreen]
-screenR :: World -> [R Game]
-screenR (World {pointer = p, atlas}) =
-  [ R $ rot (pi / 4) $ putInScreen r0 (vec 0 0),
-    R $ rot (pi / 8) $ putInScreen r1 (vec w 0),
-    R $ rot (pi / 16) $ putInScreen r2 (vec w h),
-    R $ scl (G.vec2 0.5 2) . rot (pi / 32) $ putInScreen r3 (vec 0 h),
-    R $ scl (G.vec2 2 0.5) . rot (pi / 32) $ putInScreen r4 (vec (w / 2) (h / 2)),
-    R txt1,
-    R txt2,
-    R txt3,
-    R txt4,
-    R $ putInScreen pointer p
-  ]
-  where
-    WithVec _w _h = windowSize
-    w = fromIntegral _w
-    h = fromIntegral _h
-    pointer = Atlas.sprite atlas "pointer"
-    r0 = f 0 $ \_ _ -> vec 0 0
-    r1 = f 1 $ \w _ -> vec w 0
-    r2 = f 2 vec
-    r3 = f 3 $ \_ h -> vec 0 h
-    r4 = f 4 $ \w h -> vec (w / 2) (h / 2)
-    rot r s = s {Sprite.rotation = r} :: SpriteInScreen
-    scl k s = s {Sprite.scale = k} :: SpriteInScreen
-    str = "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`"
-    f i piv = let sprite = Atlas.spriteIndexed atlas "rectangle" i; WithVec w h = sprite.resolution in sprite {Sprite.origin = piv w h}
-    y0 line = let y = line * 16 in vec 10 (10 + y)
-    txt1 = text str (Vert.opaqueColor 1.0 1.0 1.0) (y0 0)
-    txt2 = text str (Vert.opaqueColor 1.0 0.0 0.0) (y0 1)
-    txt3 = text str (Vert.opaqueColor 0.0 1.0 0.0) (y0 2)
-    txt4 = text str (Vert.opaqueColor 0.0 0.0 1.0) (y0 3)
+-- screenSprites :: World -> [SpriteInScreen
 
 descriptorSetLayout :: Vk.Device -> Word32 -> Managed Vk.DescriptorSetLayout
 descriptorSetLayout dev count = do

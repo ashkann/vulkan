@@ -21,7 +21,6 @@ data Txt = Txt {str :: String, color :: Color, pos :: PixelVec}
 
 text :: String -> Color -> PixelVec -> Txt
 text str c pos = Txt {str = str, color = c, pos = pos}
-
 instance Render (ViewportSize, Atlas) Txt where
   render (vps, font) Txt {str, color, pos = WithVec x0 y0} =
     let (text, _) = write font x0 y0 str

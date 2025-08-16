@@ -68,7 +68,7 @@ import Prelude hiding (init)
 newtype TimeSeconds = TimeSeconds Float
 
 frameData :: Game -> World -> FrameData
-frameData g w = FrameData {verts = mconcat $ (\(R s) -> render2 g s) <$> world w}
+frameData g w = FrameData {verts = mconcat $ (\(Object s) -> render g s) <$> world w}
 
 data Frame = Frame
   { pool :: Vk.CommandPool,
@@ -542,7 +542,7 @@ screenToWorld vps@(WithVec w h) ppu cam = ndc2World <> pixels2Ndc
     pixels2Ndc = srt2affine $ srt (s w, s h) 0 (-1, -1)
     s x = 2 / fromIntegral x
 
-world :: World -> [R Game]
+world :: World -> [Object Game]
 world w@World {pointer, atlas, font, grid = (Grid grid), gridStuff, cardSize, camera} = grd ++ screenR
   where
     pointerPosWorld = tr (screenToWorld windowSize ppu camera) pointer
@@ -553,7 +553,7 @@ world w@World {pointer, atlas, font, grid = (Grid grid), gridStuff, cardSize, ca
           r = floor $ (y + 1) / (h + px)
           c = floor $ (x + 1) / (w + py)
        in if (0 <= r && r <= 5) && (0 <= c && c <= 5) then Just (Spot (Row r, Column c)) else Nothing -- TODO: hardcoded "5"
-    grd = R . (uncurry putAt) <$> Map.toList grid
+    grd = Object . uncurry putAt <$> Map.toList grid
     highlight spot =
       let border = putInWorld (Atlas.sprite atlas "border") pointerPosWorld
        in -- tr = transform $ pos spot + (topLeft :: NDCVec)
@@ -572,16 +572,16 @@ world w@World {pointer, atlas, font, grid = (Grid grid), gridStuff, cardSize, ca
         WithVec w h = cardSize
     faceDown = Atlas.sprite atlas "back-side"
     screenR =
-      [ R $ rot (pi / 4) $ putInScreen r0 (vec 0 0),
-        R $ rot (pi / 8) $ putInScreen r1 (vec w 0),
-        R $ rot (pi / 16) $ putInScreen r2 (vec w h),
-        R $ scl (G.vec2 0.5 2) . rot (pi / 32) $ putInScreen r3 (vec 0 h),
-        R $ scl (G.vec2 2 0.5) . rot (pi / 32) $ putInScreen r4 (vec (w / 2) (h / 2)),
-        R txt1,
-        R txt2,
-        R txt3,
-        R txt4,
-        R $ putInScreen (Atlas.sprite atlas "pointer") pointer
+      [ Object $ rot (pi / 4) $ putInScreen r0 (vec 0 0),
+        Object $ rot (pi / 8) $ putInScreen r1 (vec w 0),
+        Object $ rot (pi / 16) $ putInScreen r2 (vec w h),
+        Object $ scl (G.vec2 0.5 2) . rot (pi / 32) $ putInScreen r3 (vec 0 h),
+        Object $ scl (G.vec2 2 0.5) . rot (pi / 32) $ putInScreen r4 (vec (w / 2) (h / 2)),
+        Object txt1,
+        Object txt2,
+        Object txt3,
+        Object txt4,
+        Object $ putInScreen (Atlas.sprite atlas "pointer") pointer
       ]
       where
         WithVec _w _h = windowSize
@@ -630,13 +630,13 @@ instance (Has game a, Has game b) => Has game (a, b) where
 instance (Has game (a, b), Has game c) => Has game (a, b, c) where
   get game = let (a, b) = get game in (a, b, get game)
 
-data R game = forall obj. (Render2 game obj) => R obj
+data Object game = forall obj. (Render game obj) => Object obj
 
-class Render2 game obj where
-  render2 :: game -> obj -> SV.Vector Vert.Vertex
+class Render game obj where
+  render :: game -> obj -> SV.Vector Vert.Vertex
 
-instance (Has game a, Vert.Render a obj) => Render2 game obj where
-  render2 game = Vert.render (get game)
+instance (Has game a, Vert.Render a obj) => Render game obj where
+  render game = Vert.render (get game)
 
 clearColor :: Vk.ClearValue
 clearColor = Vk.Color (Vk.Float32 1.0 0.0 1.0 0)

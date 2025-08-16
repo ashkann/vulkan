@@ -18,3 +18,6 @@ Generate the atlas
 
 ### First line of text from GNU unifont
 ![](screenshots/first-line-of-text.png)
+
+### Text colot
+![](screenshots/text-color.jpg)

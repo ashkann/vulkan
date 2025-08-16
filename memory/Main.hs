@@ -90,7 +90,7 @@ frameData g world =
   FrameData {verts = mconcat worldVerts SV.++ mconcat screenVerts}
   where
     worldVerts = Vert.render (world.camera, ppu, windowSize) <$> worldSprites world
-    screenVerts = (\(R s) -> render2 g s) <$> screenSprites world
+    screenVerts = (\(R s) -> render2 g s) <$> screenR world
 
 data Frame = Frame
   { pool :: Vk.CommandPool,
@@ -174,7 +174,7 @@ main1 = runManaged $ do
   presentQueue <- Vk.getDeviceQueue device present.index 0 <* say "Vulkan" "Got present queue"
 
   let stagingBufferSize = 1048576
-      maxVertCount = 1000
+      maxVertCount = 10000
       vertexBufferSize = fromIntegral $ sizeOf (undefined :: Vert.Vertex) * maxVertCount
   frames <- withFrames device gfx.index allocator stagingBufferSize vertexBufferSize frameCount
   w0 <- liftIO $ world0 atlas font
@@ -598,9 +598,9 @@ data Txt = Txt {txt :: String, color :: Vert.Color, xy :: PixelVec}
 
 -- instance (MonadReader (Atlas, ViewportSize) m) => Vert.Render m Txt where
 instance Vert.Render (ViewportSize, Atlas) Txt where
-  render (vps, font) Txt {txt, color} =
-    let (text, _) = write font 10 10 txt
-     in mconcat $ Vert.render vps <$> text
+  render (vps, font) Txt {txt, color, xy = WithVec x0 y0} =
+    let (text, _) = write font x0 y0 txt
+     in mconcat $ Vert.renderColored vps color <$> text
     where
       write font x0 y0 str = runState (traverse (\ch -> state (\x -> let g = glyph font ch; out = putInScreen g (vec x y0) in (out, x + 8))) str) x0
       glyph font ch = Atlas.sprite font $ printf "U+%04X" (ord ch)
@@ -631,15 +631,18 @@ instance (Has game a, Vert.Render a obj) => Render2 game obj where
   render2 game = Vert.render (get game)
 
 -- screenSprites :: World -> [SpriteInScreen]
-screenSprites :: World -> [R Game]
-screenSprites (World {pointer = p, atlas}) =
+screenR :: World -> [R Game]
+screenR (World {pointer = p, atlas}) =
   [ R $ rot (pi / 4) $ putInScreen r0 (vec 0 0),
     R $ rot (pi / 8) $ putInScreen r1 (vec w 0),
     R $ rot (pi / 16) $ putInScreen r2 (vec w h),
     R $ scl (G.vec2 0.5 2) . rot (pi / 32) $ putInScreen r3 (vec 0 h),
     R $ scl (G.vec2 2 0.5) . rot (pi / 32) $ putInScreen r4 (vec (w / 2) (h / 2)),
-    R $ putInScreen pointer p,
-    R txt2
+    R txt1,
+    R txt2,
+    R txt3,
+    R txt4,
+    R $ putInScreen pointer p
   ]
   where
     WithVec _w _h = windowSize
@@ -653,8 +656,13 @@ screenSprites (World {pointer = p, atlas}) =
     r4 = f 4 $ \w h -> vec (w / 2) (h / 2)
     rot r s = s {Sprite.rotation = r} :: SpriteInScreen
     scl k s = s {Sprite.scale = k} :: SpriteInScreen
+    str = "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`"
     f i piv = let sprite = Atlas.spriteIndexed atlas "rectangle" i; WithVec w h = sprite.resolution in sprite {Sprite.origin = piv w h}
-    txt2 = Txt {txt = "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`", color = Vert.opaqueColor 1.0 1.0 1.0, xy = vec 10 10}
+    y0 line = 10 + (line * 16)
+    txt1 = Txt {txt = str, color = Vert.opaqueColor 1.0 1.0 1.0, xy = vec 10 (y0 0)}
+    txt2 = Txt {txt = str, color = Vert.opaqueColor 1.0 0.0 0.0, xy = vec 10 (y0 1)}
+    txt3 = Txt {txt = str, color = Vert.opaqueColor 0.0 1.0 0.0, xy = vec 10 (y0 2)}
+    txt4 = Txt {txt = str, color = Vert.opaqueColor 0.0 0.0 1.0, xy = vec 10 (y0 3)}
 
 descriptorSetLayout :: Vk.Device -> Word32 -> Managed Vk.DescriptorSetLayout
 descriptorSetLayout dev count = do

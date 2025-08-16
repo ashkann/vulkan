@@ -23,7 +23,6 @@ where
 
 import Affine (Affine, srt, srt2affine)
 import Camera (Camera, view)
-import Control.Monad.Reader
 import qualified Data.Vector.Storable as SV
 import qualified Geomancy as G
 import Measure

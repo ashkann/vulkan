@@ -1,11 +1,10 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE NoFieldSelectors #-}
-{-# LANGUAGE FunctionalDependencies #-}
 
 module Vertex
   ( Vertex (..),
@@ -44,6 +43,8 @@ data Vertex = Vertex {xy :: NDCVec, uv :: UVVec, color :: Color, texture :: Tex.
 
 class Render a obj | obj -> a where
   render :: a -> obj -> SV.Vector Vertex
+  renderColored :: a -> Color -> obj -> SV.Vector Vertex
+  renderColored a c obj = SV.map (\v -> v {color = c}) (render a obj)
 
 vertexStore :: Store.Dictionary Vertex
 vertexStore =

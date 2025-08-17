@@ -12,12 +12,27 @@ Generate the atlas
 ```
 ### Initial attempts
 ![](screenshots/screenshot.gif)
+- Vulkan pipeline
+- Basic sprites
+- Basic transformations
+- No separate Screen and World spaces
 
-### Got the affine transformations and SRT right on the screen and world spaces
+### Affine transformations
 ![](screenshots/affine.gif)
+- SRT (Scale, Rotate, Translate)
+- View Projection
+- Screen and World spaces
 
-### First line of text from GNU unifont
+### Text
 ![](screenshots/first-line-of-text.png)
+- Gnu unifont
+- Font atlas
 
-### Text colot
+### Colored Text
 ![](screenshots/text-color.jpg)
+- Colored vertices
+- Text in Screen space (fixed on screen, doesn't move with the world)
+
+### World Text
+![](screenshots/world-text.jpg)
+-  Text in World space (moves with the world)

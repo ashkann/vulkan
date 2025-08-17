@@ -596,11 +596,11 @@ world w@World {pointer, atlas, font, grid = (Grid grid), gridStuff, cardSize, ca
         scl k s = s {Sprite.scale = k} :: (In Sprite PixelVec)
         str = "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`"
         f i piv = let sprite = Atlas.spriteIndexed atlas "rectangle" i; WithVec w h = sprite.resolution in sprite {Sprite.origin = piv w h}
-        y0 line = let y = line * 16 in vec 10 (10 + y)
-        txt1 = text str (Vert.opaqueColor 1.0 1.0 1.0) (y0 0)
-        txt2 = text str (Vert.opaqueColor 1.0 0.0 0.0) (y0 1)
-        txt3 = text str (Vert.opaqueColor 0.0 1.0 0.0) (y0 2)
-        txt4 = text str (Vert.opaqueColor 0.0 0.0 1.0) (y0 3)
+        y0 line = let y = line * 16 in vec 10 (10 + y) :: PixelVec
+        txt1 = putIn (text str (Vert.opaqueColor 1.0 1.0 1.0)) (y0 0)
+        txt2 = putIn (text str (Vert.opaqueColor 1.0 0.0 0.0)) (y0 1)
+        txt3 = putIn (text str (Vert.opaqueColor 0.0 1.0 0.0)) (y0 2)
+        txt4 = putIn (text str (Vert.opaqueColor 0.0 0.0 1.0)) (y0 3)
 
 class Has game a where
   get :: game -> a

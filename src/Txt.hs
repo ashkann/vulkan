@@ -1,8 +1,8 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PatternSynonyms #-}
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Txt
@@ -15,17 +15,17 @@ import Atlas (Atlas, sprite)
 import Control.Monad.State (MonadState (state), runState)
 import Data.Char (ord)
 import Measure (PixelVec, Vec (vec), ViewportSize, pattern WithVec)
-import Sprite (putIn)
+import Sprite (In (..), putIn)
 import Text.Printf (printf)
 import Vertex (Color, Render (render, renderColored))
 
-data Txt = Txt {str :: String, color :: Color, pos :: PixelVec}
+data Txt = Txt {str :: String, color :: Color}
 
-text :: String -> Color -> PixelVec -> Txt
-text str c pos = Txt {str = str, color = c, pos = pos}
+text :: String -> Color -> Txt
+text str c = Txt {str = str, color = c}
 
-instance Render (ViewportSize, Atlas) Txt where
-  render (vps, font) Txt {str, color, pos = WithVec x0 y0} =
+instance Render (ViewportSize, Atlas) (In Txt PixelVec) where
+  render (vps, font) In {object = (Txt {str, color}), position = WithVec x0 y0} =
     let (text, _) = write font x0 y0 str
      in mconcat $ renderColored vps color <$> text
     where

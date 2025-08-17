@@ -14,6 +14,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StrictData #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE NoFieldSelectors #-}
@@ -572,16 +573,17 @@ world w@World {pointer, atlas, font, grid = (Grid grid), gridStuff, cardSize, ca
         WithVec w h = cardSize
     faceDown = Atlas.sprite atlas "back-side"
     screenR =
-      [ Object $ rot (pi / 4) $ putIn r0 (vec 0 0),
-        Object $ rot (pi / 8) $ putIn r1 (vec w 0),
-        Object $ rot (pi / 16) $ putIn r2 (vec w h),
-        Object $ scl (G.vec2 0.5 2) . rot (pi / 32) $ putIn r3 (vec 0 h),
-        Object $ scl (G.vec2 2 0.5) . rot (pi / 32) $ putIn r4 (vec (w / 2) (h / 2)),
+      [ Object $ rot (pi / 4) $ putIn r0 (vec @PixelVec 0 0),
+        Object $ rot (pi / 8) $ putIn r1 (vec @PixelVec w 0),
+        Object $ rot (pi / 16) $ putIn r2 (vec @PixelVec w h),
+        Object $ scl (G.vec2 0.5 2) . rot (pi / 32) $ putIn r3 (vec @PixelVec 0 h),
+        Object $ scl (G.vec2 2 0.5) . rot (pi / 32) $ putIn r4 (vec @PixelVec (w / 2) (h / 2)),
         Object txt1,
         Object txt2,
         Object txt3,
         Object txt4,
-        Object $ putIn (Atlas.sprite atlas "pointer") pointer
+        Object $ putIn (Atlas.sprite atlas "pointer") pointer,
+        Object worldText
       ]
       where
         WithVec _w _h = windowSize
@@ -592,8 +594,8 @@ world w@World {pointer, atlas, font, grid = (Grid grid), gridStuff, cardSize, ca
         r2 = f 2 vec
         r3 = f 3 $ \_ h -> vec 0 h
         r4 = f 4 $ \w h -> vec (w / 2) (h / 2)
-        rot r s = s {Sprite.rotation = r} :: (In Sprite PixelVec)
-        scl k s = s {Sprite.scale = k} :: (In Sprite PixelVec)
+        rot r s = s {Sprite.rotation = r}
+        scl k s = s {Sprite.scale = k}
         str = "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`"
         f i piv = let sprite = Atlas.spriteIndexed atlas "rectangle" i; WithVec w h = sprite.resolution in sprite {Sprite.origin = piv w h}
         y0 line = let y = line * 16 in vec 10 (10 + y) :: PixelVec
@@ -601,6 +603,7 @@ world w@World {pointer, atlas, font, grid = (Grid grid), gridStuff, cardSize, ca
         txt2 = putIn (text str (Vert.opaqueColor 1.0 0.0 0.0)) (y0 1)
         txt3 = putIn (text str (Vert.opaqueColor 0.0 1.0 0.0)) (y0 2)
         txt4 = putIn (text str (Vert.opaqueColor 0.0 0.0 1.0)) (y0 3)
+        worldText = putIn (text str (Vert.opaqueColor 1.0 1.0 1.0)) (vec @WorldVec 0 0)
 
 class Has game a where
   get :: game -> a
@@ -629,6 +632,9 @@ instance (Has game a, Has game b) => Has game (a, b) where
 
 instance (Has game (a, b), Has game c) => Has game (a, b, c) where
   get game = let (a, b) = get game in (a, b, get game)
+  
+instance (Has game (a, b, c), Has game d) => Has game (a, b, c, d) where
+  get game = let (a, b, c) = get game in (a, b, c, get game)
 
 data Object game = forall obj. (Render game obj) => Object obj
 

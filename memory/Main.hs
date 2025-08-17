@@ -266,7 +266,7 @@ mkGrid deck = Grid . Map.fromList $ zipWith f spots deck
 world0 :: (MonadIO io) => Atlas -> Atlas -> io World
 world0 atlas font = do
   deck <- liftIO $ mkSuffeledDeck 18
-  let faceDown = putInWorld (Atlas.sprite atlas "back-side")
+  let faceDown = putIn (Atlas.sprite atlas "back-side")
    in return $
         World
           { pointer = vec 0 0,
@@ -545,7 +545,7 @@ screenToWorld vps@(WithVec w h) ppu cam = ndc2World <> pixels2Ndc
 world :: World -> [Object Game]
 world w@World {pointer, atlas, font, grid = (Grid grid), gridStuff, cardSize, camera} = grd ++ screenR
   where
-    pointerPosWorld = tr (screenToWorld windowSize ppu camera) pointer
+    pointerPosWorld = tr (screenToWorld windowSize ppu camera) pointer :: WorldVec
     spot pos =
       let WithVec x y = pos - gridStuff.topLeft
           WithVec w h = cardSize
@@ -555,15 +555,15 @@ world w@World {pointer, atlas, font, grid = (Grid grid), gridStuff, cardSize, ca
        in if (0 <= r && r <= 5) && (0 <= c && c <= 5) then Just (Spot (Row r, Column c)) else Nothing -- TODO: hardcoded "5"
     grd = Object . uncurry putAt <$> Map.toList grid
     highlight spot =
-      let border = putInWorld (Atlas.sprite atlas "border") pointerPosWorld
+      let border = putIn (Atlas.sprite atlas "border") pointerPosWorld
        in -- tr = transform $ pos spot + (topLeft :: NDCVec)
           border
       where
         GridStuff {topLeft = WithVec top left, padding = WithVec hPadding vPadding} = gridStuff
         WithVec w h = cardSize
-    putAt (Spot (Row r, Column c)) crd = let s = putInWorld (card crd) pos in s
+    putAt (Spot (Row r, Column c)) crd = let s = putIn (card crd) pos in s
       where
-        pos = vec (fromIntegral c * 1.1) (fromIntegral r * 1.1)
+        pos = vec (fromIntegral c * 1.1) (fromIntegral r * 1.1) :: WorldVec
         rot = fromIntegral c * (pi / 16.0)
         card (Card (CardName name) FaceUp) = Atlas.sprite atlas name
         card (Card _ FaceDown) = faceDown
@@ -572,16 +572,16 @@ world w@World {pointer, atlas, font, grid = (Grid grid), gridStuff, cardSize, ca
         WithVec w h = cardSize
     faceDown = Atlas.sprite atlas "back-side"
     screenR =
-      [ Object $ rot (pi / 4) $ putInScreen r0 (vec 0 0),
-        Object $ rot (pi / 8) $ putInScreen r1 (vec w 0),
-        Object $ rot (pi / 16) $ putInScreen r2 (vec w h),
-        Object $ scl (G.vec2 0.5 2) . rot (pi / 32) $ putInScreen r3 (vec 0 h),
-        Object $ scl (G.vec2 2 0.5) . rot (pi / 32) $ putInScreen r4 (vec (w / 2) (h / 2)),
+      [ Object $ rot (pi / 4) $ putIn r0 (vec 0 0),
+        Object $ rot (pi / 8) $ putIn r1 (vec w 0),
+        Object $ rot (pi / 16) $ putIn r2 (vec w h),
+        Object $ scl (G.vec2 0.5 2) . rot (pi / 32) $ putIn r3 (vec 0 h),
+        Object $ scl (G.vec2 2 0.5) . rot (pi / 32) $ putIn r4 (vec (w / 2) (h / 2)),
         Object txt1,
         Object txt2,
         Object txt3,
         Object txt4,
-        Object $ putInScreen (Atlas.sprite atlas "pointer") pointer
+        Object $ putIn (Atlas.sprite atlas "pointer") pointer
       ]
       where
         WithVec _w _h = windowSize
@@ -592,8 +592,8 @@ world w@World {pointer, atlas, font, grid = (Grid grid), gridStuff, cardSize, ca
         r2 = f 2 vec
         r3 = f 3 $ \_ h -> vec 0 h
         r4 = f 4 $ \w h -> vec (w / 2) (h / 2)
-        rot r s = s {Sprite.rotation = r} :: SpriteInScreen
-        scl k s = s {Sprite.scale = k} :: SpriteInScreen
+        rot r s = s {Sprite.rotation = r} :: (In Sprite PixelVec)
+        scl k s = s {Sprite.scale = k} :: (In Sprite PixelVec)
         str = "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`"
         f i piv = let sprite = Atlas.spriteIndexed atlas "rectangle" i; WithVec w h = sprite.resolution in sprite {Sprite.origin = piv w h}
         y0 line = let y = line * 16 in vec 10 (10 + y)

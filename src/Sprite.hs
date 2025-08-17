@@ -11,12 +11,8 @@
 
 module Sprite
   ( Sprite (..),
-    SpriteInWorld,
-    SpriteInScreen,
-    InWorld(..),
-    InScreen(..),
-    putInWorld,
-    putInScreen,
+    In (..),
+    putIn,
     rotateSprite,
     bottomLeft,
     projection,
@@ -38,31 +34,18 @@ data Sprite = Sprite
     origin :: PixelVec
   }
 
-data InScreen obj = InScreen {object :: obj, position :: PixelVec, rotation :: Float, scale :: G.Vec2}
+data In obj vec = In {object :: obj, position :: vec, rotation :: Float, scale :: G.Vec2}
 
-data InWorld obj = InWorld {object :: obj, position :: WorldVec, rotation :: Float, scale :: G.Vec2}
-
-type SpriteInScreen = InScreen Sprite
-
-type SpriteInWorld = InWorld Sprite
-
--- | Put the sprite in the world with a given size.
-putInWorld ::
-  Sprite ->
-  WorldVec ->
-  SpriteInWorld
-putInWorld sprite pos = InWorld {object = sprite, position = pos, rotation = 0, scale = G.vec2 1 1}
-
-rotateSprite :: SpriteInWorld -> Float -> SpriteInWorld
+rotateSprite :: In WorldVec Sprite -> Float -> In WorldVec Sprite
 rotateSprite s r = s {rotation = r}
 
-putInScreen ::
-  Sprite ->
-  PixelVec ->
-  SpriteInScreen
-putInScreen sprite pos = InScreen {object = sprite, position = pos, rotation = 0, scale = G.vec2 1 1}
+putIn ::
+  obj ->
+  vec ->
+  In obj vec
+putIn obj pos = In {object = obj, position = pos, rotation = 0, scale = G.vec2 1 1}
 
-instance Render ViewportSize SpriteInScreen where
+instance Render ViewportSize (In Sprite PixelVec) where
   render vps obj = vertices obj.object (xy vps)
     where
       xy t = tr2 @PixelVec (projection t <> model)
@@ -75,7 +58,7 @@ instance Render ViewportSize SpriteInScreen where
             local = srt2affine $ srt (sx, sy) obj.rotation (x, y)
          in local <> pivot
 
-instance Render (Camera, PPU, ViewportSize) SpriteInWorld where
+instance Render (Camera, PPU, ViewportSize) (In Sprite WorldVec) where
   render env obj = vertices obj.object (xy env)
     where
       xy t = tr2 @WorldVec (model t)

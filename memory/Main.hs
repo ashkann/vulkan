@@ -544,7 +544,7 @@ screenToWorld vps@(WithVec w h) ppu cam = ndc2World <> pixels2Ndc
     s x = 2 / fromIntegral x
 
 world :: World -> [Object Game]
-world w@World {pointer, atlas, font, grid = (Grid grid), gridStuff, cardSize, camera} = grd ++ screenR
+world World {pointer, atlas, grid = (Grid grid), gridStuff, cardSize, camera} = grd ++ [worldText] ++ screenR
   where
     pointerPosWorld = tr (screenToWorld windowSize ppu camera) pointer :: WorldVec
     spot pos =
@@ -572,6 +572,8 @@ world w@World {pointer, atlas, font, grid = (Grid grid), gridStuff, cardSize, ca
         -- pos2 (Spot (Row r, Column c)) = vec (fromIntegral c * (w + hPadding) + left) (fromIntegral r * (h + vPadding) + top)
         WithVec w h = cardSize
     faceDown = Atlas.sprite atlas "back-side"
+    str = "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`"
+    worldText = Object $ putIn (text str (Vert.opaqueColor 0.0 0.0 0.0)) (vec @WorldVec 0 0)
     screenR =
       [ Object $ rot (pi / 4) $ putIn r0 (vec @PixelVec 0 0),
         Object $ rot (pi / 8) $ putIn r1 (vec @PixelVec w 0),
@@ -582,8 +584,7 @@ world w@World {pointer, atlas, font, grid = (Grid grid), gridStuff, cardSize, ca
         Object txt2,
         Object txt3,
         Object txt4,
-        Object $ putIn (Atlas.sprite atlas "pointer") pointer,
-        Object worldText
+        Object $ putIn (Atlas.sprite atlas "pointer") pointer
       ]
       where
         WithVec _w _h = windowSize
@@ -596,14 +597,12 @@ world w@World {pointer, atlas, font, grid = (Grid grid), gridStuff, cardSize, ca
         r4 = f 4 $ \w h -> vec (w / 2) (h / 2)
         rot r s = s {Sprite.rotation = r}
         scl k s = s {Sprite.scale = k}
-        str = "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`"
         f i piv = let sprite = Atlas.spriteIndexed atlas "rectangle" i; WithVec w h = sprite.resolution in sprite {Sprite.origin = piv w h}
         y0 line = let y = line * 16 in vec 10 (10 + y) :: PixelVec
         txt1 = putIn (text str (Vert.opaqueColor 1.0 1.0 1.0)) (y0 0)
         txt2 = putIn (text str (Vert.opaqueColor 1.0 0.0 0.0)) (y0 1)
         txt3 = putIn (text str (Vert.opaqueColor 0.0 1.0 0.0)) (y0 2)
         txt4 = putIn (text str (Vert.opaqueColor 0.0 0.0 1.0)) (y0 3)
-        worldText = putIn (text str (Vert.opaqueColor 1.0 1.0 1.0)) (vec @WorldVec 0 0)
 
 class Has game a where
   get :: game -> a

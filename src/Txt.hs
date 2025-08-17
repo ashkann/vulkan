@@ -38,5 +38,5 @@ instance Render (Camera, PPU, ViewportSize, Atlas) (In Txt WorldVec) where
     let (text, _) = write font x0 y0 str
      in mconcat $ renderColored (cam, ppu, vps) color <$> text
     where
-      write font x0 y0 str = runState (traverse (\ch -> state (\x -> let g = glyph font ch; out = putIn g (vec @WorldVec x y0) in (out, x + 1))) str) x0
+      write font x0 y0 str = runState (traverse (\ch -> state (\x -> let g = glyph font ch; out = putIn g (vec @WorldVec x y0) in (out, x + 0.08))) str) x0
       glyph font ch = sprite font $ printf "U+%04X" (ord ch)

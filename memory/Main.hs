@@ -10,9 +10,6 @@
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -69,7 +66,7 @@ import Prelude hiding (init)
 newtype TimeSeconds = TimeSeconds Float
 
 frameData :: Game -> World -> FrameData
-frameData g w = FrameData {verts = mconcat $ (\(Object s) -> render g s) <$> world w}
+frameData g w = FrameData {verts = mconcat $ (\(Object s) -> render g s) <$> scene w}
 
 data Frame = Frame
   { pool :: Vk.CommandPool,
@@ -543,8 +540,8 @@ screenToWorld vps@(WithVec w h) ppu cam = ndc2World <> pixels2Ndc
     pixels2Ndc = srt2affine $ srt (s w, s h) 0 (-1, -1)
     s x = 2 / fromIntegral x
 
-world :: World -> [Object Game]
-world World {pointer, atlas, grid = (Grid grid), gridStuff, cardSize, camera} = grd ++ [worldText] ++ screenR
+scene :: World -> [Object Game]
+scene World {pointer, atlas, grid = (Grid grid), gridStuff, cardSize, camera} = grd ++ [worldText] ++ screenR
   where
     pointerPosWorld = tr (screenToWorld windowSize ppu camera) pointer :: WorldVec
     spot pos =
@@ -564,13 +561,14 @@ world World {pointer, atlas, grid = (Grid grid), gridStuff, cardSize, camera} = 
         WithVec w h = cardSize
     putAt (Spot (Row r, Column c)) crd = let s = putIn (card crd) pos in s
       where
+        -- hPadding = 0.1
+        -- vPadding = 0.1
         pos = vec (fromIntegral c * 1.1) (fromIntegral r * 1.1) :: WorldVec
-        rot = fromIntegral c * (pi / 16.0)
         card (Card (CardName name) FaceUp) = Atlas.sprite atlas name
         card (Card _ FaceDown) = faceDown
-        GridStuff {topLeft = WithVec top left, padding = WithVec hPadding vPadding} = gridStuff
+        -- GridStuff {topLeft = WithVec top left, padding = WithVec hPadding vPadding} = gridStuff
         -- pos2 (Spot (Row r, Column c)) = vec (fromIntegral c * (w + hPadding) + left) (fromIntegral r * (h + vPadding) + top)
-        WithVec w h = cardSize
+        -- WithVec w h = cardSize
     faceDown = Atlas.sprite atlas "back-side"
     str = "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`"
     worldText = Object $ putIn (text str (Vert.opaqueColor 0.0 0.0 0.0)) (vec @WorldVec 0 0)

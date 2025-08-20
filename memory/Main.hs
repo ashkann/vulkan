@@ -566,9 +566,9 @@ scene World {pointer, atlas, grid = (Grid grid), gridStuff, cardSize, camera} = 
         pos = vec (fromIntegral c * 1.1) (fromIntegral r * 1.1) :: WorldVec
         card (Card (CardName name) FaceUp) = Atlas.sprite atlas name
         card (Card _ FaceDown) = faceDown
-        -- GridStuff {topLeft = WithVec top left, padding = WithVec hPadding vPadding} = gridStuff
-        -- pos2 (Spot (Row r, Column c)) = vec (fromIntegral c * (w + hPadding) + left) (fromIntegral r * (h + vPadding) + top)
-        -- WithVec w h = cardSize
+    -- GridStuff {topLeft = WithVec top left, padding = WithVec hPadding vPadding} = gridStuff
+    -- pos2 (Spot (Row r, Column c)) = vec (fromIntegral c * (w + hPadding) + left) (fromIntegral r * (h + vPadding) + top)
+    -- WithVec w h = cardSize
     faceDown = Atlas.sprite atlas "back-side"
     str = "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`"
     worldText = Object $ putIn (text str (Vert.opaqueColor 0.0 0.0 0.0)) (vec @WorldVec 0 0)
@@ -596,11 +596,11 @@ scene World {pointer, atlas, grid = (Grid grid), gridStuff, cardSize, camera} = 
         rot r s = s {Sprite.rotation = r}
         scl k s = s {Sprite.scale = k}
         f i piv = let sprite = Atlas.spriteIndexed atlas "rectangle" i; WithVec w h = sprite.resolution in sprite {Sprite.origin = piv w h}
-        y0 line = let y = line * 16 in vec 10 (10 + y) :: PixelVec
-        txt1 = putIn (text str (Vert.opaqueColor 1.0 1.0 1.0)) (y0 0)
-        txt2 = putIn (text str (Vert.opaqueColor 1.0 0.0 0.0)) (y0 1)
-        txt3 = putIn (text str (Vert.opaqueColor 0.0 1.0 0.0)) (y0 2)
-        txt4 = putIn (text str (Vert.opaqueColor 0.0 0.0 1.0)) (y0 3)
+        y0 line = let y = line * 16 in vec 30 (30 + y) :: PixelVec
+        txt1 = putIn (text "Move the camera: Arrow keys" (Vert.opaqueColor 1.0 1.0 1.0)) (y0 0)
+        txt2 = putIn (text "Rotate: E and R " (Vert.opaqueColor 1.0 0.0 0.0)) (y0 1)
+        txt3 = putIn (text "Zoom in and out: + and -" (Vert.opaqueColor 0.0 1.0 0.0)) (y0 2)
+        txt4 = putIn (text "Reset: 0" (Vert.opaqueColor 0.0 0.0 1.0)) (y0 3)
 
 class Has game a where
   get :: game -> a
@@ -629,7 +629,7 @@ instance (Has game a, Has game b) => Has game (a, b) where
 
 instance (Has game (a, b), Has game c) => Has game (a, b, c) where
   get game = let (a, b) = get game in (a, b, get game)
-  
+
 instance (Has game (a, b, c), Has game d) => Has game (a, b, c, d) where
   get game = let (a, b, c) = get game in (a, b, c, get game)
 

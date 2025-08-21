@@ -84,26 +84,7 @@ data Frame = Frame
 
 -- TODO: run inside a MonadError instance
 main :: IO ()
-main = main1
-
--- main2 = do
---   print ps2
---   print $ SRT.apply local <$> corners
---   print $ SRT.apply proj <$> ps2
---   print $ SRT.apply proj . SRT.apply local <$> corners
---   print $ SRT.apply (proj <> local) <$> corners
---   where
---     -- print $ SRT.apply proj (100, 200)
---     -- print $ SRT.apply (proj <> local) p
-
---     proj = srt2affine $ srt (2 / fromIntegral sw, 2 / fromIntegral sh) 0 (0, 0)
---     local = srt2affine (srt (1, 1) (pi / 4) (fromIntegral sw / 2, fromIntegral sh / 2)) <> srt2affine (srt (1, 1) 0 (-pivx, -pivy))
---     (sw, sh) = (400, 200) :: (Word32, Word32)
---     corners = [(0, 0), (100, 0), (100, 100), (0, 100)] :: [(Float, Float)]
---     ps2 = [(200.0, 29.289322), (270.7107, 100.0), (200.0, 170.71068), (129.28932, 100.0)] :: [(Float, Float)]
---     (pivx, pivy) = (50, 50)
-
-main1 = runManaged $ do
+main = runManaged $ do
   (window, vulkan, surface) <- withSDL2VulkanWindow windowSize
   (gpu, gfx, present, portability, gpuName) <- Init.pickGPU vulkan surface
   say "Vulkan" $ "GPU: " ++ gpuName ++ ", present: " ++ show present.index ++ ", graphics: " ++ show gfx.index
@@ -155,16 +136,12 @@ main1 = runManaged $ do
   frames <- withFrames device gfx.index allocator stagingBufferSize vertexBufferSize frameCount
   w0 <- liftIO $ world0 atlas font
   let shutdown = say "Engine" "Shutting down ..." *> Vk.deviceWaitIdle device
+      game w = Game {windowSize = windowSize, font = Font font, camera = w.camera, ppu = ppu, atlas = atlas} -- TODO move 'World' into 'Game'
    in say "Engine" "Entering the main loop"
         *> mainLoop
           shutdown
-          (\w -> frameData (Game {windowSize = windowSize, font = font, camera = w.camera, ppu = ppu, atlas = atlas}) w)
-          ( \frameNumber frameData ->
-              do
-                let index = frameNumber `mod` frameCount
-                    f = frames ! index
-                 in frame device gfxQueue presentQueue pipeline pipelineLayout swapchain descSet f frameData
-          )
+          (\w -> frameData (game w) w)
+          (\n d -> let f = frames ! (n `mod` frameCount) in frame device gfxQueue presentQueue pipeline pipelineLayout swapchain descSet f d)
           worldTime
           worldEvent
           w0
@@ -219,10 +196,10 @@ newtype CardName = CardName String
 
 data Card = Card CardName Face
 
-newtype Grid = Grid (Map.Map Spot Card)
+newtype Grid = Grid {list :: Map.Map Spot Card}
 
-instance Vert.Render (Cam.Camera, PPU, ViewportSize, Atlas) Grid where
-  render (cam, ppu, vps, atlas) (Grid grid) = mconcat $ Vert.render (cam, ppu, vps) . uncurry putAt <$> Map.toList grid
+instance Vert.Render (Cam.Camera, PPU, ViewportSize, Atlas) (In Grid WorldVec) where
+  render (cam, ppu, vps, atlas) g = mconcat $ Vert.render (cam, ppu, vps) . uncurry putAt <$> Map.toList g.object.list
     where
       -- highlight spot =
       --   let border = putIn (Atlas.sprite atlas "border") pointerPosWorld
@@ -240,6 +217,16 @@ instance Vert.Render (Cam.Camera, PPU, ViewportSize, Atlas) Grid where
           card (Card (CardName name) FaceUp) = Atlas.sprite atlas name
           card (Card _ FaceDown) = faceDown
 
+-- pointerPosWorld = tr (screenToWorld windowSize ppu camera) pointer :: WorldVec
+-- spot pos =
+--   let WithVec x y = pos - gridStuff.topLeft
+--       WithVec w h = cardSize
+--       WithVec px py = gridStuff.padding
+--       r = floor $ (y + 1) / (h + px)
+--       c = floor $ (x + 1) / (w + py)
+--   in if (0 <= r && r <= 5) && (0 <= c && c <= 5) then Just (Spot (Row r, Column c)) else Nothing -- TODO: hardcoded "5"
+-- faceDown = Atlas.sprite atlas "back-side"
+
 data GridStuff = GridStuff
   { topLeft :: WorldVec,
     padding :: WorldVec
@@ -249,7 +236,7 @@ data World = World
   { pointer :: PixelVec,
     atlas :: Atlas,
     font :: Atlas,
-    grid :: Grid,
+    grid :: In Grid WorldVec,
     gridStuff :: GridStuff,
     cardSize :: WorldVec,
     camera :: Cam.Camera,
@@ -289,7 +276,7 @@ world0 atlas font = do
           { pointer = vec 0 0,
             atlas = atlas,
             font = font,
-            grid = mkGrid (V.toList deck),
+            grid = putIn (mkGrid (V.toList deck)) (vec (-1) (-1)),
             gridStuff =
               GridStuff
                 { topLeft = vec 0.5 0.5,
@@ -483,13 +470,13 @@ worldEvent :: (Monad io) => SDL.Event -> World -> io World
 worldEvent e w@(World {grid, gridStuff, pointer, cardSize, camera, pressedKeys}) =
   return
     w
-      { grid = grid',
+      { grid = grid {object = grid'},
         pointer = pointer',
         pressedKeys = pressedKeys',
         camera = camera'
       }
   where
-    grid' = if mouseClicked then flip else grid
+    grid' = if mouseClicked then flip else grid.object
     camera'
       | keyReleasedIs SDL.Scancode0 = Cam.defaultCamera
       | otherwise = camera
@@ -499,8 +486,8 @@ worldEvent e w@(World {grid, gridStuff, pointer, cardSize, camera, pressedKeys})
       | otherwise = pressedKeys
     pointer' = fromMaybe w.pointer mouseMoved
     flip
-      | Just spot <- spot = gridFlip spot grid
-      | otherwise = grid
+      | Just spot <- spot = gridFlip spot grid.object
+      | otherwise = grid.object
     spot =
       let WithVec x y = -gridStuff.topLeft + tr (screenToWorld windowSize ppu camera) pointer
           WithVec px py = gridStuff.padding
@@ -560,41 +547,8 @@ screenToWorld vps@(WithVec w h) ppu cam = ndc2World <> pixels2Ndc
     s x = 2 / fromIntegral x
 
 scene :: World -> [Object Game]
-scene World {pointer, atlas, grid, gridStuff, cardSize, camera} = Object grid : worldText : screenR
+scene World {pointer, atlas, grid} = Object grid : worldText : screenR
   where
-    pointerPosWorld = tr (screenToWorld windowSize ppu camera) pointer :: WorldVec
-    spot pos =
-      let WithVec x y = pos - gridStuff.topLeft
-          WithVec w h = cardSize
-          WithVec px py = gridStuff.padding
-          r = floor $ (y + 1) / (h + px)
-          c = floor $ (x + 1) / (w + py)
-       in if (0 <= r && r <= 5) && (0 <= c && c <= 5) then Just (Spot (Row r, Column c)) else Nothing -- TODO: hardcoded "5"
-      -- grd = Object . uncurry putAt <$> Map.toList grid
-      -- highlight spot =
-      --   let border = putIn (Atlas.sprite atlas "border") pointerPosWorld
-      --    in -- tr = transform $ pos spot + (topLeft :: NDCVec)
-      --       border
-      --   where
-      --     GridStuff {topLeft = WithVec top left, padding = WithVec hPadding vPadding} = gridStuff
-      --     WithVec w h = cardSize
-    putAt (Spot (Row r, Column c)) crd = let s = putIn (card crd) pos in s
-      where
-        -- hPadding = 0.1
-        -- vPadding = 0.1
-        pos = vec (fromIntegral c * 1.1) (fromIntegral r * 1.1) :: WorldVec
-        card (Card (CardName name) FaceUp) = Atlas.sprite atlas name
-        card (Card _ FaceDown) = faceDown
-
-    putAt2 (Spot (Row r, Column c)) crd = let s = putIn (card crd) pos in s
-      where
-        pos = vec (fromIntegral c * 1.1) (fromIntegral r * 1.1) :: WorldVec
-        card (Card (CardName name) FaceUp) = Atlas.sprite atlas name
-        card (Card _ FaceDown) = faceDown
-    -- GridStuff {topLeft = WithVec top left, padding = WithVec hPadding vPadding} = gridStuff
-    -- pos2 (Spot (Row r, Column c)) = vec (fromIntegral c * (w + hPadding) + left) (fromIntegral r * (h + vPadding) + top)
-    -- WithVec w h = cardSize
-    faceDown = Atlas.sprite atlas "back-side"
     str = "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`"
     worldText = Object $ putIn (text str (Vert.opaqueColor 0.0 0.0 0.0)) (vec @WorldVec 0 0)
     screenR =
@@ -635,7 +589,7 @@ class Has game a where
 
 data Game = Game
   { windowSize :: ViewportSize,
-    font :: Atlas,
+    font :: Font,
     camera :: Cam.Camera,
     ppu :: PPU,
     atlas :: Atlas
@@ -649,9 +603,9 @@ instance Has Game Atlas where
   get = (.atlas)
 
 instance Has Game Font where
-  get = Font . (.font)
+  get = (.font)
 
-instance Has Game Cam.Camera where
+instance Has Game Cam.Camera where -- TODO camera can change
   get = (.camera)
 
 instance Has Game PPU where

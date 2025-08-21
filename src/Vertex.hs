@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedLists #-}
@@ -42,7 +43,7 @@ opaqueColor r g b = Color $ G.vec4 r g b 1.0
 data Vertex = Vertex {xy :: NDCVec, uv :: UVVec, color :: Color, texture :: Tex.DescriptorIndex}
 
 class Render a obj | obj -> a where
-  render :: a -> obj -> SV.Vector Vertex
+  render :: a -> obj -> SV.Vector Vertex -- TODO any Traversable would do ?
   renderColored :: a -> Color -> obj -> SV.Vector Vertex
   renderColored a c obj = SV.map (\v -> v {color = c}) (render a obj)
 

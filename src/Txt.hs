@@ -8,6 +8,7 @@
 module Txt
   ( Txt,
     text,
+    Font(..),
   )
 where
 
@@ -25,16 +26,18 @@ data Txt = Txt {str :: String, color :: Color}
 text :: String -> Color -> Txt
 text str c = Txt {str = str, color = c}
 
-instance Render (ViewportSize, Atlas) (In Txt PixelVec) where
-  render (vps, font) In {object = (Txt {str, color}), position = WithVec x0 y0} =
+newtype Font = Font Atlas
+
+instance Render (ViewportSize, Font) (In Txt PixelVec) where
+  render (vps, Font font) In {object = (Txt {str, color}), position = WithVec x0 y0} =
     let (text, _) = write font x0 y0 str
      in mconcat $ renderColored vps color <$> text
     where
       write font x0 y0 str = runState (traverse (\ch -> state (\x -> let g = glyph font ch; out = putIn g (vec @PixelVec x y0) in (out, x + 8))) str) x0
       glyph font ch = sprite font $ printf "U+%04X" (ord ch)
 
-instance Render (Camera, PPU, ViewportSize, Atlas) (In Txt WorldVec) where
-  render (cam, ppu, vps, font) In {object = (Txt {str, color}), position = WithVec x0 y0} =
+instance Render (Camera, PPU, ViewportSize, Font) (In Txt WorldVec) where
+  render (cam, ppu, vps, Font font) In {object = (Txt {str, color}), position = WithVec x0 y0} =
     let (text, _) = write font x0 y0 str
      in mconcat $ renderColored (cam, ppu, vps) color <$> text
     where

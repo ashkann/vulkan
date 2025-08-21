@@ -158,7 +158,7 @@ main1 = runManaged $ do
    in say "Engine" "Entering the main loop"
         *> mainLoop
           shutdown
-          (\w -> frameData (Game {windowSize = windowSize, font = font, camera = w.camera, ppu = ppu}) w)
+          (\w -> frameData (Game {windowSize = windowSize, font = font, camera = w.camera, ppu = ppu, atlas = atlas}) w)
           ( \frameNumber frameData ->
               do
                 let index = frameNumber `mod` frameCount
@@ -220,6 +220,25 @@ newtype CardName = CardName String
 data Card = Card CardName Face
 
 newtype Grid = Grid (Map.Map Spot Card)
+
+instance Vert.Render (Cam.Camera, PPU, ViewportSize, Atlas) Grid where
+  render (cam, ppu, vps, atlas) (Grid grid) = mconcat $ Vert.render (cam, ppu, vps) . uncurry putAt <$> Map.toList grid
+    where
+      -- highlight spot =
+      --   let border = putIn (Atlas.sprite atlas "border") pointerPosWorld
+      --    in -- tr = transform $ pos spot + (topLeft :: NDCVec)
+      --       border
+      --   where
+      --     GridStuff {topLeft = WithVec top left, padding = WithVec hPadding vPadding} = gridStuff
+      --     WithVec w h = cardSize
+      putAt (Spot (Row r, Column c)) crd = let s = putIn (card crd) pos in s
+        where
+          faceDown = Atlas.sprite atlas "back-side"
+          -- hPadding = 0.1
+          -- vPadding = 0.1
+          pos = vec (fromIntegral c * 1.1) (fromIntegral r * 1.1) :: WorldVec
+          card (Card (CardName name) FaceUp) = Atlas.sprite atlas name
+          card (Card _ FaceDown) = faceDown
 
 data GridStuff = GridStuff
   { topLeft :: WorldVec,
@@ -541,7 +560,7 @@ screenToWorld vps@(WithVec w h) ppu cam = ndc2World <> pixels2Ndc
     s x = 2 / fromIntegral x
 
 scene :: World -> [Object Game]
-scene World {pointer, atlas, grid = (Grid grid), gridStuff, cardSize, camera} = grd ++ [worldText] ++ screenR
+scene World {pointer, atlas, grid, gridStuff, cardSize, camera} = Object grid : worldText : screenR
   where
     pointerPosWorld = tr (screenToWorld windowSize ppu camera) pointer :: WorldVec
     spot pos =
@@ -551,18 +570,24 @@ scene World {pointer, atlas, grid = (Grid grid), gridStuff, cardSize, camera} = 
           r = floor $ (y + 1) / (h + px)
           c = floor $ (x + 1) / (w + py)
        in if (0 <= r && r <= 5) && (0 <= c && c <= 5) then Just (Spot (Row r, Column c)) else Nothing -- TODO: hardcoded "5"
-    grd = Object . uncurry putAt <$> Map.toList grid
-    highlight spot =
-      let border = putIn (Atlas.sprite atlas "border") pointerPosWorld
-       in -- tr = transform $ pos spot + (topLeft :: NDCVec)
-          border
-      where
-        GridStuff {topLeft = WithVec top left, padding = WithVec hPadding vPadding} = gridStuff
-        WithVec w h = cardSize
+      -- grd = Object . uncurry putAt <$> Map.toList grid
+      -- highlight spot =
+      --   let border = putIn (Atlas.sprite atlas "border") pointerPosWorld
+      --    in -- tr = transform $ pos spot + (topLeft :: NDCVec)
+      --       border
+      --   where
+      --     GridStuff {topLeft = WithVec top left, padding = WithVec hPadding vPadding} = gridStuff
+      --     WithVec w h = cardSize
     putAt (Spot (Row r, Column c)) crd = let s = putIn (card crd) pos in s
       where
         -- hPadding = 0.1
         -- vPadding = 0.1
+        pos = vec (fromIntegral c * 1.1) (fromIntegral r * 1.1) :: WorldVec
+        card (Card (CardName name) FaceUp) = Atlas.sprite atlas name
+        card (Card _ FaceDown) = faceDown
+
+    putAt2 (Spot (Row r, Column c)) crd = let s = putIn (card crd) pos in s
+      where
         pos = vec (fromIntegral c * 1.1) (fromIntegral r * 1.1) :: WorldVec
         card (Card (CardName name) FaceUp) = Atlas.sprite atlas name
         card (Card _ FaceDown) = faceDown
@@ -595,7 +620,10 @@ scene World {pointer, atlas, grid = (Grid grid), gridStuff, cardSize, camera} = 
         r4 = f 4 $ \w h -> vec (w / 2) (h / 2)
         rot r s = s {Sprite.rotation = r}
         scl k s = s {Sprite.scale = k}
-        f i piv = let sprite = Atlas.spriteIndexed atlas "rectangle" i; WithVec w h = sprite.resolution in sprite {Sprite.origin = piv w h}
+        f i piv =
+          let sprite = Atlas.spriteIndexed atlas "rectangle" i
+              WithVec w h = sprite.resolution
+           in sprite {Sprite.origin = piv w h}
         y0 line = let y = line * 16 in vec 30 (30 + y) :: PixelVec
         txt1 = putIn (text "Move the camera: Arrow keys" (Vert.opaqueColor 1.0 1.0 1.0)) (y0 0)
         txt2 = putIn (text "Rotate: E and R " (Vert.opaqueColor 1.0 0.0 0.0)) (y0 1)
@@ -609,14 +637,19 @@ data Game = Game
   { windowSize :: ViewportSize,
     font :: Atlas,
     camera :: Cam.Camera,
-    ppu :: PPU
+    ppu :: PPU,
+    atlas :: Atlas
   }
 
 instance Has Game ViewportSize where
   get = (.windowSize)
 
+-- TODO both font and atlas are Atlas. Probably new newtype wrapper or rethink the pattern
 instance Has Game Atlas where
-  get = (.font)
+  get = (.atlas)
+
+instance Has Game Font where
+  get = Font . (.font)
 
 instance Has Game Cam.Camera where
   get = (.camera)
@@ -630,13 +663,14 @@ instance (Has game a, Has game b) => Has game (a, b) where
 instance (Has game (a, b), Has game c) => Has game (a, b, c) where
   get game = let (a, b) = get game in (a, b, get game)
 
+-- TODO generalize tuple deriving
 instance (Has game (a, b, c), Has game d) => Has game (a, b, c, d) where
   get game = let (a, b, c) = get game in (a, b, c, get game)
 
 data Object game = forall obj. (Render game obj) => Object obj
 
 class Render game obj where
-  render :: game -> obj -> SV.Vector Vert.Vertex
+  render :: game -> obj -> SV.Vector Vert.Vertex -- TODO any Traversable would do
 
 instance (Has game a, Vert.Render a obj) => Render game obj where
   render game = Vert.render (get game)

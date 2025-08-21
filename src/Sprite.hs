@@ -71,7 +71,7 @@ instance Render (Camera, PPU, ViewportSize) (In Sprite WorldVec) where
             pivot = srt2affine $ srt (1, 1) 0 (-ox, -oy)
          in projection vps ppu <> view cam <> local <> pivot
 
-vertices :: Sprite -> (Float -> Float -> NDCVec) -> SV.Vector Vertex
+vertices :: Sprite -> (Element PixelVec -> Element PixelVec -> NDCVec) -> SV.Vector Vertex
 vertices s xy = SV.fromList [va, vb, vc, vc, vd, va]
   where
     WithVec w h = s.resolution

@@ -37,7 +37,6 @@ import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector.Storable as SV
 import Foreign (Ptr, Word32)
 import Foreign.Storable (Storable (..), sizeOf)
-import qualified Geomancy as G
 import qualified Init
 import Measure
 import qualified SDL
@@ -208,12 +207,12 @@ instance Vert.Render (Cam.Camera, PPU, ViewportSize, Atlas) (In Grid WorldVec) w
       --   where
       --     GridStuff {topLeft = WithVec top left, padding = WithVec hPadding vPadding} = gridStuff
       --     WithVec w h = cardSize
-      putAt (Spot (Row r, Column c)) crd = let s = putIn (card crd) pos in s
+      putAt (Spot (Row r, Column c)) crd = putIn (card crd) pos :: In Sprite WorldVec
         where
           faceDown = Atlas.sprite atlas "back-side"
           -- hPadding = 0.1
           -- vPadding = 0.1
-          pos = vec (fromIntegral c * 1.1) (fromIntegral r * 1.1) :: WorldVec
+          pos = vec (fromIntegral c * 1.1) (fromIntegral r * 1.1)
           card (Card (CardName name) FaceUp) = Atlas.sprite atlas name
           card (Card _ FaceDown) = faceDown
 
@@ -552,11 +551,11 @@ scene World {pointer, atlas, grid} = Object grid : worldText : screenR
     str = "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`"
     worldText = Object $ putIn (text str (Vert.opaqueColor 0.0 0.0 0.0)) (vec @WorldVec 0 0)
     screenR =
-      [ Object $ rot (pi / 4) $ putIn r0 (vec @PixelVec 0 0),
-        Object $ rot (pi / 8) $ putIn r1 (vec @PixelVec w 0),
-        Object $ rot (pi / 16) $ putIn r2 (vec @PixelVec w h),
-        Object $ scl (G.vec2 0.5 2) . rot (pi / 32) $ putIn r3 (vec @PixelVec 0 h),
-        Object $ scl (G.vec2 2 0.5) . rot (pi / 32) $ putIn r4 (vec @PixelVec (w / 2) (h / 2)),
+      [ Object $ rot (rotateDegree 45) $ putIn r0 (vec @PixelVec 0 0),
+        Object $ rot (rotateDegree 90) $ putIn r1 (vec @PixelVec w 0),
+        Object $ rot (rotateDegree 30) $ putIn r2 (vec @PixelVec w h),
+        Object $ scl (scaleXY 0.5 2) . rot (rotateDegree 20) $ putIn r3 (vec @PixelVec 0 h),
+        Object $ scl (scaleXY 2 0.5) . rot (rotateDegree 20) $ putIn r4 (vec @PixelVec (w / 2) (h / 2)),
         Object txt1,
         Object txt2,
         Object txt3,

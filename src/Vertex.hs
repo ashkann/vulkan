@@ -10,14 +10,18 @@
 module Vertex
   ( Vertex (..),
     vertex,
-    vertexColored,
+    coloredVertex,
     grpahicsPipelineVertexInputState,
     Render (..),
     opaqueColor,
     Color,
+    setColor,
+    noColor,
+    maybeColoredVertex,
   )
 where
 
+import Data.Maybe (fromMaybe)
 import qualified Data.Vector.Storable as SV
 import Foreign (Storable)
 import Foreign.Storable (Storable (..), sizeOf)
@@ -44,8 +48,9 @@ data Vertex = Vertex {xy :: NDCVec, uv :: UVVec, color :: Color, texture :: Tex.
 
 class Render a obj | obj -> a where
   render :: a -> obj -> SV.Vector Vertex -- TODO any Traversable would do ?
-  renderColored :: a -> Color -> obj -> SV.Vector Vertex
-  renderColored a c obj = SV.map (\v -> v {color = c}) (render a obj)
+
+setColor :: Color -> Vertex -> Vertex
+setColor c v = v {color = c}
 
 vertexStore :: Store.Dictionary Vertex
 vertexStore =
@@ -66,11 +71,17 @@ instance Storable Vertex where
 defaultColor :: Color
 defaultColor = Color (G.vec4 1 1 1 1) -- Opaque white
 
+noColor :: Color
+noColor = defaultColor
+
 vertex :: NDCVec -> UVVec -> Tex.DescriptorIndex -> Vertex
 vertex xy uv tex = Vertex {xy = xy, uv = uv, texture = tex, color = defaultColor}
 
-vertexColored :: NDCVec -> UVVec -> Tex.DescriptorIndex -> Color -> Vertex
-vertexColored xy uv tex c = Vertex {xy = xy, uv = uv, texture = tex, color = c}
+coloredVertex :: NDCVec -> UVVec -> Tex.DescriptorIndex -> Color -> Vertex
+coloredVertex xy uv tex c = Vertex {xy = xy, uv = uv, texture = tex, color = c}
+
+maybeColoredVertex :: NDCVec -> UVVec -> Tex.DescriptorIndex -> Maybe Color -> Vertex
+maybeColoredVertex xy uv tex c = Vertex {xy = xy, uv = uv, texture = tex, color = fromMaybe noColor c}
 
 grpahicsPipelineVertexInputState :: Vk.SomeStruct Vk.PipelineVertexInputStateCreateInfo
 grpahicsPipelineVertexInputState =

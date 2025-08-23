@@ -12,6 +12,7 @@ module Txt
   )
 where
 
+import Affine (srt, srt2affine)
 import Atlas (Atlas, sprite)
 import Camera (Camera)
 import Data.Char (ord)
@@ -39,8 +40,9 @@ instance Render (Camera, PPU, ViewportSize, Font) (In Txt WorldVec) where
   render (cam, ppu, vps, font) In {object = (Txt {str, color}), position = WithVec x0 y0, scale, rotation} =
     let (_, vs) = mapAccumL f x0 (write font str) in mconcat vs
     where
-      f x gly = (x + 0.1, render (tr x, Just color) gly)
-      tr x = world (cam, ppu, vps) (scale, rotation, vec x y0) (vec 0 0)
+      f x gly = (withFst gly.resolution (+ x), render (wrld <> local x, Just color) gly)
+      local x = srt2affine $ srt (1, 1) 0 (x, 0)
+      wrld = world (cam, ppu, vps) (scale, rotation, vec 0 0) (vec 0 0)
 
 write :: Font -> String -> [Sprite]
 write (Font font) str = glyph font <$> str

@@ -11,6 +11,7 @@ module Affine
     affine,
     srt2affine,
     inverse,
+    translate,
   )
 where
 
@@ -22,6 +23,9 @@ data SRT = SRT
 
 srt :: (Float, Float) -> Float -> (Float, Float) -> SRT
 srt (sx, sy) r (tx, ty) = SRT sx sy r tx ty
+
+translate :: Float -> Float -> SRT
+translate tx ty = srt (1, 1) 0 (tx, ty)
 
 data Affine = Affine
   -- X  Y  | T

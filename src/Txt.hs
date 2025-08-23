@@ -34,18 +34,18 @@ instance Render (ViewportSize, Font) (In Txt PixelVec) where
   render (vps, font) In {object = (Txt {str, color, origin}), position = WithVec x0 y0, scale, rotation} =
     let (_, vs) = mapAccumL f x0 (write font str) in mconcat vs
     where
-      f x gly = (withFst gly.resolution (+ x), render (scr <> local x <> pivot, Just color) gly)
+      f x gly = (withFst gly.resolution (+ x), render (scr <> base x <> pivot, Just color) gly)
       pivot = withVec origin (\ox oy -> srt2affine $ srt (1, 1) 0 (-ox, -oy))
-      local x = srt2affine $ srt (1, 1) 0 (x, 0)
+      base x = srt2affine $ srt (1, 1) 0 (x, 0)
       scr = screen vps (scale, rotation, vec x0 y0) (vec 0 0)
 
 instance Render (Camera, PPU, ViewportSize, Font) (In Txt WorldVec) where
   render (cam, ppu, vps, font) In {object = (Txt {str, color, origin}), position = WithVec x0 y0, scale, rotation} =
     let (_, vs) = mapAccumL f x0 (write font str) in mconcat vs
     where
-      f x gly = (withFst gly.resolution (+ x), render (wrld <> local x <> pivot, Just color) gly)
+      f x gly = (withFst gly.resolution (+ x), render (wrld <> base x <> pivot, Just color) gly)
       pivot = withVec origin (\ox oy -> srt2affine $ srt (1, 1) 0 (-ox, -oy))
-      local x = srt2affine $ srt (1, 1) 0 (x, 0)
+      base x = srt2affine $ srt (1, 1) 0 (x, 0)
       wrld = world (cam, ppu, vps) (scale, rotation, vec x0 y0) (vec 0 0)
 
 write :: Font -> String -> [Sprite]

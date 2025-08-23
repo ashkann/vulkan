@@ -199,45 +199,24 @@ data Card = Card CardName Face
 newtype Grid = Grid {list :: Map.Map Spot Card}
 
 instance Vert.Render (Cam.Camera, PPU, ViewportSize, Atlas) (In Grid WorldVec) where
-  render (cam, ppu, vps, atlas) g = mconcat $ Vert.render (cam, ppu, vps) . uncurry putAt <$> Map.toList g.object.list
+  render (cam, ppu, vps, atlas) In {object = Grid cells, position = WithVec x0 y0, scale, rotation} =
+    mconcat (vert <$> Map.toList cells)
     where
-      -- highlight spot =
-      --   let border = putIn (Atlas.sprite atlas "border") pointerPosWorld
-      --    in -- tr = transform $ pos spot + (topLeft :: NDCVec)
-      --       border
-      --   where
-      --     GridStuff {topLeft = WithVec top left, padding = WithVec hPadding vPadding} = gridStuff
-      --     WithVec w h = cardSize
-      putAt (Spot (Row r, Column c)) crd = putIn (card crd) pos :: In Sprite WorldVec
-        where
-          faceDown = Atlas.sprite atlas "back-side"
-          -- hPadding = 0.1
-          -- vPadding = 0.1
-          pos = vec (fromIntegral c * 1.1) (fromIntegral r * 1.1)
-          card (Card (CardName name) FaceUp) = Atlas.sprite atlas name
-          card (Card _ FaceDown) = faceDown
-
--- pointerPosWorld = tr (screenToWorld windowSize ppu camera) pointer :: WorldVec
--- spot pos =
---   let WithVec x y = pos - gridStuff.topLeft
---       WithVec w h = cardSize
---       WithVec px py = gridStuff.padding
---       r = floor $ (y + 1) / (h + px)
---       c = floor $ (x + 1) / (w + py)
---   in if (0 <= r && r <= 5) && (0 <= c && c <= 5) then Just (Spot (Row r, Column c)) else Nothing -- TODO: hardcoded "5"
--- faceDown = Atlas.sprite atlas "back-side"
-
-data GridStuff = GridStuff
-  { topLeft :: WorldVec,
-    padding :: WorldVec
-  }
+      padding = 10
+      faceDown = Atlas.sprite atlas "back-side"
+      WithVec w h = faceDown.resolution
+      vert (Spot (Row r, Column c), crd) = Vert.render (wrld <> base r c <> pivot, Nothing) (card crd)
+      pivot = withVec (vec @PixelVec 0 0) (\ox oy -> srt2affine $ srt (1, 1) 0 (-ox, -oy))
+      base r c = srt2affine $ srt (1, 1) 0 (fromIntegral c * (w + padding), fromIntegral r * (h + padding))
+      wrld = world (cam, ppu, vps) (scale, rotation, vec x0 y0) (vec 0 0)
+      card (Card (CardName name) FaceUp) = Atlas.sprite atlas name
+      card (Card _ FaceDown) = faceDown
 
 data World = World
   { pointer :: PixelVec,
     atlas :: Atlas,
     font :: Atlas,
     grid :: In Grid WorldVec,
-    gridStuff :: GridStuff,
     cardSize :: WorldVec,
     camera :: Cam.Camera,
     pressedKeys :: Set.Set SDL.Scancode
@@ -270,22 +249,16 @@ mkGrid deck = Grid . Map.fromList $ zipWith f spots deck
 world0 :: (MonadIO io) => Atlas -> Atlas -> io World
 world0 atlas font = do
   deck <- liftIO $ mkSuffeledDeck 18
-  let faceDown = putIn (Atlas.sprite atlas "back-side")
-   in return $
-        World
-          { pointer = vec 0 0,
-            atlas = atlas,
-            font = font,
-            grid = putIn (mkGrid (V.toList deck)) (vec (-1) (-1)),
-            gridStuff =
-              GridStuff
-                { topLeft = vec 0.5 0.5,
-                  padding = vec 0.2 0.2
-                },
-            cardSize = vec 1.0 1.0,
-            camera = Cam.defaultCamera,
-            pressedKeys = Set.empty
-          }
+  return $
+    World
+      { pointer = vec 0 0,
+        atlas = atlas,
+        font = font,
+        grid = putIn (mkGrid (V.toList deck)) (vec 0 0),
+        cardSize = vec 1.0 1.0,
+        camera = Cam.defaultCamera,
+        pressedKeys = Set.empty
+      }
 
 data FrameData = FrameData {verts :: SV.Vector Vert.Vertex}
 
@@ -467,7 +440,7 @@ mainLoop shutdown frameData frame worldTime worldEvent w0 =
           go (n + 1) t2 w3
 
 worldEvent :: (Monad io) => SDL.Event -> World -> io World
-worldEvent e w@(World {grid, gridStuff, pointer, cardSize, camera, pressedKeys}) =
+worldEvent e w@(World {grid, pointer, cardSize, camera, pressedKeys}) =
   return
     w
       { grid = grid {object = grid'},
@@ -489,8 +462,8 @@ worldEvent e w@(World {grid, gridStuff, pointer, cardSize, camera, pressedKeys})
       | Just spot <- spot = gridFlip spot grid.object
       | otherwise = grid.object
     spot =
-      let WithVec x y = -gridStuff.topLeft + tr (screenToWorld windowSize ppu camera) pointer
-          WithVec px py = gridStuff.padding
+      let WithVec x y = tr (screenToWorld windowSize ppu camera) pointer :: WorldVec
+          WithVec px py = vec @WorldVec 0 0
           WithVec w h = cardSize
           r = floor $ (y + 1) / (h + px)
           c = floor $ (x + 1) / (w + py)
@@ -554,7 +527,7 @@ scene World {pointer, atlas, grid} = Object grid : (worldText ++ screenR)
       [ Object $ let txt = putIn (let x = text "Pivoted and then Rotated 45 degrees" (Vert.opaqueColor 0.0 0.0 0.0) in x {Txt.origin = vec 30 100}) (vec @WorldVec 0 0) in setRotation (rotateDegree 45) txt,
         Object $ let txt = putIn (text "Scaled diffirently on X and Y" (Vert.opaqueColor 0.0 0.0 0.0)) (vec @WorldVec 1 1) in setScale (scaleXY 0.7 1.5) txt,
         Object $ putIn (text "Colored" (Vert.opaqueColor 1.0 1.0 0.0)) (vec @WorldVec 0 2),
-        Object $ putIn (text str (Vert.opaqueColor 0.0 0.0 0.0)) (vec @WorldVec (-1) (-1))
+        Object $ putIn (text str (Vert.opaqueColor 0.0 0.0 0.0)) (vec @WorldVec 0 0)
       ]
     screenR =
       [ Object $ setRotation (rotateDegree 45) $ putIn r0 (vec @PixelVec 0 0),

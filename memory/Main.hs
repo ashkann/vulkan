@@ -43,7 +43,8 @@ import qualified SDL
 import Sprite
 import qualified System.Random as Random
 import qualified Texture as Tex
-import Txt
+import Txt (Font (Font), text)
+import qualified Txt (Txt (origin))
 import Utils
 import qualified Vertex as Vert
 import qualified Vulkan as Vk
@@ -550,7 +551,7 @@ scene World {pointer, atlas, grid} = Object grid : (worldText ++ screenR)
   where
     str = "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`"
     worldText =
-      [ Object $ let txt = putIn (text "Rotated 45 degrees" (Vert.opaqueColor 0.0 0.0 0.0)) (vec @WorldVec 0 0) in setRotation (rotateDegree 45) txt,
+      [ Object $ let txt = putIn (let x = text "Pivoted and then Rotated 45 degrees" (Vert.opaqueColor 0.0 0.0 0.0) in x {Txt.origin = vec 30 100}) (vec @WorldVec 0 0) in setRotation (rotateDegree 45) txt,
         Object $ let txt = putIn (text "Scaled diffirently on X and Y" (Vert.opaqueColor 0.0 0.0 0.0)) (vec @WorldVec 1 1) in setScale (scaleXY 0.7 1.5) txt,
         Object $ putIn (text "Colored" (Vert.opaqueColor 1.0 1.0 0.0)) (vec @WorldVec 0 2),
         Object $ putIn (text str (Vert.opaqueColor 0.0 0.0 0.0)) (vec @WorldVec (-1) (-1))

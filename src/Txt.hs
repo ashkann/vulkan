@@ -2,8 +2,8 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE PatternSynonyms #-}
-{-# LANGUAGE TypeApplications #-}
 
 module Txt
   ( Txt,
@@ -16,8 +16,8 @@ import Atlas (Atlas, sprite)
 import Camera (Camera)
 import Data.Char (ord)
 import Data.List (mapAccumL)
-import Measure (PPU, PixelVec, Vec (vec), ViewportSize, WorldVec, pattern WithVec)
-import Sprite (In (..), Sprite, screenAffine, worldAffine)
+import Measure (PPU, PixelVec, Vec (vec, withFst), ViewportSize, WorldVec, pattern WithVec)
+import Sprite (In (..), Sprite (..), screen, world)
 import Text.Printf (printf)
 import Vertex (Color, Render (render))
 
@@ -32,15 +32,15 @@ instance Render (ViewportSize, Font) (In Txt PixelVec) where
   render (vps, font) In {object = (Txt {str, color}), position = WithVec x0 y0, scale, rotation} =
     let (_, vs) = mapAccumL f x0 (write font str) in mconcat vs
     where
-      f x gly = (x + 8.0, render (tr x, Just color) gly)
-      tr x = screenAffine vps (scale, rotation, vec x y0) (vec 0 0)
+      f x gly = (withFst gly.resolution (+ x), render (tr x, Just color) gly)
+      tr x = screen vps (scale, rotation, vec x y0) (vec 0 0)
 
 instance Render (Camera, PPU, ViewportSize, Font) (In Txt WorldVec) where
   render (cam, ppu, vps, font) In {object = (Txt {str, color}), position = WithVec x0 y0, scale, rotation} =
     let (_, vs) = mapAccumL f x0 (write font str) in mconcat vs
     where
       f x gly = (x + 0.1, render (tr x, Just color) gly)
-      tr x = worldAffine (cam, ppu, vps) (scale, rotation, vec x y0) (vec 0 0)
+      tr x = world (cam, ppu, vps) (scale, rotation, vec x y0) (vec 0 0)
 
 write :: Font -> String -> [Sprite]
 write (Font font) str = glyph font <$> str

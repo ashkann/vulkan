@@ -78,6 +78,12 @@ class Vec v where
   fromTuple :: (Element v, Element v) -> v
   fromTuple (x, y) = vec x y
   unvec :: v -> (Element v, Element v)
+  withVec :: v -> (Element v -> Element v -> r) -> r
+  withVec v f = let (x, y) = unvec v in f x y
+  withFst :: v -> (Element v -> r) -> r
+  withFst v f = withVec v (\x _ -> f x)
+  withSnd :: v -> (Element v -> r) -> r
+  withSnd v f = withVec v (\_ x -> f x)
 
 class (Vec u, Vec v, Element v ~ Float, Element u ~ Float) => Tr u v where
   tr :: Affine -> u -> v

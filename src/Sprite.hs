@@ -19,8 +19,8 @@ module Sprite
     rotate,
     rotateDegree,
     noRatation,
-    screenAffine,
-    worldAffine,
+    screen,
+    world,
     scaleXY,
   )
 where
@@ -67,13 +67,13 @@ putIn :: obj -> vec -> In obj vec
 putIn obj pos = In {object = obj, position = pos, rotation = noRatation, scale = noScale}
 
 instance Render ViewportSize (In Sprite PixelVec) where
-  render vps sis = render (screenAffine vps (sis.scale, sis.rotation, sis.position) sis.object.origin, Nothing) sis.object
+  render vps sis = render (screen vps (sis.scale, sis.rotation, sis.position) sis.object.origin, Nothing) sis.object
 
 instance Render (Camera, PPU, ViewportSize) (In Sprite WorldVec) where
-  render env siw = render (worldAffine env (siw.scale, siw.rotation, siw.position) siw.object.origin, Nothing) siw.object
+  render env siw = render (world env (siw.scale, siw.rotation, siw.position) siw.object.origin, Nothing) siw.object
 
-screenAffine :: ViewportSize -> (Scale, Rotation, PixelVec) -> PixelVec -> Affine
-screenAffine vps (scale, rotation, position) origin = projection vps <> model
+screen :: ViewportSize -> (Scale, Rotation, PixelVec) -> PixelVec -> Affine
+screen vps (scale, rotation, position) origin = projection vps <> model
   where
     projection (WithVec w h) = srt2affine $ srt (2 / fromIntegral w, 2 / fromIntegral h) 0 (-1, -1)
     model =
@@ -84,16 +84,16 @@ screenAffine vps (scale, rotation, position) origin = projection vps <> model
           local = srt2affine $ srt (sx, sy) rotation.r (x, y)
        in local <> pivot
 
-worldAffine :: (Camera, PPU, ViewportSize) -> (Scale, Rotation, WorldVec) -> PixelVec -> Affine
-worldAffine (cam, ppu@(PPU _ppu), vps) (scale, rotation, position) origin = projection vps ppu <> model
+world :: (Camera, PPU, ViewportSize) -> (Scale, Rotation, WorldVec) -> PixelVec -> Affine
+world (cam, ppu@(PPU _ppu), vps) (scale, rotation, position) origin = projection vps ppu <> model
   where
     model =
       let s = 1 / _ppu
           Scale sx sy = scale
           WithVec x y = position
+          pivot = srt2affine $ srt (1, 1) 0 (-ox, -oy)
           local = srt2affine $ srt (s * sx, -(s * sy)) rotation.r (x, y) -- Place in world
           WithVec ox oy = origin
-          pivot = srt2affine $ srt (1, 1) 0 (-ox, -oy)
        in view cam <> local <> pivot
 
 instance Render (Affine, Maybe Color) Sprite where

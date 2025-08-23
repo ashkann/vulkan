@@ -22,6 +22,8 @@ module Sprite
     screen,
     world,
     scaleXY,
+    setRotation,
+    setScale,
   )
 where
 
@@ -65,6 +67,12 @@ rotateSprite s r = s {rotation = r}
 
 putIn :: obj -> vec -> In obj vec
 putIn obj pos = In {object = obj, position = pos, rotation = noRatation, scale = noScale}
+
+setRotation :: Rotation -> In obj vec -> In obj vec
+setRotation r s = s {Sprite.rotation = r}
+
+setScale :: Scale -> In obj vec -> In obj vec
+setScale k s = s {Sprite.scale = k}
 
 instance Render ViewportSize (In Sprite PixelVec) where
   render vps sis = render (screen vps (sis.scale, sis.rotation, sis.position) sis.object.origin, Nothing) sis.object

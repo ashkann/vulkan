@@ -546,42 +546,44 @@ screenToWorld vps@(WithVec w h) ppu cam = ndc2World <> pixels2Ndc
     s x = 2 / fromIntegral x
 
 scene :: World -> [Object Game]
-scene World {pointer, atlas, grid} = Object grid : worldText : screenR
+scene World {pointer, atlas, grid} = Object grid : (worldText ++ screenR)
   where
     str = "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`"
-    worldText = Object $ putIn (text str (Vert.opaqueColor 0.0 0.0 0.0)) (vec @WorldVec 0 0)
+    worldText =
+      [ Object $ let txt = putIn (text "Rotated 45 degrees" (Vert.opaqueColor 0.0 0.0 0.0)) (vec @WorldVec 0 0) in setRotation (rotateDegree 45) txt,
+        Object $ let txt = putIn (text "Scaled diffirently on X and Y" (Vert.opaqueColor 0.0 0.0 0.0)) (vec @WorldVec 1 1) in setScale (scaleXY 0.7 1.5) txt,
+        Object $ putIn (text "Colored" (Vert.opaqueColor 1.0 1.0 0.0)) (vec @WorldVec 0 2),
+        Object $ putIn (text str (Vert.opaqueColor 0.0 0.0 0.0)) (vec @WorldVec (-1) (-1))
+      ]
     screenR =
-      [ Object $ rot (rotateDegree 45) $ putIn r0 (vec @PixelVec 0 0),
-        Object $ rot (rotateDegree 90) $ putIn r1 (vec @PixelVec w 0),
-        Object $ rot (rotateDegree 30) $ putIn r2 (vec @PixelVec w h),
-        Object $ scl (scaleXY 0.5 2) . rot (rotateDegree 20) $ putIn r3 (vec @PixelVec 0 h),
-        Object $ scl (scaleXY 2 0.5) . rot (rotateDegree 20) $ putIn r4 (vec @PixelVec (w / 2) (h / 2)),
+      [ Object $ setRotation (rotateDegree 45) $ putIn r0 (vec @PixelVec 0 0),
+        Object $ setRotation (rotateDegree 90) $ putIn r1 (vec @PixelVec w 0),
+        Object $ setRotation (rotateDegree 30) $ putIn r2 (vec @PixelVec w h),
+        Object $ setScale (scaleXY 0.5 2) . setRotation (rotateDegree 20) $ putIn r3 (vec @PixelVec 0 h),
+        Object $ setScale (scaleXY 2 0.5) . setRotation (rotateDegree 20) $ putIn r4 (vec @PixelVec (w / 2) (h / 2)),
         Object txt1,
         Object txt2,
         Object txt3,
         Object txt4,
         Object $ putIn (Atlas.sprite atlas "pointer") pointer
       ]
-      where
-        WithVec _w _h = windowSize
-        w = fromIntegral _w
-        h = fromIntegral _h
-        r0 = f 0 $ \_ _ -> vec 0 0
-        r1 = f 1 $ \w _ -> vec w 0
-        r2 = f 2 vec
-        r3 = f 3 $ \_ h -> vec 0 h
-        r4 = f 4 $ \w h -> vec (w / 2) (h / 2)
-        rot r s = s {Sprite.rotation = r}
-        scl k s = s {Sprite.scale = k}
-        f i piv =
-          let sprite = Atlas.spriteIndexed atlas "rectangle" i
-              WithVec w h = sprite.resolution
-           in sprite {Sprite.origin = piv w h}
-        y0 line = let y = line * 16 in vec 30 (30 + y) :: PixelVec
-        txt1 = putIn (text "Move the camera: Arrow keys" (Vert.opaqueColor 1.0 1.0 1.0)) (y0 0)
-        txt2 = putIn (text "Rotate: E and R " (Vert.opaqueColor 1.0 0.0 0.0)) (y0 1)
-        txt3 = putIn (text "Zoom in and out: + and -" (Vert.opaqueColor 0.0 1.0 0.0)) (y0 2)
-        txt4 = putIn (text "Reset: 0" (Vert.opaqueColor 0.0 0.0 1.0)) (y0 3)
+    WithVec _w _h = windowSize
+    w = fromIntegral _w
+    h = fromIntegral _h
+    r0 = f 0 $ \_ _ -> vec 0 0
+    r1 = f 1 $ \w _ -> vec w 0
+    r2 = f 2 vec
+    r3 = f 3 $ \_ h -> vec 0 h
+    r4 = f 4 $ \w h -> vec (w / 2) (h / 2)
+    f i piv =
+      let sprite = Atlas.spriteIndexed atlas "rectangle" i
+          WithVec w h = sprite.resolution
+       in sprite {Sprite.origin = piv w h}
+    y0 line = let y = line * 16 in vec 30 (30 + y) :: PixelVec
+    txt1 = putIn (text "Move the camera: Arrow keys" (Vert.opaqueColor 1.0 1.0 1.0)) (y0 0)
+    txt2 = putIn (text "Rotate: E and R " (Vert.opaqueColor 1.0 0.0 0.0)) (y0 1)
+    txt3 = putIn (text "Zoom in and out: + and -" (Vert.opaqueColor 0.0 1.0 0.0)) (y0 2)
+    txt4 = putIn (text "Reset: 0" (Vert.opaqueColor 0.0 0.0 1.0)) (y0 3)
 
 class Has game a where
   get :: game -> a

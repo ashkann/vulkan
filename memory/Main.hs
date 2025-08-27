@@ -39,6 +39,7 @@ import Foreign (Ptr, Word32)
 import Foreign.Storable (Storable (..), sizeOf)
 import qualified Init
 import Measure
+import Render (projection)
 import qualified Render
 import qualified SDL
 import Sprite
@@ -198,11 +199,6 @@ newtype CardName = CardName String
 data Card = Card CardName Face
 
 newtype Grid = Grid (Map.Map Spot Card)
-
--- instance Render.Render (Cam.Camera, PPU, ViewportSize, Atlas) (In Grid WorldVec) where
---   render (cam, ppu, vps, atlas) In {object, position = WithVec x0 y0, scale, rotation} = Render.render (wrld, atlas) object
---     where
---       wrld = world (cam, ppu, vps) (scale, rotation, vec x0 y0) (vec 0 0)
 
 instance Render.Render (Affine, Atlas) Grid where
   render (tr, atlas) (Grid cells) =

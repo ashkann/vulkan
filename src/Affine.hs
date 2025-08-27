@@ -16,7 +16,7 @@ module Affine
   )
 where
 
-data SRT = SRT
+data SRT = SRT -- TODO remove
   { sx, sy :: Float,
     r :: Float,
     tx, ty :: Float

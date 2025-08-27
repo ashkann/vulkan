@@ -17,6 +17,7 @@ executable atlas-parser
       Camera
       Init
       Measure
+      Render
       Sprite
       Texture
       Txt
@@ -58,6 +59,7 @@ executable memory
       Camera
       Init
       Measure
+      Render
       Sprite
       Texture
       Txt

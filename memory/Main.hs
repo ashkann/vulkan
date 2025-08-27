@@ -18,7 +18,7 @@
 
 module Main (main) where
 
-import Affine (Affine, inverse, srt, srt2affine)
+import Affine (Affine, inverse, origin, srt, srt2affine, translate)
 import Atlas (Atlas)
 import qualified Atlas
 import qualified Camera as Cam
@@ -39,6 +39,7 @@ import Foreign (Ptr, Word32)
 import Foreign.Storable (Storable (..), sizeOf)
 import qualified Init
 import Measure
+import qualified Render
 import qualified SDL
 import Sprite
 import qualified System.Random as Random
@@ -196,19 +197,25 @@ newtype CardName = CardName String
 
 data Card = Card CardName Face
 
-newtype Grid = Grid {list :: Map.Map Spot Card}
+newtype Grid = Grid (Map.Map Spot Card)
 
-instance Vert.Render (Cam.Camera, PPU, ViewportSize, Atlas) (In Grid WorldVec) where
-  render (cam, ppu, vps, atlas) In {object = Grid cells, position = WithVec x0 y0, scale, rotation} =
+-- instance Render.Render (Cam.Camera, PPU, ViewportSize, Atlas) (In Grid WorldVec) where
+--   render (cam, ppu, vps, atlas) In {object, position = WithVec x0 y0, scale, rotation} = Render.render (wrld, atlas) object
+--     where
+--       wrld = world (cam, ppu, vps) (scale, rotation, vec x0 y0) (vec 0 0)
+
+instance Render.Render (Affine, Atlas) Grid where
+  render (tr, atlas) (Grid cells) =
     mconcat (vert <$> Map.toList cells)
     where
       padding = 10
       faceDown = Atlas.sprite atlas "back-side"
       WithVec w h = faceDown.resolution
-      vert (Spot (Row r, Column c), crd) = Vert.render (wrld <> base r c <> pivot, Nothing) (card crd)
-      pivot = withVec (vec @PixelVec 0 0) (\ox oy -> srt2affine $ srt (1, 1) 0 (-ox, -oy))
-      base r c = srt2affine $ srt (1, 1) 0 (fromIntegral c * (w + padding), fromIntegral r * (h + padding))
-      wrld = world (cam, ppu, vps) (scale, rotation, vec x0 y0) (vec 0 0)
+      vert (Spot (Row r, Column c), crd) = Render.render (tr <> base r c <> pivot, Nothing) (card crd)
+      c = 6
+      r = 6
+      pivot = let f n = n * (h + padding) - padding in Affine.origin (f c / 2) (f r / 2)
+      base r c = Affine.translate (fromIntegral c * (w + padding)) (fromIntegral r * (h + padding))
       card (Card (CardName name) FaceUp) = Atlas.sprite atlas name
       card (Card _ FaceDown) = faceDown
 
@@ -507,7 +514,7 @@ worldTime (TimeSeconds dt) w = return $ w {camera = foldl (\cam act -> act cam) 
     minZoom = 0.30
 
 windowSize :: ViewportSize
-windowSize = vec 800 600
+windowSize = vec 900 900
 
 ppu :: PPU
 ppu = PPU 100
@@ -601,8 +608,8 @@ data Object game = forall obj. (Render game obj) => Object obj
 class Render game obj where
   render :: game -> obj -> SV.Vector Vert.Vertex -- TODO any Traversable would do
 
-instance (Has game a, Vert.Render a obj) => Render game obj where
-  render game = Vert.render (get game)
+instance (Has game a, Render.Render a obj) => Render game obj where
+  render game = Render.render (get game)
 
 clearColor :: Vk.ClearValue
-clearColor = Vk.Color (Vk.Float32 1.0 0.0 1.0 0)
+clearColor = Vk.Color (Vk.Float32 0.1 0.1 0.2 0)

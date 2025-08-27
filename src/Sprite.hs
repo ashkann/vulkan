@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StrictData #-}
@@ -31,8 +32,9 @@ import Affine (Affine, srt, srt2affine)
 import Camera (Camera, view)
 import qualified Data.Vector.Storable as SV
 import Measure
+import Render (Render (..))
 import Texture
-import Vertex (Color, Render (..), maybeColoredVertex)
+import Vertex (Color, colorVertex)
 
 data Sprite = Sprite
   { texture :: DescriptorIndex,
@@ -74,11 +76,14 @@ setRotation r s = s {Sprite.rotation = r}
 setScale :: Scale -> In obj vec -> In obj vec
 setScale k s = s {Sprite.scale = k}
 
+instance (Render.Render (Affine, a) obj) => Render.Render (Camera, PPU, ViewportSize, a) (In obj WorldVec) where
+  render (cam, ppu, vps, a) In {object, position = WithVec x0 y0, scale, rotation} = Render.render (w, a) object
+    where
+      w = world (cam, ppu, vps) (scale, rotation, vec x0 y0) (vec 0 0)
+
 instance Render ViewportSize (In Sprite PixelVec) where
   render vps sis = render (screen vps (sis.scale, sis.rotation, sis.position) sis.object.origin, Nothing) sis.object
 
-instance Render (Camera, PPU, ViewportSize) (In Sprite WorldVec) where
-  render env siw = render (world env (siw.scale, siw.rotation, siw.position) siw.object.origin, Nothing) siw.object
 
 screen :: ViewportSize -> (Scale, Rotation, PixelVec) -> PixelVec -> Affine
 screen vps (scale, rotation, position) origin = projection vps <> model
@@ -113,7 +118,7 @@ instance Render (Affine, Maybe Color) Sprite where
       vb = vert (w, 0) b
       vc = vert (w, h) c
       vd = vert (0, h) d
-      vert (x, y) uv = maybeColoredVertex (tr2 @PixelVec tr x y) uv s.texture clr
+      vert (x, y) uv = colorVertex (tr2 @PixelVec tr x y) uv s.texture clr
 
 projection :: ViewportSize -> PPU -> Affine
 projection (WithVec w h) (PPU ppu) = srt2affine $ srt (s w, -(s h)) 0 (0, 0)

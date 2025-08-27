@@ -1,34 +1,31 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE StrictData #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE NoFieldSelectors #-}
 
 module Vertex
-  ( Vertex (..),
+  ( Vertex,
     vertex,
-    coloredVertex,
+    colorVertex,
     grpahicsPipelineVertexInputState,
-    Render (..),
     opaqueColor,
     Color,
     setColor,
     noColor,
-    maybeColoredVertex,
   )
 where
 
 import Data.Maybe (fromMaybe)
-import qualified Data.Vector.Storable as SV
 import Foreign (Storable)
 import Foreign.Storable (Storable (..), sizeOf)
 import qualified Foreign.Storable.Record as Store
 import qualified Geomancy as G
 import Measure
-import qualified Texture as Tex
+import Texture (DescriptorIndex)
 import qualified Vulkan as Vk
   ( Format (..),
     PipelineVertexInputStateCreateInfo (..),
@@ -44,10 +41,7 @@ newtype Color = Color G.Vec4 deriving (Show, Storable)
 opaqueColor :: Float -> Float -> Float -> Color
 opaqueColor r g b = Color $ G.vec4 r g b 1.0
 
-data Vertex = Vertex {xy :: NDCVec, uv :: UVVec, color :: Color, texture :: Tex.DescriptorIndex}
-
-class Render a obj | obj -> a where
-  render :: a -> obj -> SV.Vector Vertex -- TODO any Traversable would do ?
+data Vertex = Vertex {xy :: NDCVec, uv :: UVVec, color :: Color, texture :: DescriptorIndex}
 
 setColor :: Color -> Vertex -> Vertex
 setColor c v = v {color = c}
@@ -74,14 +68,11 @@ defaultColor = Color (G.vec4 1 1 1 1) -- Opaque white
 noColor :: Color
 noColor = defaultColor
 
-vertex :: NDCVec -> UVVec -> Tex.DescriptorIndex -> Vertex
+vertex :: NDCVec -> UVVec -> DescriptorIndex -> Vertex
 vertex xy uv tex = Vertex {xy = xy, uv = uv, texture = tex, color = defaultColor}
 
-coloredVertex :: NDCVec -> UVVec -> Tex.DescriptorIndex -> Color -> Vertex
-coloredVertex xy uv tex c = Vertex {xy = xy, uv = uv, texture = tex, color = c}
-
-maybeColoredVertex :: NDCVec -> UVVec -> Tex.DescriptorIndex -> Maybe Color -> Vertex
-maybeColoredVertex xy uv tex c = Vertex {xy = xy, uv = uv, texture = tex, color = fromMaybe noColor c}
+colorVertex :: NDCVec -> UVVec -> DescriptorIndex -> Maybe Color -> Vertex
+colorVertex xy uv tex c = Vertex {xy = xy, uv = uv, texture = tex, color = fromMaybe noColor c}
 
 grpahicsPipelineVertexInputState :: Vk.SomeStruct Vk.PipelineVertexInputStateCreateInfo
 grpahicsPipelineVertexInputState =

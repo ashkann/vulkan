@@ -13,15 +13,15 @@ module Txt
   )
 where
 
-import Affine (srt, srt2affine)
+import Affine (Affine, srt, srt2affine)
 import Atlas (Atlas, sprite)
-import Camera (Camera)
 import Data.Char (ord)
 import Data.List (mapAccumL)
-import Measure (PPU, PixelVec, Vec (vec, withFst, withVec), ViewportSize, WorldVec, pattern WithVec)
-import Sprite (In (..), Sprite (resolution), screen, world)
+import Measure (PixelVec, Vec (vec, withFst, withVec), ViewportSize, pattern WithVec)
+import Render (Render (render))
+import Sprite (In (..), Sprite (resolution), screen)
 import Text.Printf (printf)
-import Vertex (Color, Render (render))
+import Vertex (Color)
 
 data Txt = Txt {str :: String, color :: Color, origin :: PixelVec}
 
@@ -39,14 +39,13 @@ instance Render (ViewportSize, Font) (In Txt PixelVec) where
       base x = srt2affine $ srt (1, 1) 0 (x, 0)
       scr = screen vps (scale, rotation, vec x0 y0) (vec 0 0)
 
-instance Render (Camera, PPU, ViewportSize, Font) (In Txt WorldVec) where
-  render (cam, ppu, vps, font) In {object = (Txt {str, color, origin}), position = WithVec x0 y0, scale, rotation} =
-    let (_, vs) = mapAccumL f x0 (write font str) in mconcat vs
+instance Render (Affine, Font) Txt where
+  render (tr, font) Txt {str, color, origin} =
+    let (_, vs) = mapAccumL f 0 (write font str) in mconcat vs
     where
-      f x gly = (withFst gly.resolution (+ x), render (wrld <> base x <> pivot, Just color) gly)
+      f x gly = (withFst gly.resolution (+ x), render (tr <> base x <> pivot, Just color) gly)
       pivot = withVec origin (\ox oy -> srt2affine $ srt (1, 1) 0 (-ox, -oy))
       base x = srt2affine $ srt (1, 1) 0 (x, 0)
-      wrld = world (cam, ppu, vps) (scale, rotation, vec x0 y0) (vec 0 0)
 
 write :: Font -> String -> [Sprite]
 write (Font font) str = glyph font <$> str

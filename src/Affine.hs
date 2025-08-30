@@ -31,6 +31,8 @@ translate tx ty = srt2affine $ srt (1, 1) 0 (tx, ty)
 origin :: Float -> Float -> Affine
 origin ox oy = translate (-ox) (-oy)
 
+-- TODO Input i, Output o => Affine i o 
+-- TODO 
 data Affine = Affine
   -- X  Y  | T
   { xx, yx, tx :: Float,

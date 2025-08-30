@@ -33,6 +33,7 @@ import Utils (sayErr)
 import qualified Vulkan as Vk
 import qualified VulkanMemoryAllocator as Vk
 import Prelude hiding (lookup)
+import Vertex (noColor)
 
 newtype Key = Key (String, Maybe Word32)
   deriving (Show)
@@ -168,5 +169,5 @@ mkSprite tex Region {region = reg, size = res} =
     { texture = tex,
       region = reg,
       resolution = res,
-      origin = vec 0 0
+      color = noColor
     }

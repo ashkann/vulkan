@@ -39,13 +39,13 @@ import Foreign (Ptr, Word32)
 import Foreign.Storable (Storable (..), sizeOf)
 import qualified Init
 import Measure
-import Render (projection)
+import Render (In (object), noScale, projection, putIn, rotateDegree, scaleXY, setRotation, setScale, srtPutIn)
 import qualified Render
 import qualified SDL
 import Sprite
 import qualified System.Random as Random
 import qualified Texture as Tex
-import Txt (Font (Font), text)
+import Txt (text)
 import qualified Txt (Txt (origin))
 import Utils
 import qualified Vertex as Vert
@@ -68,7 +68,10 @@ import Prelude hiding (init)
 newtype TimeSeconds = TimeSeconds Float
 
 frameData :: Game -> World -> FrameData
-frameData g w = FrameData {verts = mconcat $ (\(Object s) -> render g s) <$> scene w}
+frameData g w = FrameData {verts = mconcat $ render <$> scene w}
+  where
+    render (Object obj W) = Render.render obj (world g)
+    render (Object obj S) = Render.render obj (screen g)
 
 data Frame = Frame
   { pool :: Vk.CommandPool,
@@ -198,16 +201,16 @@ newtype CardName = CardName String
 
 data Card = Card CardName Face
 
-newtype Grid = Grid (Map.Map Spot Card)
+data Grid = Grid {cells :: Map.Map Spot Card, atlas :: Atlas}
 
-instance Render.Render (Affine, Atlas) Grid where
-  render (tr, atlas) (Grid cells) =
+instance Render.Render Grid where
+  render Grid {cells, atlas} tr =
     mconcat (vert <$> Map.toList cells)
     where
       padding = 10
       faceDown = Atlas.sprite atlas "back-side"
       WithVec w h = faceDown.resolution
-      vert (Spot (Row r, Column c), crd) = Render.render (tr <> base r c <> pivot, Nothing) (card crd)
+      vert (Spot (Row r, Column c), crd) = Render.render (card crd) (tr <> base r c <> pivot)
       c = 6
       r = 6
       pivot = let f n = n * (h + padding) - padding in Affine.origin (f c / 2) (f r / 2)
@@ -243,8 +246,8 @@ shuffle g0 init = do
       MV.swap v i (n - 1)
       go g' (n - 1) v
 
-mkGrid :: [CardName] -> Grid
-mkGrid deck = Grid . Map.fromList $ zipWith f spots deck
+mkGrid :: [CardName] -> Atlas -> Grid
+mkGrid deck atlas = Grid {cells = Map.fromList $ zipWith f spots deck, atlas = atlas}
   where
     spots = [Spot (Row r, Column c) | r <- [0 .. 5], c <- [0 .. 5]]
     f spot name = (spot, Card name FaceDown)
@@ -257,7 +260,7 @@ world0 atlas font = do
       { pointer = vec 0 0,
         atlas = atlas,
         font = font,
-        grid = putIn (mkGrid (V.toList deck)) (vec 0 0),
+        grid = putIn (mkGrid (V.toList deck) atlas) (vec 0 0),
         cardSize = vec 1.0 1.0,
         camera = Cam.defaultCamera,
         pressedKeys = Set.empty
@@ -486,7 +489,7 @@ worldEvent e w@(World {grid, pointer, cardSize, camera, pressedKeys}) =
     keyReleasedIs code = Just code == keyReleased
 
 gridFlip :: Spot -> Grid -> Grid
-gridFlip spot (Grid m) = Grid $ Map.adjust cardFlip spot m
+gridFlip spot grid = grid {cells = Map.adjust cardFlip spot grid.cells}
 
 cardFlip :: Card -> Card
 cardFlip (Card name FaceUp) = Card name FaceDown
@@ -522,48 +525,48 @@ screenToWorld vps@(WithVec w h) ppu cam = ndc2World <> pixels2Ndc
     pixels2Ndc = srt2affine $ srt (s w, s h) 0 (-1, -1)
     s x = 2 / fromIntegral x
 
-scene :: World -> [Object Game]
-scene World {pointer, atlas, grid} = Object grid : (worldText ++ screenR)
+scene :: World -> [Object]
+scene World {pointer, atlas, grid, font} = inWorld grid : (worldText ++ screenR)
   where
     str = "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`"
     worldText =
-      [ Object $ let txt = putIn (let x = text "Pivoted and then Rotated 45 degrees" (Vert.opaqueColor 0.0 0.0 0.0) in x {Txt.origin = vec 30 100}) (vec @WorldVec 0 0) in setRotation (rotateDegree 45) txt,
-        Object $ let txt = putIn (text "Scaled diffirently on X and Y" (Vert.opaqueColor 0.0 0.0 0.0)) (vec @WorldVec 1 1) in setScale (scaleXY 0.7 1.5) txt,
-        Object $ putIn (text "Colored" (Vert.opaqueColor 1.0 1.0 0.0)) (vec @WorldVec 0 2),
-        Object $ putIn (text str (Vert.opaqueColor 0.0 0.0 0.0)) (vec @WorldVec 0 0)
+      [ inWorld $ let txt = putIn (let x = text "Pivoted and then Rotated 45 degrees" (Vert.opaqueColor 0.0 0.0 0.0) font in x {Txt.origin = vec 30 100}) (vec @WorldVec 0 0) in setRotation (rotateDegree 45) txt,
+        inWorld $ let txt = putIn (text "Scaled diffirently on X and Y" (Vert.opaqueColor 0.0 0.0 0.0) font) (vec @WorldVec 1 1) in setScale (scaleXY 0.7 1.5) txt,
+        inWorld $ putIn (text "Colored" (Vert.opaqueColor 1.0 1.0 0.0) font) (vec @WorldVec 0 2),
+        inWorld $ putIn (text str (Vert.opaqueColor 0.0 0.0 0.0) font) (vec @WorldVec 0 0)
       ]
     screenR =
-      [ Object $ setRotation (rotateDegree 45) $ putIn r0 (vec @PixelVec 0 0),
-        Object $ setRotation (rotateDegree 90) $ putIn r1 (vec @PixelVec w 0),
-        Object $ setRotation (rotateDegree 30) $ putIn r2 (vec @PixelVec w h),
-        Object $ setScale (scaleXY 0.5 2) . setRotation (rotateDegree 20) $ putIn r3 (vec @PixelVec 0 h),
-        Object $ setScale (scaleXY 2 0.5) . setRotation (rotateDegree 20) $ putIn r4 (vec @PixelVec (w / 2) (h / 2)),
-        Object txt1,
-        Object txt2,
-        Object txt3,
-        Object txt4,
-        Object $ putIn (Atlas.sprite atlas "pointer") pointer
+      [ inScreen $ srtPutIn r0 noScale (rotateDegree 45) (vec 0 0 :: PixelVec) (vec 0 0),
+        inScreen $ srtPutIn r1 noScale (rotateDegree (-30)) (vec sw 0 :: PixelVec) (vec 100 0),
+        inScreen $ srtPutIn r2 noScale (rotateDegree 30) (vec sw sh :: PixelVec) (vec 100 50),
+        inScreen $ srtPutIn r3 (scaleXY 0.5 2) (rotateDegree 20) (vec 0 sh :: PixelVec) (vec 0 50),
+        inScreen $ srtPutIn r4 (scaleXY 2 0.5) (rotateDegree 20) (vec (sw / 2) (sh / 2) :: PixelVec) (vec 50 25),
+        inScreen txt1,
+        inScreen txt2,
+        inScreen txt3,
+        inScreen txt4,
+        inScreen $ putIn (Atlas.sprite atlas "pointer") pointer
       ]
     WithVec _w _h = windowSize
-    w = fromIntegral _w
-    h = fromIntegral _h
-    r0 = f 0 $ \_ _ -> vec 0 0
-    r1 = f 1 $ \w _ -> vec w 0
-    r2 = f 2 vec
-    r3 = f 3 $ \_ h -> vec 0 h
-    r4 = f 4 $ \w h -> vec (w / 2) (h / 2)
-    f i piv =
-      let sprite = Atlas.spriteIndexed atlas "rectangle" i
-          WithVec w h = sprite.resolution
-       in sprite {Sprite.origin = piv w h}
+    sw = fromIntegral _w
+    sh = fromIntegral _h
+    WithVec rw rh = vec 100 50 :: PixelVec
+    r0 = rect 0
+    r1 = rect 1
+    r2 = rect 2
+    r3 = rect 3
+    r4 = rect 4
+    rect = Atlas.spriteIndexed atlas "rectangle"
     y0 line = let y = line * 16 in vec 30 (30 + y) :: PixelVec
-    txt1 = putIn (text "Move the camera: Arrow keys" (Vert.opaqueColor 1.0 1.0 1.0)) (y0 0)
-    txt2 = putIn (text "Rotate: E and R " (Vert.opaqueColor 1.0 0.0 0.0)) (y0 1)
-    txt3 = putIn (text "Zoom in and out: + and -" (Vert.opaqueColor 0.0 1.0 0.0)) (y0 2)
-    txt4 = putIn (text "Reset: 0" (Vert.opaqueColor 0.0 0.0 1.0)) (y0 3)
+    txt1 = putIn (text "Move the camera: Arrow keys" (Vert.opaqueColor 1.0 1.0 1.0) font) (y0 0)
+    txt2 = putIn (text "Rotate: E and R " (Vert.opaqueColor 1.0 0.0 0.0) font) (y0 1)
+    txt3 = putIn (text "Zoom in and out: + and -" (Vert.opaqueColor 0.0 1.0 0.0) font) (y0 2)
+    txt4 = putIn (text "Reset: 0" (Vert.opaqueColor 0.0 0.0 1.0) font) (y0 3)
 
 class Has game a where
   get :: game -> a
+
+newtype Font = Font Atlas
 
 data Game = Game
   { windowSize :: ViewportSize,
@@ -589,23 +592,23 @@ instance Has Game Cam.Camera where -- TODO camera can change
 instance Has Game PPU where
   get = (.ppu)
 
-instance (Has game a, Has game b) => Has game (a, b) where
-  get game = (get game, get game)
+data WS = W | S
 
-instance (Has game (a, b), Has game c) => Has game (a, b, c) where
-  get game = let (a, b) = get game in (a, b, get game)
+data Object = forall obj. (Render.Render obj) => Object obj WS
 
--- TODO generalize tuple deriving
-instance (Has game (a, b, c), Has game d) => Has game (a, b, c, d) where
-  get game = let (a, b, c) = get game in (a, b, c, get game)
+inWorld :: (Render.Render obj) => obj -> Object
+inWorld obj = Object obj W
 
-data Object game = forall obj. (Render game obj) => Object obj
+inScreen :: (Render.Render obj) => obj -> Object
+inScreen obj = Object obj S
 
-class Render game obj where
-  render :: game -> obj -> SV.Vector Vert.Vertex -- TODO any Traversable would do
+class Render game where
+  world :: game -> Affine
+  screen :: game -> Affine
 
-instance (Has game a, Render.Render a obj) => Render game obj where
-  render game = Render.render (get game)
+instance (Has game Cam.Camera, Has game PPU, Has game ViewportSize) => Render game where
+  world game = Render.world (get game) (get game) (get game)
+  screen game = Render.screen (get game)
 
 clearColor :: Vk.ClearValue
 clearColor = Vk.Color (Vk.Float32 0.1 0.1 0.2 0)

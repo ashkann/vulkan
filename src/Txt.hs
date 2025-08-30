@@ -3,51 +3,35 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
-{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE StrictData #-}
 
 module Txt
   ( Txt (origin), -- TODO more disciplined export
-    text,
-    Font (..),
+    text
   )
 where
 
-import Affine (Affine, srt, srt2affine)
+import Affine (srt, srt2affine)
 import Atlas (Atlas, sprite)
 import Data.Char (ord)
 import Data.List (mapAccumL)
-import Measure (PixelVec, Vec (vec, withFst, withVec), ViewportSize, pattern WithVec)
+import Measure (PixelVec, Vec (vec, withFst, withVec))
 import Render (Render (render))
-import Sprite (In (..), Sprite (resolution), screen)
+import Sprite (Sprite (resolution), renderColored)
 import Text.Printf (printf)
 import Vertex (Color)
 
-data Txt = Txt {str :: String, color :: Color, origin :: PixelVec}
+data Txt = Txt {str :: String, color :: Color, origin :: PixelVec, font :: Atlas}
 
-text :: String -> Color -> Txt
-text str c = Txt {str = str, color = c, origin = vec 0 0}
+text :: String -> Color -> Atlas -> Txt
+text str c font = Txt {str = str, color = c, origin = vec 0 0, font = font}
 
-newtype Font = Font Atlas
-
-instance Render (ViewportSize, Font) (In Txt PixelVec) where
-  render (vps, font) In {object = (Txt {str, color, origin}), position = WithVec x0 y0, scale, rotation} =
-    let (_, vs) = mapAccumL f x0 (write font str) in mconcat vs
-    where
-      f x gly = (withFst gly.resolution (+ x), render (scr <> base x <> pivot, Just color) gly)
-      pivot = withVec origin (\ox oy -> srt2affine $ srt (1, 1) 0 (-ox, -oy))
-      base x = srt2affine $ srt (1, 1) 0 (x, 0)
-      scr = screen vps (scale, rotation, vec x0 y0) (vec 0 0)
-
-instance Render (Affine, Font) Txt where
-  render (tr, font) Txt {str, color, origin} =
+instance Render Txt where
+  render Txt {str, color, origin, font} tr =
     let (_, vs) = mapAccumL f 0 (write font str) in mconcat vs
     where
-      f x gly = (withFst gly.resolution (+ x), render (tr <> base x <> pivot, Just color) gly)
+      f x gly = (withFst gly.resolution (+ x), renderColored gly color (tr <> base x <> pivot))
       pivot = withVec origin (\ox oy -> srt2affine $ srt (1, 1) 0 (-ox, -oy))
       base x = srt2affine $ srt (1, 1) 0 (x, 0)
-
-write :: Font -> String -> [Sprite]
-write (Font font) str = glyph font <$> str
-  where
-    glyph font ch = sprite font $ printf "U+%04X" (ord ch)
+      write font str = glyph font <$> str
+      glyph font ch = sprite font $ printf "U+%04X" (ord ch)

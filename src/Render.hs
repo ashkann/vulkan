@@ -87,8 +87,8 @@ instance (Render obj, Vec vec, Element vec ~ Float) => Render (In obj vec) where
     tr =
       render object (tr <> local <> pivot)
       where
-        pivot = srt2affine $ srt (1, 1) 0 (-ox, -oy)
-        local = srt2affine $ srt (sx, sy) r (x, y)
+        pivot = srt (1, 1) 0 (-ox, -oy)
+        local = srt (sx, sy) r (x, y)
 
 world3 :: (Camera, PPU, ViewportSize) -> (Scale, Rotation, WorldVec) -> PixelVec -> Affine
 world3 (cam, ppu@(PPU _ppu), vps) (scale, rotation, position) origin = projection vps ppu <> model
@@ -97,8 +97,8 @@ world3 (cam, ppu@(PPU _ppu), vps) (scale, rotation, position) origin = projectio
       let s = 1 / _ppu
           Scale sx sy = scale
           WithVec x y = position
-          pivot = srt2affine $ srt (1, 1) 0 (-ox, -oy)
-          local = srt2affine $ srt (s * sx, -(s * sy)) rotation.r (x, y) -- Place in world
+          pivot = srt (1, 1) 0 (-ox, -oy)
+          local = srt (s * sx, -(s * sy)) rotation.r (x, y) -- Place in world
           WithVec ox oy = origin
        in view cam <> local <> pivot
 
@@ -106,11 +106,11 @@ world :: Camera -> PPU -> ViewportSize -> Affine
 world cam ppu vps = projection vps ppu <> view cam
 
 screen :: ViewportSize -> Affine
-screen (WithVec w h) = srt2affine $ srt (s w, s h) 0 (-1, -1)
+screen (WithVec w h) = srt (s w, s h) 0 (-1, -1)
   where
     s x = 2 / fromIntegral x
 
 projection :: ViewportSize -> PPU -> Affine
-projection (WithVec w h) (PPU ppu) = srt2affine $ srt (s w, -(s h)) 0 (0, 0)
+projection (WithVec w h) (PPU ppu) =  srt (s w, -(s h)) 0 (0, 0)
   where
     s x = (2 * ppu) / fromIntegral x

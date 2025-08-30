@@ -4,29 +4,18 @@
 {-# LANGUAGE StrictData #-}
 
 module Affine
-  ( SRT,
+  (
     Affine,
     srt,
     apply,
-    affine,
-    srt2affine,
     inverse,
     translate,
     origin,
   )
 where
 
-data SRT = SRT -- TODO remove
-  { sx, sy :: Float,
-    r :: Float,
-    tx, ty :: Float
-  }
-
-srt :: (Float, Float) -> Float -> (Float, Float) -> SRT
-srt (sx, sy) r (tx, ty) = SRT sx sy r tx ty
-
 translate :: Float -> Float -> Affine
-translate tx ty = srt2affine $ srt (1, 1) 0 (tx, ty)
+translate tx ty = srt (1, 1) 0 (tx, ty)
 
 origin :: Float -> Float -> Affine
 origin ox oy = translate (-ox) (-oy)
@@ -62,11 +51,8 @@ apply Affine {xx, xy, yx, yy, tx, ty} (x, y) = (x', y')
     x' = xx * x + yx * y + tx
     y' = xy * x + yy * y + ty
 
-affine :: (Float, Float) -> (Float, Float) -> (Float, Float) -> Affine
-affine (xx, xy) (yx, yy) (tx, ty) = Affine {xx, xy, yx, yy, tx, ty}
-
-srt2affine :: SRT -> Affine
-srt2affine (SRT {sx, sy, r, tx, ty}) =
+srt :: (Float, Float) -> Float -> (Float, Float) -> Affine
+srt (sx, sy) r (tx, ty) =
   Affine
     { xx = sx * c,
       xy = sx * s,

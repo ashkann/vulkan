@@ -41,7 +41,7 @@ rotateCw dr = rotate (-dr)
 move :: WorldVec -> Camera -> Camera
 move (WithVec dx dy) cam = cam {position = cam.position + vec dxCam dyCam}
   where
-    (dxCam, dyCam) = Affine.apply (srt2affine $ srt (1, 1) cam.rotation (0, 0)) (dx, dy)
+    (dxCam, dyCam) = Affine.apply (srt (1, 1) cam.rotation (0, 0)) (dx, dy)
 
 moveUp :: Float -> Camera -> Camera
 moveUp d = move $ vec 0 d
@@ -70,5 +70,5 @@ zoomOut dz = cameraZoom (-dz)
 view :: Camera -> Affine
 view Camera {position = WithVec x y, rotation, zoom = z} = rotateAndZoom <> lookAt
   where
-    lookAt = srt2affine $ srt (1, 1) 0 (-x, -y)
-    rotateAndZoom = srt2affine $ srt (z, z) (-rotation) (0, 0)
+    lookAt = srt (1, 1) 0 (-x, -y)
+    rotateAndZoom = srt (z, z) (-rotation) (0, 0)

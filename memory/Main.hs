@@ -18,7 +18,7 @@
 
 module Main (main) where
 
-import Affine (Affine, inverse, origin, srt, srt2affine, translate)
+import Affine (Affine, inverse, origin, srt, translate)
 import Atlas (Atlas)
 import qualified Atlas
 import qualified Camera as Cam
@@ -510,7 +510,7 @@ worldTime (TimeSeconds dt) w = return $ w {camera = foldl (\cam act -> act cam) 
     moveSpeed = 5 -- World units / s
     zoomStep = 1 -- 1x / s
     rotationSpeed = 0.5 * pi -- Rad / s
-    minZoom = 0.30
+    minZoom = 0.00
 
 windowSize :: ViewportSize
 windowSize = vec 900 900
@@ -522,7 +522,7 @@ screenToWorld :: ViewportSize -> PPU -> Cam.Camera -> Affine
 screenToWorld vps@(WithVec w h) ppu cam = ndc2World <> pixels2Ndc
   where
     ndc2World = Affine.inverse (projection vps ppu <> Cam.view cam)
-    pixels2Ndc = srt2affine $ srt (s w, s h) 0 (-1, -1)
+    pixels2Ndc = srt (s w, s h) 0 (-1, -1)
     s x = 2 / fromIntegral x
 
 scene :: World -> [Object]

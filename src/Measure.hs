@@ -40,7 +40,10 @@ module Measure
     mkWindowSize,
     pattern UVReg2,
     pixelSizeToWorld,
-    PPU (..),
+    PPU (),
+    ppu1,
+    withPPU,
+    ppu,
   )
 where
 
@@ -205,7 +208,16 @@ localPosToNdc size origin position =
   where
     localToNdc ndcWidth factor x = x - ndcWidth * factor
 
-newtype PPU = PPU Float deriving (Num)
+newtype PPU = PPU Float deriving (Num, Fractional)
+
+ppu :: Float -> PPU
+ppu = PPU
+
+ppu1 :: PPU -> Float
+ppu1 ppu = let PPU rcp = recip ppu in rcp
+
+withPPU :: (Float -> t) -> PPU -> t
+withPPU f ppu = let PPU x = ppu in f x
 
 pixelSizeToWorld :: PPU -> PixelVec -> WorldVec
 pixelSizeToWorld (PPU ppu) (WithVec w h) =

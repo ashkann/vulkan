@@ -1,9 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE StrictData #-}
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Render
@@ -27,7 +25,8 @@ module Render
   )
 where
 
-import Affine hiding (origin)
+import Affine (Affine, srt)
+import qualified Affine
 import Camera (Camera, view)
 import qualified Data.Vector.Storable as SV
 import Measure
@@ -43,9 +42,6 @@ noScale = Scale {x = 1.0, y = 1.0}
 
 scaleXY :: Float -> Float -> Scale
 scaleXY sx sy = Scale {x = sx, y = sy}
-
-scaleFlipY :: Scale -> Scale
-scaleFlipY Scale {x = sx, y = sy} = Scale {x = sx, y = -sy}
 
 newtype Rotation = Rotation {r :: Float}
 
@@ -75,7 +71,24 @@ setScale k s = s {scale = k}
 setOrigin :: PixelVec -> In obj vec -> In obj vec
 setOrigin o s = s {origin = o}
 
-instance (Render obj, Vec vec, Element vec ~ Float) => Render (In obj vec) where
+instance (Render obj) => Render (In obj WorldVec) where
+  render
+    In
+      { object,
+        position = WithVec x y,
+        scale = Scale sx sy,
+        rotation = Rotation r,
+        origin = WithVec ox oy
+      }
+    tr =
+      render object (tr <> putAt <> localToWorld <> local <> pivot)
+      where
+        pivot = Affine.origin (-ox) (-oy)
+        local = srt (sx, sy) r (0, 0)
+        localToWorld = withPPU (\ppu -> Affine.scale (1 / ppu) (-(1 / ppu))) $ ppu 100
+        putAt = Affine.translate x y
+
+instance (Render obj) => Render (In obj PixelVec) where
   render
     In
       { object,
@@ -90,18 +103,6 @@ instance (Render obj, Vec vec, Element vec ~ Float) => Render (In obj vec) where
         pivot = srt (1, 1) 0 (-ox, -oy)
         local = srt (sx, sy) r (x, y)
 
-world3 :: (Camera, PPU, ViewportSize) -> (Scale, Rotation, WorldVec) -> PixelVec -> Affine
-world3 (cam, ppu@(PPU _ppu), vps) (scale, rotation, position) origin = projection vps ppu <> model
-  where
-    model =
-      let s = 1 / _ppu
-          Scale sx sy = scale
-          WithVec x y = position
-          pivot = srt (1, 1) 0 (-ox, -oy)
-          local = srt (s * sx, -(s * sy)) rotation.r (x, y) -- Place in world
-          WithVec ox oy = origin
-       in view cam <> local <> pivot
-
 world :: Camera -> PPU -> ViewportSize -> Affine
 world cam ppu vps = projection vps ppu <> view cam
 
@@ -111,6 +112,6 @@ screen (WithVec w h) = srt (s w, s h) 0 (-1, -1)
     s x = 2 / fromIntegral x
 
 projection :: ViewportSize -> PPU -> Affine
-projection (WithVec w h) (PPU ppu) =  srt (s w, -(s h)) 0 (0, 0)
+projection (WithVec w h) ppu = srt (s w, -(s h)) 0 (0, 0)
   where
-    s x = (2 * ppu) / fromIntegral x
+    s x = withPPU (\ppu -> (2 * ppu) / fromIntegral x) ppu

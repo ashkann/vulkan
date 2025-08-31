@@ -11,6 +11,7 @@ module Affine
     inverse,
     translate,
     origin,
+    scale,
   )
 where
 
@@ -19,6 +20,9 @@ translate tx ty = srt (1, 1) 0 (tx, ty)
 
 origin :: Float -> Float -> Affine
 origin ox oy = translate (-ox) (-oy)
+
+scale :: Float -> Float -> Affine
+scale sx sy = srt (sx,sy) 0 (0,0)
 
 -- TODO Input i, Output o => Affine i o 
 -- TODO 

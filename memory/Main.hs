@@ -10,6 +10,7 @@
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -38,7 +39,8 @@ import qualified Data.Vector.Storable as SV
 import Foreign (Ptr, Word32)
 import Foreign.Storable (Storable (..), sizeOf)
 import qualified Init
-import Measure
+import Measure (PPU, PixelVec, Tr (tr), Vec (vec), ViewportSize, WorldVec, pattern WithVec)
+import qualified Measure
 import Render (In (object), noScale, projection, putIn, rotateDegree, scaleXY, setRotation, setScale, srtPutIn)
 import qualified Render
 import qualified SDL
@@ -516,7 +518,7 @@ windowSize :: ViewportSize
 windowSize = vec 900 900
 
 ppu :: PPU
-ppu = PPU 100
+ppu = Measure.ppu 100
 
 screenToWorld :: ViewportSize -> PPU -> Cam.Camera -> Affine
 screenToWorld vps@(WithVec w h) ppu cam = ndc2World <> pixels2Ndc

@@ -18,7 +18,7 @@ module Render
   )
 where
 
-import Affine (Affine, Rotation, Scale, noRatation, noScale, sr, srt3, srt, translate)
+import Affine (Affine, Rotation, Scale, noRatation, noScale, scaleXY, sr, srt, srt3, translate)
 import qualified Affine
 import Camera (Camera, view)
 import qualified Data.Vector.Storable as SV
@@ -29,7 +29,7 @@ class Render obj where
   render :: obj -> Affine -> SV.Vector Vertex -- TODO any Traversable would do ?
 
 scalePixelToWorld :: PPU -> Affine
-scalePixelToWorld = withRecipPPU (\ppu_1 -> Affine.scale ppu_1 (-ppu_1))
+scalePixelToWorld = withRecipPPU (\ppu_1 -> Affine.scale $ scaleXY ppu_1 (-ppu_1))
 
 data In obj vec = In {object :: obj, position :: vec, rotation :: Rotation, scale :: Scale, origin :: PixelVec}
 

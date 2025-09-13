@@ -14,7 +14,6 @@ module Affine
     srt3,
     apply,
     inverse,
-    scale,
     noScale,
     scaleXY,
     noRatation,
@@ -26,6 +25,7 @@ module Affine
     sr,
     origin,
     translate,
+    scale,
   )
 where
 
@@ -137,5 +137,5 @@ translate = srt noScale noRatation
 origin :: (Vec v, Element v ~ Float) => v -> Affine
 origin o = translate (neg o)
 
-scale :: Float -> Float -> Affine
-scale sx sy = srt3 (sx, sy) 0 (0, 0)
+scale :: Scale -> Affine
+scale s = sr s noRatation

@@ -19,7 +19,7 @@
 
 module Main (main) where
 
-import Affine (Affine, inverse, origin, srt, translate)
+import Affine (Affine, inverse, origin, srt, translate, scaleXY, rotateDegree, noScale, Tr(tr))
 import Atlas (Atlas)
 import qualified Atlas
 import qualified Camera as Cam
@@ -39,9 +39,9 @@ import qualified Data.Vector.Storable as SV
 import Foreign (Ptr, Word32)
 import Foreign.Storable (Storable (..), sizeOf)
 import qualified Init
-import Measure (PPU, PixelVec, Tr (tr), Vec (vec), ViewportSize, WorldVec, pattern WithVec)
+import Measure (PPU, PixelVec, Vec (vec), ViewportSize, WorldVec, pattern WithVec)
 import qualified Measure
-import Render (In (object), noScale, projection, putIn, rotateDegree, scaleXY, setRotation, setScale, srtPutIn)
+import Render (In (object), projection, putIn, setRotation, setScale, srtPutIn)
 import qualified Render
 import qualified SDL
 import Sprite

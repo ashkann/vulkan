@@ -22,7 +22,6 @@ module Measure
     LocalVec,
     WorldVec,
     Vec (..),
-    Tr (..),
     PixelRegion (..),
     UVRegion,
     Normalized (..),
@@ -44,11 +43,10 @@ module Measure
     ppu1,
     withPPU,
     ppu,
+    withRecipPPU,
   )
 where
 
-import Affine (Affine)
-import qualified Affine
 import Data.Coerce (coerce)
 import Data.Kind (Type)
 import Data.Word (Word32)
@@ -78,8 +76,6 @@ pattern WithVec x y <- (unvec -> (x, y))
 class Vec v where
   type Element v :: Type
   vec :: Element v -> Element v -> v
-  fromTuple :: (Element v, Element v) -> v
-  fromTuple (x, y) = vec x y
   unvec :: v -> (Element v, Element v)
   withVec :: v -> (Element v -> Element v -> r) -> r
   withVec v f = let (x, y) = unvec v in f x y
@@ -87,12 +83,6 @@ class Vec v where
   withFst v f = withVec v (\x _ -> f x)
   withSnd :: v -> (Element v -> r) -> r
   withSnd v f = withVec v (\_ x -> f x)
-
-class (Vec u, Vec v, Element v ~ Float, Element u ~ Float) => Tr u v where
-  tr :: Affine -> u -> v
-  tr m (WithVec x y) = tr2 @u m x y
-  tr2 :: Affine -> Element u -> Element u -> v
-  tr2 m x y = let (x', y') = Affine.apply m (x, y) in vec x' y'
 
 instance Vec PixelVec where
   type Element PixelVec = G.Element G.Vec2
@@ -123,16 +113,6 @@ instance Vec WorldVec where
   type Element WorldVec = G.Element G.Vec2
   vec = coerce G.vec2
   unvec (WorldVec v) = let G.WithVec2 x y = v in (x, y)
-
-instance Tr NDCVec NDCVec
-
-instance Tr WorldVec NDCVec
-
-instance Tr WorldVec WorldVec
-
-instance Tr PixelVec WorldVec
-
-instance Tr PixelVec NDCVec
 
 mkWindowSize :: Word32 -> Word32 -> Maybe ViewportSize
 mkWindowSize w h
@@ -218,6 +198,9 @@ ppu1 ppu = let PPU rcp = recip ppu in rcp
 
 withPPU :: (Float -> t) -> PPU -> t
 withPPU f ppu = let PPU x = ppu in f x
+
+withRecipPPU :: (Float -> t) -> PPU -> t
+withRecipPPU f ppu = let PPU x = ppu in f (recip x)
 
 pixelSizeToWorld :: PPU -> PixelVec -> WorldVec
 pixelSizeToWorld (PPU ppu) (WithVec w h) =

@@ -1,19 +1,36 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StrictData #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
 
 module Affine
-  (
-    Affine,
+  ( Affine,
     srt,
     apply,
     inverse,
     translate,
     origin,
     scale,
+    noScale,
+    scaleXY,
+    noRatation,
+    rotateDegree,
+    Scale,
+    Rotation,
+    Tr (..),
+    srt2,
+    sr,
+    origin2,
   )
 where
+
+import Measure (NDCVec, PixelVec, Vec (Element, vec), WorldVec, pattern WithVec)
 
 translate :: Float -> Float -> Affine
 translate tx ty = srt (1, 1) 0 (tx, ty)
@@ -21,16 +38,35 @@ translate tx ty = srt (1, 1) 0 (tx, ty)
 origin :: Float -> Float -> Affine
 origin ox oy = translate (-ox) (-oy)
 
-scale :: Float -> Float -> Affine
-scale sx sy = srt (sx,sy) 0 (0,0)
+origin2 :: (Vec v, Element v ~ Float) => v -> Affine
+origin2 (WithVec ox oy) = translate (-ox) (-oy)
 
--- TODO Input i, Output o => Affine i o 
--- TODO 
+scale :: Float -> Float -> Affine
+scale sx sy = srt (sx, sy) 0 (0, 0)
+
+-- TODO Input i, Output o => Affine i o
+-- TODO
 data Affine = Affine
   -- X  Y  | T
   { xx, yx, tx :: Float,
     xy, yy, ty :: Float
   }
+
+class (Vec u, Vec v, Element v ~ Float, Element u ~ Float) => Tr u v where
+  tr :: Affine -> u -> v
+  tr m (WithVec x y) = tr2 @u m x y
+  tr2 :: Affine -> Element u -> Element u -> v
+  tr2 m x y = let (x', y') = Affine.apply m (x, y) in vec x' y'
+
+instance Tr NDCVec NDCVec
+
+instance Tr WorldVec NDCVec
+
+instance Tr WorldVec WorldVec
+
+instance Tr PixelVec WorldVec
+
+instance Tr PixelVec NDCVec
 
 inverse :: Affine -> Affine
 inverse m =
@@ -69,6 +105,12 @@ srt (sx, sy) r (tx, ty) =
     c = cos r
     s = sin r
 
+srt2 :: (Vec v, Element v ~ Float) => Scale -> Rotation -> v -> Affine
+srt2 (Scale sx sy) (Rotation r) (WithVec tx ty) = srt (sx, sy) r (tx, ty)
+
+sr :: Scale -> Rotation -> Affine
+sr (Scale sx sy) (Rotation r) = srt (sx, sy) r (0, 0)
+
 instance Semigroup Affine where
   (<>) a b =
     Affine
@@ -82,3 +124,22 @@ instance Semigroup Affine where
 
 instance Monoid Affine where
   mempty = Affine {xx = 1, xy = 0, yx = 0, yy = 1, tx = 0, ty = 0}
+
+data Scale = Scale {x :: Float, y :: Float}
+
+noScale :: Scale
+noScale = Scale {x = 1.0, y = 1.0}
+
+scaleXY :: Float -> Float -> Scale
+scaleXY sx sy = Scale {x = sx, y = sy}
+
+newtype Rotation = Rotation {r :: Float}
+
+noRatation :: Rotation
+noRatation = rotate 0
+
+rotate :: Float -> Rotation
+rotate = Rotation
+
+rotateDegree :: Float -> Rotation
+rotateDegree r = rotate $ r * (2 * pi / 360)

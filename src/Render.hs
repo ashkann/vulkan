@@ -7,13 +7,6 @@
 module Render
   ( Render (..),
     In (..),
-    Rotation (..),
-    Scale (..),
-    rotate,
-    rotateDegree,
-    noRatation,
-    scaleXY,
-    noScale,
     putIn,
     setRotation,
     setScale,
@@ -25,7 +18,7 @@ module Render
   )
 where
 
-import Affine (Affine, srt)
+import Affine (Affine, Rotation, Scale, noRatation, noScale, sr, srt, srt2, translate)
 import qualified Affine
 import Camera (Camera, view)
 import qualified Data.Vector.Storable as SV
@@ -35,24 +28,8 @@ import Vertex (Vertex)
 class Render obj where
   render :: obj -> Affine -> SV.Vector Vertex -- TODO any Traversable would do ?
 
-data Scale = Scale {x :: Float, y :: Float}
-
-noScale :: Scale
-noScale = Scale {x = 1.0, y = 1.0}
-
-scaleXY :: Float -> Float -> Scale
-scaleXY sx sy = Scale {x = sx, y = sy}
-
-newtype Rotation = Rotation {r :: Float}
-
-noRatation :: Rotation
-noRatation = rotate 0
-
-rotate :: Float -> Rotation
-rotate = Rotation
-
-rotateDegree :: Float -> Rotation
-rotateDegree r = rotate $ r * (2 * pi / 360)
+scalePixelToWorld :: PPU -> Affine
+scalePixelToWorld = withRecipPPU (\ppu_1 -> Affine.scale ppu_1 (-ppu_1))
 
 data In obj vec = In {object :: obj, position :: vec, rotation :: Rotation, scale :: Scale, origin :: PixelVec}
 
@@ -76,32 +53,24 @@ instance (Render obj) => Render (In obj WorldVec) where
     In
       { object,
         position = WithVec x y,
-        scale = Scale sx sy,
-        rotation = Rotation r,
-        origin = WithVec ox oy
+        scale,
+        rotation,
+        origin
       }
     tr =
-      render object (tr <> putAt <> localToWorld <> local <> pivot)
-      where
-        pivot = Affine.origin (-ox) (-oy)
-        local = srt (sx, sy) r (0, 0)
-        localToWorld = withPPU (\ppu -> Affine.scale (1 / ppu) (-(1 / ppu))) $ ppu 100
-        putAt = Affine.translate x y
+      render object (tr <> translate x y <> scalePixelToWorld (ppu 100) <> sr scale rotation <> Affine.origin2 origin)
 
 instance (Render obj) => Render (In obj PixelVec) where
   render
     In
       { object,
-        position = WithVec x y,
-        scale = Scale sx sy,
-        rotation = Rotation r,
-        origin = WithVec ox oy
+        position,
+        scale,
+        rotation,
+        origin
       }
     tr =
-      render object (tr <> local <> pivot)
-      where
-        pivot = srt (1, 1) 0 (-ox, -oy)
-        local = srt (sx, sy) r (x, y)
+      render object (tr <> srt2 scale rotation position <> Affine.origin2 origin)
 
 world :: Camera -> PPU -> ViewportSize -> Affine
 world cam ppu vps = projection vps ppu <> view cam

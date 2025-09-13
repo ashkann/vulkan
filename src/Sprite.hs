@@ -14,7 +14,7 @@ module Sprite
   renderColored)
 where
 
-import Affine (Affine)
+import Affine (Affine, Tr (tr2))
 import qualified Data.Vector.Storable as SV
 import Measure
 import Render

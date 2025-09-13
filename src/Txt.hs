@@ -11,7 +11,7 @@ module Txt
   )
 where
 
-import Affine (srt)
+import Affine (srt3)
 import Atlas (Atlas, sprite)
 import Data.Char (ord)
 import Data.List (mapAccumL)
@@ -31,7 +31,7 @@ instance Render Txt where
     let (_, vs) = mapAccumL f 0 (write font str) in mconcat vs
     where
       f x gly = (withFst gly.resolution (+ x), renderColored gly color (tr <> base x <> pivot))
-      pivot = withVec origin (\ox oy -> srt (1, 1) 0 (-ox, -oy))
-      base x = srt (1, 1) 0 (x, 0)
+      pivot = withVec origin (\ox oy -> srt3 (1, 1) 0 (-ox, -oy))
+      base x = srt3 (1, 1) 0 (x, 0)
       write font str = glyph font <$> str
       glyph font ch = sprite font $ printf "U+%04X" (ord ch)

@@ -18,7 +18,7 @@ module Render
   )
 where
 
-import Affine (Affine, Rotation, Scale, noRatation, noScale, sr, srt, srt2, translate)
+import Affine (Affine, Rotation, Scale, noRatation, noScale, sr, srt3, srt, translate)
 import qualified Affine
 import Camera (Camera, view)
 import qualified Data.Vector.Storable as SV
@@ -70,17 +70,17 @@ instance (Render obj) => Render (In obj PixelVec) where
         origin
       }
     tr =
-      render object (tr <> srt2 scale rotation position <> Affine.origin origin)
+      render object (tr <> srt scale rotation position <> Affine.origin origin)
 
 world :: Camera -> PPU -> ViewportSize -> Affine
 world cam ppu vps = projection vps ppu <> view cam
 
 screen :: ViewportSize -> Affine
-screen (WithVec w h) = srt (s w, s h) 0 (-1, -1)
+screen (WithVec w h) = srt3 (s w, s h) 0 (-1, -1)
   where
     s x = 2 / fromIntegral x
 
 projection :: ViewportSize -> PPU -> Affine
-projection (WithVec w h) ppu = srt (s w, -(s h)) 0 (0, 0)
+projection (WithVec w h) ppu = srt3 (s w, -(s h)) 0 (0, 0)
   where
     s x = withPPU (\ppu -> (2 * ppu) / fromIntegral x) ppu

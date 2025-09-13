@@ -19,7 +19,7 @@
 
 module Main (main) where
 
-import Affine (Affine, Tr (tr), inverse, noScale, origin, rotateDegree, scaleXY, srt, translate)
+import Affine (Affine, Tr (tr), inverse, noScale, origin, rotateDegree, scaleXY, srt3, translate)
 import Atlas (Atlas)
 import qualified Atlas
 import qualified Camera as Cam
@@ -524,7 +524,7 @@ screenToWorld :: ViewportSize -> PPU -> Cam.Camera -> Affine
 screenToWorld vps@(WithVec w h) ppu cam = ndc2World <> pixels2Ndc
   where
     ndc2World = Affine.inverse (projection vps ppu <> Cam.view cam)
-    pixels2Ndc = srt (s w, s h) 0 (-1, -1)
+    pixels2Ndc = srt3 (s w, s h) 0 (-1, -1)
     s x = 2 / fromIntegral x
 
 scene :: World -> [Object]

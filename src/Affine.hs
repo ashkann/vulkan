@@ -11,7 +11,7 @@
 
 module Affine
   ( Affine,
-    srt,
+    srt3,
     apply,
     inverse,
     scale,
@@ -22,7 +22,7 @@ module Affine
     Scale,
     Rotation,
     Tr (..),
-    srt2,
+    srt,
     sr,
     origin,
     translate,
@@ -30,15 +30,6 @@ module Affine
 where
 
 import Measure (NDCVec, PixelVec, Vec (Element, neg, vec), WorldVec, pattern WithVec)
-
-translate :: (Vec v, Element v ~ Float) => v -> Affine
-translate = srt2 noScale noRatation
-
-origin :: (Vec v, Element v ~ Float) => v -> Affine
-origin o = translate (neg o)
-
-scale :: Float -> Float -> Affine
-scale sx sy = srt (sx, sy) 0 (0, 0)
 
 -- TODO Input i, Output o => Affine i o
 -- TODO
@@ -87,8 +78,8 @@ apply Affine {xx, xy, yx, yy, tx, ty} (x, y) = (x', y')
     x' = xx * x + yx * y + tx
     y' = xy * x + yy * y + ty
 
-srt :: (Float, Float) -> Float -> (Float, Float) -> Affine
-srt (sx, sy) r (tx, ty) =
+srt3 :: (Float, Float) -> Float -> (Float, Float) -> Affine
+srt3 (sx, sy) r (tx, ty) =
   Affine
     { xx = sx * c,
       xy = sx * s,
@@ -101,11 +92,11 @@ srt (sx, sy) r (tx, ty) =
     c = cos r
     s = sin r
 
-srt2 :: (Vec v, Element v ~ Float) => Scale -> Rotation -> v -> Affine
-srt2 (Scale sx sy) (Rotation r) (WithVec tx ty) = srt (sx, sy) r (tx, ty)
+srt :: (Vec v, Element v ~ Float) => Scale -> Rotation -> v -> Affine
+srt (Scale (sx, sy)) (Rotation r) (WithVec tx ty) = srt3 (sx, sy) r (tx, ty)
 
 sr :: Scale -> Rotation -> Affine
-sr (Scale sx sy) (Rotation r) = srt (sx, sy) r (0, 0)
+sr (Scale (sx, sy)) (Rotation r) = srt3 (sx, sy) r (0, 0)
 
 instance Semigroup Affine where
   (<>) a b =
@@ -121,15 +112,15 @@ instance Semigroup Affine where
 instance Monoid Affine where
   mempty = Affine {xx = 1, xy = 0, yx = 0, yy = 1, tx = 0, ty = 0}
 
-data Scale = Scale {x :: Float, y :: Float}
+newtype Scale = Scale (Float, Float)
 
 noScale :: Scale
-noScale = Scale {x = 1.0, y = 1.0}
+noScale = Scale (1.0, 1.0)
 
 scaleXY :: Float -> Float -> Scale
-scaleXY sx sy = Scale {x = sx, y = sy}
+scaleXY sx sy = Scale (sx, sy)
 
-newtype Rotation = Rotation {r :: Float}
+newtype Rotation = Rotation Float
 
 noRatation :: Rotation
 noRatation = rotate 0
@@ -139,3 +130,12 @@ rotate = Rotation
 
 rotateDegree :: Float -> Rotation
 rotateDegree r = rotate $ r * (2 * pi / 360)
+
+translate :: (Vec v, Element v ~ Float) => v -> Affine
+translate = srt noScale noRatation
+
+origin :: (Vec v, Element v ~ Float) => v -> Affine
+origin o = translate (neg o)
+
+scale :: Float -> Float -> Affine
+scale sx sy = srt3 (sx, sy) 0 (0, 0)

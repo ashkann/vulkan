@@ -52,13 +52,13 @@ instance (Render obj) => Render (In obj WorldVec) where
   render
     In
       { object,
-        position = WithVec x y,
+        position,
         scale,
         rotation,
         origin
       }
     tr =
-      render object (tr <> translate x y <> scalePixelToWorld (ppu 100) <> sr scale rotation <> Affine.origin2 origin)
+      render object (tr <> translate position <> scalePixelToWorld (ppu 100) <> sr scale rotation <> Affine.origin origin)
 
 instance (Render obj) => Render (In obj PixelVec) where
   render
@@ -70,7 +70,7 @@ instance (Render obj) => Render (In obj PixelVec) where
         origin
       }
     tr =
-      render object (tr <> srt2 scale rotation position <> Affine.origin2 origin)
+      render object (tr <> srt2 scale rotation position <> Affine.origin origin)
 
 world :: Camera -> PPU -> ViewportSize -> Affine
 world cam ppu vps = projection vps ppu <> view cam

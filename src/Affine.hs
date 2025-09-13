@@ -14,8 +14,6 @@ module Affine
     srt,
     apply,
     inverse,
-    translate,
-    origin,
     scale,
     noScale,
     scaleXY,
@@ -26,20 +24,18 @@ module Affine
     Tr (..),
     srt2,
     sr,
-    origin2,
+    origin,
+    translate,
   )
 where
 
-import Measure (NDCVec, PixelVec, Vec (Element, vec), WorldVec, pattern WithVec)
+import Measure (NDCVec, PixelVec, Vec (Element, neg, vec), WorldVec, pattern WithVec)
 
-translate :: Float -> Float -> Affine
-translate tx ty = srt (1, 1) 0 (tx, ty)
+translate :: (Vec v, Element v ~ Float) => v -> Affine
+translate = srt2 noScale noRatation
 
-origin :: Float -> Float -> Affine
-origin ox oy = translate (-ox) (-oy)
-
-origin2 :: (Vec v, Element v ~ Float) => v -> Affine
-origin2 (WithVec ox oy) = translate (-ox) (-oy)
+origin :: (Vec v, Element v ~ Float) => v -> Affine
+origin o = translate (neg o)
 
 scale :: Float -> Float -> Affine
 scale sx sy = srt (sx, sy) 0 (0, 0)

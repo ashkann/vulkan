@@ -83,6 +83,8 @@ class Vec v where
   withFst v f = withVec v (\x _ -> f x)
   withSnd :: v -> (Element v -> r) -> r
   withSnd v f = withVec v (\_ x -> f x)
+  neg :: (Num (Element v)) => v -> v
+  neg (WithVec x y) = vec (-x) (-y)
 
 instance Vec PixelVec where
   type Element PixelVec = G.Element G.Vec2

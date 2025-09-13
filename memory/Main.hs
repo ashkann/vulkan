@@ -19,7 +19,7 @@
 
 module Main (main) where
 
-import Affine (Affine, inverse, origin, srt, translate, scaleXY, rotateDegree, noScale, Tr(tr))
+import Affine (Affine, Tr (tr), inverse, noScale, origin, rotateDegree, scaleXY, srt, translate)
 import Atlas (Atlas)
 import qualified Atlas
 import qualified Camera as Cam
@@ -215,8 +215,8 @@ instance Render.Render Grid where
       vert (Spot (Row r, Column c), crd) = Render.render (card crd) (tr <> base r c <> pivot)
       c = 6
       r = 6
-      pivot = let f n = n * (h + padding) - padding in Affine.origin (f c / 2) (f r / 2)
-      base r c = Affine.translate (fromIntegral c * (w + padding)) (fromIntegral r * (h + padding))
+      pivot = let f n = n * (h + padding) - padding in origin (vec @PixelVec (f c / 2) (f r / 2))
+      base r c = translate $ vec @PixelVec (fromIntegral c * (w + padding)) (fromIntegral r * (h + padding))
       card (Card (CardName name) FaceUp) = Atlas.sprite atlas name
       card (Card _ FaceDown) = faceDown
 

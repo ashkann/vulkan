@@ -19,7 +19,7 @@
 
 module Main (main) where
 
-import Affine (Affine, Tr (tr), inverse, noScale, origin, rotateDegree, scaleXY, srt3, translate)
+import Affine (Affine, Tr (tr), inverse, noRotation, noScale, origin, rotateDegree, scaleXY, srt, srt3, translate)
 import Atlas (Atlas)
 import qualified Atlas
 import qualified Camera as Cam
@@ -41,7 +41,7 @@ import Foreign.Storable (Storable (..), sizeOf)
 import qualified Init
 import Measure (PPU, PixelVec, Vec (vec), ViewportSize, WorldVec, pattern WithVec)
 import qualified Measure
-import Node (Node, node, node0, node1)
+import Node (Node, node, node0)
 import Render (applyObject, projection)
 import qualified Render
 import qualified SDL
@@ -49,7 +49,6 @@ import Sprite
 import qualified System.Random as Random
 import qualified Texture as Tex
 import Txt (text)
-import qualified Txt (Txt (origin))
 import Update (TimeSeconds (..), Update (..), timeSecondsFromMillis)
 import Utils
 import qualified Vertex as Vert
@@ -530,40 +529,39 @@ scene World {pointer, atlas, grid, font} = (node0 $ node0 grid : worldText, node
   where
     str = "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`"
     worldText =
-      [ let txt = node1 (let x = text "Pivoted and then Rotated 45 degrees" (Vert.opaqueColor 0.0 0.0 0.0) font in x {Txt.origin = vec 30 100}) (vec @WorldVec 0 0 {--setRotation (rotateDegree 45)--}) in txt,
-        let txt = node1 (text "Scaled diffirently on X and Y" (Vert.opaqueColor 0.0 0.0 0.0) font) (vec @WorldVec 1 1 {-- setScale (scaleXY 0.7 1.5) --}) in txt,
-        node1 (text "Colored" (Vert.opaqueColor 1.0 1.0 0.0) font) (vec @WorldVec 0 2),
-        node1 (text str (Vert.opaqueColor 0.0 0.0 0.0) font) (vec @WorldVec 0 0)
+      [ node (text "Pivoted and then Rotated 45 degrees" (color 0.0 0.0 0.0) font) $ Affine.srt noScale (rotateDegree 45) (vec 0 0 :: WorldVec) (vec 30 100 :: PixelVec),
+        node (text "Scaled diffirently on X and Y" (color 0.0 0.0 0.0) font) $ Affine.srt (scaleXY 0.7 1.5) noRotation (vec 0 0 :: WorldVec) (vec 30 100 :: PixelVec),
+        node (text "Colored" (Vert.opaqueColor 1.0 1.0 0.0) font) $ Affine.srt noScale noRotation (vec 0 0 :: WorldVec) (vec 0 0 :: PixelVec),
+        node (text str (Vert.opaqueColor 0.0 0.0 0.0) font) $ Affine.srt noScale noRotation (vec 0 0 :: WorldVec) (vec 0 0 :: PixelVec)
       ] ::
         [Node]
     screenR =
-      [ node r0 noScale (rotateDegree 45) (vec 0 0 :: PixelVec) (vec 0 0),
-        node r1 noScale (rotateDegree (-30)) (vec sw 0 :: PixelVec) (vec 100 0),
-        node r2 noScale (rotateDegree 30) (vec sw sh :: PixelVec) (vec 100 50),
-        node r3 (scaleXY 0.5 2) (rotateDegree 20) (vec 0 sh :: PixelVec) (vec 0 50),
-        node r4 (scaleXY 2 0.5) (rotateDegree 20) (vec (sw / 2) (sh / 2) :: PixelVec) (vec 50 25),
-        txt1,
-        txt2,
-        txt3,
-        txt4,
-        node1 (Atlas.sprite atlas "pointer") pointer
+      [ node r1 $ Affine.srt noScale (rotateDegree 45) (vec 0 0 :: PixelVec) (vec 0 0 :: PixelVec),
+        node r2 $ Affine.srt noScale (rotateDegree (-30)) (vec sw 0 :: PixelVec) (vec 100 0 :: PixelVec),
+        node r3 $ Affine.srt noScale (rotateDegree 30) (vec sw sh :: PixelVec) (vec 100 50 :: PixelVec),
+        node r4 $ Affine.srt (scaleXY 0.5 2) (rotateDegree 20) (vec 0 sh :: PixelVec) (vec 0 50 :: PixelVec),
+        node r5 $ Affine.srt (scaleXY 2 0.5) (rotateDegree 20) (vec (sw / 2) (sh / 2) :: PixelVec) (vec 50 25 :: PixelVec),
+        node (text "Move the camera: Arrow keys" (color 1.0 1.0 1.0) font) $ t (y0 0),
+        node (text "Rotate: E and R " (color 1.0 0.0 0.0) font) $ t (y0 1),
+        node (text "Zoom in and out: + and -" (color 0.0 1.0 0.0) font) $ t (y0 2),
+        node (text "Reset: 0" (color 0.0 0.0 1.0) font) $ t (y0 3),
+        node (Atlas.sprite atlas "pointer") $ t pointer
       ] ::
         [Node]
-    WithVec _w _h = windowSize
-    sw = fromIntegral _w
-    sh = fromIntegral _h
-    WithVec rw rh = vec 100 50 :: PixelVec
-    r0 = rect 0
-    r1 = rect 1
-    r2 = rect 2
-    r3 = rect 3
-    r4 = rect 4
-    rect = Atlas.spriteIndexed atlas "rectangle"
-    y0 line = let y = line * 16 in vec 30 (30 + y) :: PixelVec
-    txt1 = node1 (text "Move the camera: Arrow keys" (Vert.opaqueColor 1.0 1.0 1.0) font) (y0 0)
-    txt2 = node1 (text "Rotate: E and R " (Vert.opaqueColor 1.0 0.0 0.0) font) (y0 1)
-    txt3 = node1 (text "Zoom in and out: + and -" (Vert.opaqueColor 0.0 1.0 0.0) font) (y0 2)
-    txt4 = node1 (text "Reset: 0" (Vert.opaqueColor 0.0 0.0 1.0) font) (y0 3)
+      where
+        WithVec _w _h = windowSize
+        sw = fromIntegral _w
+        sh = fromIntegral _h
+        WithVec rw rh = vec 100 50 :: PixelVec
+        r1 = rect 0
+        r2 = rect 1
+        r3 = rect 2
+        r4 = rect 3
+        r5 = rect 4
+        rect = Atlas.spriteIndexed atlas "rectangle"
+        y0 line = let y = line * 16 in vec 30 (30 + y) :: PixelVec
+        t = Affine.translate
+    color = Vert.opaqueColor
 
 newtype Font = Font Atlas
 

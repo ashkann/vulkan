@@ -85,27 +85,34 @@ applyVec :: (Vec u, Vec v, Element u ~ Float, Element v ~ Float) => Affine -> u 
 applyVec m v = let (x', y') = applyXY m (unvec v) in vec x' y'
 
 srt3 :: (Float, Float) -> Float -> (Float, Float) -> Affine
-srt3 (sx, sy) r (tx, ty) =
+srt3 s r t = srt4 s r t (0, 0)
+
+srt4 :: (Float, Float) -> Float -> (Float, Float) -> (Float, Float) -> Affine
+srt4 (sx, sy) r (tx, ty) (ox, oy) =
   Affine
-    { xx = sx * c,
-      xy = sx * s,
-      yx = -(sy * s),
-      yy = sy * c,
-      tx = tx,
-      ty = ty
+    { xx = _xx,
+      xy = _xy,
+      yx = _yx,
+      yy = _yy,
+      tx = tx - (_xx * ox + _yx * oy),
+      ty = ty - (_xy * ox + _yy * oy)
     }
   where
+    _xx = sx * c
+    _xy = sx * s
+    _yx = -(sy * s)
+    _yy = sy * c
     c = cos r
     s = sin r
 
-srt :: (Vec v, Element v ~ Float) => Scale -> Rotation -> v -> Affine
-srt (Scale (sx, sy)) (Rotation r) (WithVec tx ty) = srt3 (sx, sy) r (tx, ty)
+srt :: (Vec p, Vec o, Element p ~ Float, Element o ~ Float) => Scale -> Rotation -> p -> o -> Affine
+srt (Scale (sx, sy)) (Rotation r) (WithVec tx ty) (WithVec ox oy) = srt4 (sx, sy) r (tx, ty) (ox, oy)
 
 sr :: Scale -> Rotation -> Affine
 sr (Scale (sx, sy)) (Rotation r) = srt3 (sx, sy) r (0, 0)
 
 instance Semigroup Affine where
-  (<>) a b =
+  a <> b =
     Affine
       { xx = a.xx * b.xx + a.yx * b.xy,
         xy = a.xy * b.xx + a.yy * b.xy,
@@ -135,10 +142,10 @@ rotate :: Float -> Rotation
 rotate = Rotation
 
 rotateDegree :: Float -> Rotation
-rotateDegree r = rotate $ r * (2 * pi / 360)
+rotateDegree r = rotate $ r * (pi / 180)
 
-translate :: (Vec v, Element v ~ Float) => v -> Affine
-translate = srt noScale noRotation
+translate :: (Vec p, Element p ~ Float) => p -> Affine
+translate p = srt noScale noRotation p (vec 0 0 :: PixelVec)
 
 translateX :: Float -> Affine
 translateX x = srt3 (1, 1) 0 (x, 0)

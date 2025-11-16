@@ -320,12 +320,14 @@ world0 atlas font = do
 data Frame = Frame {verts :: SV.Vector (Vert.Vertex Measure.NDCVec)}
 
 frameData :: Game -> World -> Frame
-frameData g w =
+frameData (Game {camera, windowSize, ppu}) w =
   Frame
-    { verts =
-        let (wrld, scr) = scene w
-         in SV.fromList $ applyObject (world g) wrld ++ applyObject (screen g) scr
+    { verts = SV.fromList $ applyObject worldTr world ++ applyObject screenTr screen
     }
+  where
+    (world, screen) = scene w
+    worldTr = Render.world camera ppu windowSize
+    screenTr = Render.screen windowSize
 
 frame ::
   (MonadIO io) =>
@@ -563,9 +565,6 @@ scene World {pointer, atlas, grid, font} = (node0 $ node0 grid : worldText, node
     txt3 = node1 (text "Zoom in and out: + and -" (Vert.opaqueColor 0.0 1.0 0.0) font) (y0 2)
     txt4 = node1 (text "Reset: 0" (Vert.opaqueColor 0.0 0.0 1.0) font) (y0 3)
 
-class Has game a where
-  get :: game -> a
-
 newtype Font = Font Atlas
 
 data Game = Game
@@ -575,40 +574,6 @@ data Game = Game
     ppu :: PPU,
     atlas :: Atlas
   }
-
-instance Has Game ViewportSize where
-  get = (.windowSize)
-
--- TODO both font and atlas are Atlas. Probably new newtype wrapper or rethink the pattern
-instance Has Game Atlas where
-  get = (.atlas)
-
-instance Has Game Font where
-  get = (.font)
-
-instance Has Game Cam.Camera where -- TODO camera can change
-  get = (.camera)
-
-instance Has Game PPU where
-  get = (.ppu)
-
-data WS = W | S
-
-data Object = forall obj. (Render.Render obj) => Object obj WS
-
-inWorld :: (Render.Render obj) => obj -> Object
-inWorld obj = Object obj W
-
-inScreen :: (Render.Render obj) => obj -> Object
-inScreen obj = Object obj S
-
-class Render game where
-  world :: game -> Affine
-  screen :: game -> Affine
-
-instance (Has game Cam.Camera, Has game PPU, Has game ViewportSize) => Render game where
-  world game = Render.world (get game) (get game) (get game)
-  screen game = Render.screen (get game)
 
 clearColor :: Vk.ClearValue
 clearColor = Vk.Color (Vk.Float32 0.1 0.1 0.2 0)

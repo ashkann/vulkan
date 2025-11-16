@@ -27,7 +27,6 @@ import Control.Concurrent (threadDelay)
 import Control.Exception (bracket)
 import Control.Monad (when)
 import Control.Monad.Managed (Managed, MonadIO (liftIO), managed, runManaged)
-import Data.Foldable (foldlM)
 import Data.Functor (($>))
 import Data.List (foldl')
 import qualified Data.Map.Strict as Map
@@ -42,8 +41,8 @@ import Foreign.Storable (Storable (..), sizeOf)
 import qualified Init
 import Measure (PPU, PixelVec, Vec (vec), ViewportSize, WorldVec, pattern WithVec)
 import qualified Measure
+import Node (Node, node, node0, node1)
 import Render (applyObject, projection)
-import Node (Node, node, node1)
 import qualified Render
 import qualified SDL
 import Sprite
@@ -70,14 +69,7 @@ import qualified Vulkan.Zero as Vk
 import qualified VulkanMemoryAllocator as Vma
 import Prelude hiding (init)
 
-frameData :: Game -> World -> FrameData
-frameData g w = FrameData {verts = SV.fromList $ applyObject (world g) (scene w)}
-
--- where
---   render node = applyObject (world g) obj
---   render node = applyObject (screen g) obj
-
-data Frame = Frame
+data VulkanFrame = VulkanFrame
   { pool :: Vk.CommandPool,
     renderCmd :: Vk.CommandBuffer,
     copyCmd :: Vk.CommandBuffer,
@@ -276,12 +268,13 @@ instance Update World where
       minZoom = 0.00
       map =
         Map.fromList
-          [ (SDL.ScancodeUp, Cam.moveUp $ moveSpeed * dt),
+          [ (SDL.Scancode0, const Cam.defaultCamera),
+            (SDL.ScancodeUp, Cam.moveUp $ moveSpeed * dt),
             (SDL.ScancodeDown, Cam.moveDown $ moveSpeed * dt),
             (SDL.ScancodeLeft, Cam.moveLeft $ moveSpeed * dt),
             (SDL.ScancodeRight, Cam.moveRight $ moveSpeed * dt),
-            (SDL.ScancodeE, Cam.rotateCcw $ rotationSpeed * dt),
-            (SDL.ScancodeR, Cam.rotateCw $ rotationSpeed * dt),
+            (SDL.ScancodeQ, Cam.rotateCcw $ rotationSpeed * dt),
+            (SDL.ScancodeE, Cam.rotateCw $ rotationSpeed * dt),
             (SDL.ScancodeEquals, Cam.zoomIn $ zoomStep * dt),
             (SDL.ScancodeMinus, if w.camera.zoom >= minZoom then Cam.zoomOut $ zoomStep * dt else id)
           ]
@@ -324,7 +317,15 @@ world0 atlas font = do
         pressedKeys = Set.empty
       }
 
-data FrameData = FrameData {verts :: SV.Vector (Vert.Vertex Measure.NDCVec)}
+data Frame = Frame {verts :: SV.Vector (Vert.Vertex Measure.NDCVec)}
+
+frameData :: Game -> World -> Frame
+frameData g w =
+  Frame
+    { verts =
+        let (wrld, scr) = scene w
+         in SV.fromList $ applyObject (world g) wrld ++ applyObject (screen g) scr
+    }
 
 frame ::
   (MonadIO io) =>
@@ -335,11 +336,11 @@ frame ::
   Vk.PipelineLayout ->
   (Vk.SwapchainKHR, VkExtent2D.Extent2D, V.Vector Vk.Image) ->
   Vk.DescriptorSet ->
+  VulkanFrame ->
   Frame ->
-  FrameData ->
   io ()
 frame device gfx present pipeline pipelineLayout swp descSet f frameData = do
-  let Frame
+  let VulkanFrame
         { pool,
           renderCmd,
           copyCmd,
@@ -352,7 +353,7 @@ frame device gfx present pipeline pipelineLayout swp descSet f frameData = do
           targetImage,
           targetView
         } = f
-      FrameData {verts} = frameData
+      Frame {verts} = frameData
       (swapchain, swapchainExtent, swapchainImages) = swp
   waitForFrame device f
   liftIO $ Utils.copyToGpu device pool gfx vertex staging verts
@@ -423,7 +424,7 @@ withFrames ::
   Vk.DeviceSize ->
   Vk.DeviceSize ->
   Int ->
-  Managed (V.Vector Frame)
+  Managed (V.Vector VulkanFrame)
 withFrames device gfx allocator stagingBufferSize vertexBufferSize frameCount = V.replicateM frameCount singleFrame
   where
     singleFrame =
@@ -454,7 +455,7 @@ withFrames device gfx allocator stagingBufferSize vertexBufferSize frameCount = 
         let WithVec w h = windowSize
         (image, view) <- Tex.withImageAndView allocator device (vec (fromIntegral w) (fromIntegral h)) Init.imageFormat
         return
-          Frame
+          VulkanFrame
             { pool = pool,
               renderCmd = cmds ! 0,
               copyCmd = cmds ! 1,
@@ -468,15 +469,15 @@ withFrames device gfx allocator stagingBufferSize vertexBufferSize frameCount = 
               targetView = view
             }
 
-waitForFrame :: (MonadIO io) => Vk.Device -> Frame -> io ()
-waitForFrame device (Frame {fence}) =
+waitForFrame :: (MonadIO io) => Vk.Device -> VulkanFrame -> io ()
+waitForFrame device (VulkanFrame {fence}) =
   let second = 1000000000 in Vk.waitForFences device [fence] True second *> Vk.resetFences device [fence]
 
 mainLoop ::
   (MonadIO io, Update world) =>
   io () ->
-  (world -> FrameData) ->
-  (Int -> FrameData -> io ()) ->
+  (world -> Frame) ->
+  (Int -> Frame -> io ()) ->
   world ->
   io ()
 mainLoop shutdown frame render w0 =
@@ -522,16 +523,17 @@ screenToWorld vps@(WithVec w h) ppu cam = ndc2World <> pixels2Ndc
     pixels2Ndc = srt3 (s w, s h) 0 (-1, -1)
     s x = 2 / fromIntegral x
 
-scene :: World -> Node
-scene World {pointer, atlas, grid, font} = let c = node1 grid (vec 0 0 :: WorldVec) : (worldText ++ screenR) in node1 c (vec 0 0 :: WorldVec)
+scene :: World -> (Node, Node)
+scene World {pointer, atlas, grid, font} = (node0 $ node0 grid : worldText, node0 screenR)
   where
     str = "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`"
     worldText =
-      [ let txt = node1 (let x = text "Pivoted and then Rotated 45 degrees" (Vert.opaqueColor 0.0 0.0 0.0) font in x {Txt.origin = vec 30 100}) (vec @WorldVec 0 0) in {--setRotation (rotateDegree 45)--} txt,
-        let txt = node1 (text "Scaled diffirently on X and Y" (Vert.opaqueColor 0.0 0.0 0.0) font) (vec @WorldVec 1 1) in {-- setScale (scaleXY 0.7 1.5) --} txt,
+      [ let txt = node1 (let x = text "Pivoted and then Rotated 45 degrees" (Vert.opaqueColor 0.0 0.0 0.0) font in x {Txt.origin = vec 30 100}) (vec @WorldVec 0 0 {--setRotation (rotateDegree 45)--}) in txt,
+        let txt = node1 (text "Scaled diffirently on X and Y" (Vert.opaqueColor 0.0 0.0 0.0) font) (vec @WorldVec 1 1 {-- setScale (scaleXY 0.7 1.5) --}) in txt,
         node1 (text "Colored" (Vert.opaqueColor 1.0 1.0 0.0) font) (vec @WorldVec 0 2),
         node1 (text str (Vert.opaqueColor 0.0 0.0 0.0) font) (vec @WorldVec 0 0)
-      ] :: [Node]
+      ] ::
+        [Node]
     screenR =
       [ node r0 noScale (rotateDegree 45) (vec 0 0 :: PixelVec) (vec 0 0),
         node r1 noScale (rotateDegree (-30)) (vec sw 0 :: PixelVec) (vec 100 0),
@@ -543,7 +545,8 @@ scene World {pointer, atlas, grid, font} = let c = node1 grid (vec 0 0 :: WorldV
         txt3,
         txt4,
         node1 (Atlas.sprite atlas "pointer") pointer
-      ] :: [Node]
+      ] ::
+        [Node]
     WithVec _w _h = windowSize
     sw = fromIntegral _w
     sh = fromIntegral _h

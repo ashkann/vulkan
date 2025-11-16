@@ -8,6 +8,7 @@ module Node
   ( Node,
     node1,
     node,
+    node0,
   )
 where
 
@@ -29,3 +30,6 @@ node c s r p o = Node {content = c, transform = tr}
 
 node1 :: (Vec p, Render c, Element p ~ Float) => c -> p -> Node
 node1 c p = node c noScale noRotation p (vec 0 0)
+
+node0 :: (Render c) => c -> Node
+node0 c = Node {content = c, transform = mempty}

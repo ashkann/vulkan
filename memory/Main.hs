@@ -29,6 +29,7 @@ import Control.Monad (when)
 import Control.Monad.Managed (Managed, MonadIO (liftIO), managed, runManaged)
 import Data.Foldable (foldlM)
 import Data.Functor (($>))
+import Data.List (foldl')
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import qualified Data.Set as Set
@@ -41,7 +42,8 @@ import Foreign.Storable (Storable (..), sizeOf)
 import qualified Init
 import Measure (PPU, PixelVec, Vec (vec), ViewportSize, WorldVec, pattern WithVec)
 import qualified Measure
-import Render (In (object), projection, putIn, setRotation, setScale, srtPutIn)
+import Render (applyObject, projection)
+import Node (Node, node, node1)
 import qualified Render
 import qualified SDL
 import Sprite
@@ -49,6 +51,7 @@ import qualified System.Random as Random
 import qualified Texture as Tex
 import Txt (text)
 import qualified Txt (Txt (origin))
+import Update (TimeSeconds (..), Update (..), timeSecondsFromMillis)
 import Utils
 import qualified Vertex as Vert
 import qualified Vulkan as Vk
@@ -67,13 +70,12 @@ import qualified Vulkan.Zero as Vk
 import qualified VulkanMemoryAllocator as Vma
 import Prelude hiding (init)
 
-newtype TimeSeconds = TimeSeconds Float
-
 frameData :: Game -> World -> FrameData
-frameData g w = FrameData {verts = mconcat $ render <$> scene w}
-  where
-    render (Object obj W) = Render.render obj (world g)
-    render (Object obj S) = Render.render obj (screen g)
+frameData g w = FrameData {verts = SV.fromList $ applyObject (world g) (scene w)}
+
+-- where
+--   render node = applyObject (world g) obj
+--   render node = applyObject (screen g) obj
 
 data Frame = Frame
   { pool :: Vk.CommandPool,
@@ -139,7 +141,7 @@ main = runManaged $ do
 
   let stagingBufferSize = 1048576
       maxVertCount = 10000
-      vertexBufferSize = fromIntegral $ sizeOf (undefined :: Vert.Vertex) * maxVertCount
+      vertexBufferSize = fromIntegral $ sizeOf (undefined :: Vert.Vertex Measure.NDCVec) * maxVertCount
   frames <- withFrames device gfx.index allocator stagingBufferSize vertexBufferSize frameCount
   w0 <- liftIO $ world0 atlas font
   let shutdown = say "Engine" "Shutting down ..." *> Vk.deviceWaitIdle device
@@ -149,8 +151,6 @@ main = runManaged $ do
           shutdown
           (\w -> frameData (game w) w)
           (\n d -> let f = frames ! (n `mod` frameCount) in frame device gfxQueue presentQueue pipeline pipelineLayout swapchain descSet f d)
-          worldTime
-          worldEvent
           w0
 
 -- data Digit = D0 | D1 | D2 | D3 | D4 | D5 | D6 | D7 | D8 | D9 deriving (Eq, Ord, Enum)
@@ -206,13 +206,13 @@ data Card = Card CardName Face
 data Grid = Grid {cells :: Map.Map Spot Card, atlas :: Atlas}
 
 instance Render.Render Grid where
-  render Grid {cells, atlas} tr =
+  render Grid {cells, atlas} =
     mconcat (vert <$> Map.toList cells)
     where
       padding = 10
       faceDown = Atlas.sprite atlas "back-side"
       WithVec w h = faceDown.resolution
-      vert (Spot (Row r, Column c), crd) = Render.render (card crd) (tr <> base r c <> pivot)
+      vert (Spot (Row r, Column c), crd) = applyObject (base r c <> pivot) (card crd)
       c = 6
       r = 6
       pivot = let f n = n * (h + padding) - padding in origin (vec @PixelVec (f c / 2) (f r / 2))
@@ -224,11 +224,67 @@ data World = World
   { pointer :: PixelVec,
     atlas :: Atlas,
     font :: Atlas,
-    grid :: In Grid WorldVec,
+    grid :: Grid,
     cardSize :: WorldVec,
-    camera :: Cam.Camera,
-    pressedKeys :: Set.Set SDL.Scancode
+    pressedKeys :: Set.Set SDL.Scancode,
+    camera :: Cam.Camera
   }
+
+instance Update World where
+  event = foldl' f
+    where
+      f w@(World {grid, pointer, cardSize, camera}) e = w {pressedKeys = update w.pressedKeys, grid = grid', pointer = pointer'}
+        where
+          grid' = if mouseClicked then flip else grid
+          pointer' = fromMaybe w.pointer mouseMoved
+          flip
+            | Just spot <- spot = gridFlip spot grid
+            | otherwise = grid
+          spot =
+            let WithVec x y = tr (screenToWorld windowSize ppu camera) pointer :: WorldVec
+                WithVec px py = vec @WorldVec 0 0
+                WithVec w h = cardSize
+                r = floor $ (y + 1) / (h + px)
+                c = floor $ (x + 1) / (w + py)
+             in Just (Spot (Row r, Column c))
+          mouseClicked
+            | SDL.Event _ (SDL.MouseButtonEvent (SDL.MouseButtonEventData _ SDL.Released _ SDL.ButtonLeft _ _)) <- e = True
+            | otherwise = False
+          mouseMoved
+            | (SDL.Event _ (SDL.MouseMotionEvent (SDL.MouseMotionEventData {mouseMotionEventPos = SDL.P (SDL.V2 x y)}))) <- e = Just $ vec (fromIntegral x) (fromIntegral y)
+            | otherwise = Nothing
+          update ks
+            | Just code <- pressed = Set.insert code ks
+            | Just code <- released = Set.delete code ks
+            | otherwise = ks
+          pressed
+            | Just (SDL.Pressed, code) <- kbd = Just code
+            | otherwise = Nothing
+          released
+            | Just (SDL.Released, code) <- kbd = Just code
+            | otherwise = Nothing
+          kbd
+            | (SDL.Event _ (SDL.KeyboardEvent (SDL.KeyboardEventData {SDL.keyboardEventKeyMotion = m, SDL.keyboardEventKeysym = SDL.Keysym {SDL.keysymScancode = code}}))) <- e = Just (m, code)
+            | otherwise = Nothing
+
+  time w (TimeSeconds dt) = w {camera = camera'}
+    where
+      camera' = foldl' (\cam key -> let f = fromMaybe id (Map.lookup key map) in f cam) w.camera w.pressedKeys
+      moveSpeed = 5 -- World units / s
+      zoomStep = 1 -- 1x / s
+      rotationSpeed = 0.5 * pi -- Rad / s
+      minZoom = 0.00
+      map =
+        Map.fromList
+          [ (SDL.ScancodeUp, Cam.moveUp $ moveSpeed * dt),
+            (SDL.ScancodeDown, Cam.moveDown $ moveSpeed * dt),
+            (SDL.ScancodeLeft, Cam.moveLeft $ moveSpeed * dt),
+            (SDL.ScancodeRight, Cam.moveRight $ moveSpeed * dt),
+            (SDL.ScancodeE, Cam.rotateCcw $ rotationSpeed * dt),
+            (SDL.ScancodeR, Cam.rotateCw $ rotationSpeed * dt),
+            (SDL.ScancodeEquals, Cam.zoomIn $ zoomStep * dt),
+            (SDL.ScancodeMinus, if w.camera.zoom >= minZoom then Cam.zoomOut $ zoomStep * dt else id)
+          ]
 
 mkSuffeledDeck :: Int -> IO (V.Vector CardName)
 mkSuffeledDeck n = do
@@ -262,13 +318,13 @@ world0 atlas font = do
       { pointer = vec 0 0,
         atlas = atlas,
         font = font,
-        grid = putIn (mkGrid (V.toList deck) atlas) (vec 0 0),
+        grid = mkGrid (V.toList deck) atlas,
         cardSize = vec 1.0 1.0,
         camera = Cam.defaultCamera,
         pressedKeys = Set.empty
       }
 
-data FrameData = FrameData {verts :: SV.Vector Vert.Vertex}
+data FrameData = FrameData {verts :: SV.Vector (Vert.Vertex Measure.NDCVec)}
 
 frame ::
   (MonadIO io) =>
@@ -417,78 +473,34 @@ waitForFrame device (Frame {fence}) =
   let second = 1000000000 in Vk.waitForFences device [fence] True second *> Vk.resetFences device [fence]
 
 mainLoop ::
-  (MonadIO io) =>
+  (MonadIO io, Update world) =>
   io () ->
-  (w -> FrameData) ->
+  (world -> FrameData) ->
   (Int -> FrameData -> io ()) ->
-  (TimeSeconds -> w -> io w) ->
-  (SDL.Event -> w -> io w) ->
-  w ->
+  world ->
   io ()
-mainLoop shutdown frameData frame worldTime worldEvent w0 =
+mainLoop shutdown frame render w0 =
   do
     t0 <- SDL.ticks
     go 0 t0 w0
   where
+    go n t w = do
+      es <- SDL.pollEvents
+      if any isQuitEvent es
+        then shutdown
+        else do
+          render n $ frame w
+          let w2 = event w es
+          t2 <- lockFrameRate 120 t
+          let dt = timeSecondsFromMillis t2 t
+              w3 = time w2 dt
+          go (n + 1) t2 w3
     lockFrameRate fps t1 =
       do
         t <- SDL.ticks
         let dt = t - t1
             minIdle = 1000 `div` fps
         if dt < minIdle then (liftIO . threadDelay $ 1000 * fromIntegral (minIdle - dt)) *> SDL.ticks else pure t
-    go n t w = do
-      es <- SDL.pollEvents
-      if any isQuitEvent es
-        then shutdown
-        else do
-          frame n $ frameData w
-          w2 <- foldlM (flip worldEvent) w es
-          t2 <- lockFrameRate 120 t
-          w3 <- let dt = fromIntegral (t2 - t) in worldTime (TimeSeconds (dt / 1000)) w2
-          go (n + 1) t2 w3
-
-worldEvent :: (Monad io) => SDL.Event -> World -> io World
-worldEvent e w@(World {grid, pointer, cardSize, camera, pressedKeys}) =
-  return
-    w
-      { grid = grid {object = grid'},
-        pointer = pointer',
-        pressedKeys = pressedKeys',
-        camera = camera'
-      }
-  where
-    grid' = if mouseClicked then flip else grid.object
-    camera'
-      | keyReleasedIs SDL.Scancode0 = Cam.defaultCamera
-      | otherwise = camera
-    pressedKeys'
-      | Just code <- keyPressed = Set.insert code pressedKeys
-      | Just code <- keyReleased = Set.delete code pressedKeys
-      | otherwise = pressedKeys
-    pointer' = fromMaybe w.pointer mouseMoved
-    flip
-      | Just spot <- spot = gridFlip spot grid.object
-      | otherwise = grid.object
-    spot =
-      let WithVec x y = tr (screenToWorld windowSize ppu camera) pointer :: WorldVec
-          WithVec px py = vec @WorldVec 0 0
-          WithVec w h = cardSize
-          r = floor $ (y + 1) / (h + px)
-          c = floor $ (x + 1) / (w + py)
-       in Just (Spot (Row r, Column c))
-    mouseClicked
-      | SDL.Event _ (SDL.MouseButtonEvent (SDL.MouseButtonEventData _ SDL.Released _ SDL.ButtonLeft _ _)) <- e = True
-      | otherwise = False
-    mouseMoved
-      | (SDL.Event _ (SDL.MouseMotionEvent (SDL.MouseMotionEventData {mouseMotionEventPos = SDL.P (SDL.V2 x y)}))) <- e = Just $ vec (fromIntegral x) (fromIntegral y)
-      | otherwise = Nothing
-    keyPressed
-      | (SDL.Event _ (SDL.KeyboardEvent (SDL.KeyboardEventData {keyboardEventKeyMotion = SDL.Pressed, keyboardEventKeysym = SDL.Keysym {keysymScancode = code}}))) <- e = Just code
-      | otherwise = Nothing
-    keyReleased
-      | (SDL.Event _ (SDL.KeyboardEvent (SDL.KeyboardEventData {keyboardEventKeyMotion = SDL.Released, keyboardEventKeysym = SDL.Keysym {keysymScancode = code}}))) <- e = Just code
-      | otherwise = Nothing
-    keyReleasedIs code = Just code == keyReleased
 
 gridFlip :: Spot -> Grid -> Grid
 gridFlip spot grid = grid {cells = Map.adjust cardFlip spot grid.cells}
@@ -496,23 +508,6 @@ gridFlip spot grid = grid {cells = Map.adjust cardFlip spot grid.cells}
 cardFlip :: Card -> Card
 cardFlip (Card name FaceUp) = Card name FaceDown
 cardFlip (Card name FaceDown) = Card name FaceUp
-
-worldTime :: (Monad io) => TimeSeconds -> World -> io World
-worldTime (TimeSeconds dt) w = return $ w {camera = foldl (\cam act -> act cam) w.camera cameraActions}
-  where
-    cameraActions =
-      [Cam.moveUp $ moveSpeed * dt | Set.member SDL.ScancodeUp w.pressedKeys]
-        ++ [Cam.moveDown $ moveSpeed * dt | Set.member SDL.ScancodeDown w.pressedKeys]
-        ++ [Cam.moveLeft $ moveSpeed * dt | Set.member SDL.ScancodeLeft w.pressedKeys]
-        ++ [Cam.moveRight $ moveSpeed * dt | Set.member SDL.ScancodeRight w.pressedKeys]
-        ++ [Cam.rotateCcw $ rotationSpeed * dt | Set.member SDL.ScancodeE w.pressedKeys]
-        ++ [Cam.rotateCw $ rotationSpeed * dt | Set.member SDL.ScancodeR w.pressedKeys]
-        ++ [Cam.zoomIn $ zoomStep * dt | Set.member SDL.ScancodeEquals w.pressedKeys]
-        ++ [Cam.zoomOut $ zoomStep * dt | Set.member SDL.ScancodeMinus w.pressedKeys, w.camera.zoom >= minZoom]
-    moveSpeed = 5 -- World units / s
-    zoomStep = 1 -- 1x / s
-    rotationSpeed = 0.5 * pi -- Rad / s
-    minZoom = 0.00
 
 windowSize :: ViewportSize
 windowSize = vec 900 900
@@ -527,28 +522,28 @@ screenToWorld vps@(WithVec w h) ppu cam = ndc2World <> pixels2Ndc
     pixels2Ndc = srt3 (s w, s h) 0 (-1, -1)
     s x = 2 / fromIntegral x
 
-scene :: World -> [Object]
-scene World {pointer, atlas, grid, font} = inWorld grid : (worldText ++ screenR)
+scene :: World -> Node
+scene World {pointer, atlas, grid, font} = let c = node1 grid (vec 0 0 :: WorldVec) : (worldText ++ screenR) in node1 c (vec 0 0 :: WorldVec)
   where
     str = "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`"
     worldText =
-      [ inWorld $ let txt = putIn (let x = text "Pivoted and then Rotated 45 degrees" (Vert.opaqueColor 0.0 0.0 0.0) font in x {Txt.origin = vec 30 100}) (vec @WorldVec 0 0) in setRotation (rotateDegree 45) txt,
-        inWorld $ let txt = putIn (text "Scaled diffirently on X and Y" (Vert.opaqueColor 0.0 0.0 0.0) font) (vec @WorldVec 1 1) in setScale (scaleXY 0.7 1.5) txt,
-        inWorld $ putIn (text "Colored" (Vert.opaqueColor 1.0 1.0 0.0) font) (vec @WorldVec 0 2),
-        inWorld $ putIn (text str (Vert.opaqueColor 0.0 0.0 0.0) font) (vec @WorldVec 0 0)
-      ]
+      [ let txt = node1 (let x = text "Pivoted and then Rotated 45 degrees" (Vert.opaqueColor 0.0 0.0 0.0) font in x {Txt.origin = vec 30 100}) (vec @WorldVec 0 0) in {--setRotation (rotateDegree 45)--} txt,
+        let txt = node1 (text "Scaled diffirently on X and Y" (Vert.opaqueColor 0.0 0.0 0.0) font) (vec @WorldVec 1 1) in {-- setScale (scaleXY 0.7 1.5) --} txt,
+        node1 (text "Colored" (Vert.opaqueColor 1.0 1.0 0.0) font) (vec @WorldVec 0 2),
+        node1 (text str (Vert.opaqueColor 0.0 0.0 0.0) font) (vec @WorldVec 0 0)
+      ] :: [Node]
     screenR =
-      [ inScreen $ srtPutIn r0 noScale (rotateDegree 45) (vec 0 0 :: PixelVec) (vec 0 0),
-        inScreen $ srtPutIn r1 noScale (rotateDegree (-30)) (vec sw 0 :: PixelVec) (vec 100 0),
-        inScreen $ srtPutIn r2 noScale (rotateDegree 30) (vec sw sh :: PixelVec) (vec 100 50),
-        inScreen $ srtPutIn r3 (scaleXY 0.5 2) (rotateDegree 20) (vec 0 sh :: PixelVec) (vec 0 50),
-        inScreen $ srtPutIn r4 (scaleXY 2 0.5) (rotateDegree 20) (vec (sw / 2) (sh / 2) :: PixelVec) (vec 50 25),
-        inScreen txt1,
-        inScreen txt2,
-        inScreen txt3,
-        inScreen txt4,
-        inScreen $ putIn (Atlas.sprite atlas "pointer") pointer
-      ]
+      [ node r0 noScale (rotateDegree 45) (vec 0 0 :: PixelVec) (vec 0 0),
+        node r1 noScale (rotateDegree (-30)) (vec sw 0 :: PixelVec) (vec 100 0),
+        node r2 noScale (rotateDegree 30) (vec sw sh :: PixelVec) (vec 100 50),
+        node r3 (scaleXY 0.5 2) (rotateDegree 20) (vec 0 sh :: PixelVec) (vec 0 50),
+        node r4 (scaleXY 2 0.5) (rotateDegree 20) (vec (sw / 2) (sh / 2) :: PixelVec) (vec 50 25),
+        txt1,
+        txt2,
+        txt3,
+        txt4,
+        node1 (Atlas.sprite atlas "pointer") pointer
+      ] :: [Node]
     WithVec _w _h = windowSize
     sw = fromIntegral _w
     sh = fromIntegral _h
@@ -560,10 +555,10 @@ scene World {pointer, atlas, grid, font} = inWorld grid : (worldText ++ screenR)
     r4 = rect 4
     rect = Atlas.spriteIndexed atlas "rectangle"
     y0 line = let y = line * 16 in vec 30 (30 + y) :: PixelVec
-    txt1 = putIn (text "Move the camera: Arrow keys" (Vert.opaqueColor 1.0 1.0 1.0) font) (y0 0)
-    txt2 = putIn (text "Rotate: E and R " (Vert.opaqueColor 1.0 0.0 0.0) font) (y0 1)
-    txt3 = putIn (text "Zoom in and out: + and -" (Vert.opaqueColor 0.0 1.0 0.0) font) (y0 2)
-    txt4 = putIn (text "Reset: 0" (Vert.opaqueColor 0.0 0.0 1.0) font) (y0 3)
+    txt1 = node1 (text "Move the camera: Arrow keys" (Vert.opaqueColor 1.0 1.0 1.0) font) (y0 0)
+    txt2 = node1 (text "Rotate: E and R " (Vert.opaqueColor 1.0 0.0 0.0) font) (y0 1)
+    txt3 = node1 (text "Zoom in and out: + and -" (Vert.opaqueColor 0.0 1.0 0.0) font) (y0 2)
+    txt4 = node1 (text "Reset: 0" (Vert.opaqueColor 0.0 0.0 1.0) font) (y0 3)
 
 class Has game a where
   get :: game -> a

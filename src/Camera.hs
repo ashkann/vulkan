@@ -4,7 +4,7 @@
 {-# LANGUAGE NoFieldSelectors #-}
 
 module Camera
-  ( Camera(..),
+  ( Camera (..),
     rotate,
     move,
     cameraZoom,
@@ -17,11 +17,11 @@ module Camera
     rotateCw,
     rotateCcw,
     zoomIn,
-    zoomOut,
+    zoomOut
   )
 where
 
-import Affine
+import Affine hiding (rotate)
 import Measure
 
 data Camera = Camera {position :: WorldVec, rotation :: Float, zoom :: Float}
@@ -41,7 +41,7 @@ rotateCw dr = rotate (-dr)
 move :: WorldVec -> Camera -> Camera
 move (WithVec dx dy) cam = cam {position = cam.position + vec dxCam dyCam}
   where
-    (dxCam, dyCam) = Affine.apply (srt3 (1, 1) cam.rotation (0, 0)) (dx, dy)
+    (dxCam, dyCam) = Affine.applyXY (srt3 (1, 1) cam.rotation (0, 0)) (dx, dy)
 
 moveUp :: Float -> Camera -> Camera
 moveUp d = move $ vec 0 d
@@ -72,3 +72,7 @@ view Camera {position = WithVec x y, rotation, zoom = z} = rotateAndZoom <> look
   where
     lookAt = srt3 (1, 1) 0 (-x, -y)
     rotateAndZoom = srt3 (z, z) (-rotation) (0, 0)
+
+
+-- worldTime :: (Monad io) => TimeSeconds -> World -> io World
+-- worldTime (TimeSeconds dt) w = return $ w {camera = foldl (\cam act -> act cam) w.camera cameraActions}

@@ -85,7 +85,7 @@ vulkanVersion :: Word32
 vulkanVersion = Vk.API_VERSION_1_2
 
 withSDL2VulkanWindow :: ViewportSize -> Managed (SDL.Window, Vk.Instance, Vk.SurfaceKHR)
-withSDL2VulkanWindow  s = do
+withSDL2VulkanWindow s = do
   withSDL
   window <- Utils.withWindow s
   vulkan <- Utils.withVulkan window
@@ -161,7 +161,7 @@ isQuitEvent :: SDL.Event -> Bool
 isQuitEvent = \case
   (SDL.Event _ SDL.QuitEvent) -> True
   SDL.Event _ (SDL.KeyboardEvent (SDL.KeyboardEventData _ SDL.Released False (SDL.Keysym _ code _)))
-    | code == SDL.KeycodeQ || code == SDL.KeycodeEscape ->
+    | code == SDL.KeycodeEscape ->
         True
   _ -> False
 

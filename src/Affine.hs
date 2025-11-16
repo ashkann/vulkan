@@ -12,11 +12,12 @@
 module Affine
   ( Affine,
     srt3,
-    apply,
+    applyXY,
     inverse,
     noScale,
     scaleXY,
-    noRatation,
+    noRotation,
+    rotate,
     rotateDegree,
     Scale,
     Rotation,
@@ -26,10 +27,12 @@ module Affine
     origin,
     translate,
     scale,
+    applyVec,
+    translateX,
   )
 where
 
-import Measure (NDCVec, PixelVec, Vec (Element, neg, vec), WorldVec, pattern WithVec)
+import Measure (NDCVec, PixelVec, Vec (Element, neg, vec), WorldVec, unvec, pattern WithVec)
 
 -- TODO Input i, Output o => Affine i o
 -- TODO
@@ -41,9 +44,9 @@ data Affine = Affine
 
 class (Vec u, Vec v, Element v ~ Float, Element u ~ Float) => Tr u v where
   tr :: Affine -> u -> v
-  tr m (WithVec x y) = tr2 @u m x y
-  tr2 :: Affine -> Element u -> Element u -> v
-  tr2 m x y = let (x', y') = Affine.apply m (x, y) in vec x' y'
+  tr m (WithVec x y) = trXY @u m x y
+  trXY :: Affine -> Element u -> Element u -> v
+  trXY m x y = let (x', y') = Affine.applyXY m (x, y) in vec x' y'
 
 instance Tr NDCVec NDCVec
 
@@ -72,11 +75,14 @@ inverse m =
     yx = -(m.yx * invDet)
     yy = m.xx * invDet
 
-apply :: Affine -> (Float, Float) -> (Float, Float)
-apply Affine {xx, xy, yx, yy, tx, ty} (x, y) = (x', y')
+applyXY :: Affine -> (Float, Float) -> (Float, Float)
+applyXY Affine {xx, xy, yx, yy, tx, ty} (x, y) = (x', y')
   where
     x' = xx * x + yx * y + tx
     y' = xy * x + yy * y + ty
+
+applyVec :: (Vec u, Vec v, Element u ~ Float, Element v ~ Float) => Affine -> u -> v
+applyVec m v = let (x', y') = applyXY m (unvec v) in vec x' y'
 
 srt3 :: (Float, Float) -> Float -> (Float, Float) -> Affine
 srt3 (sx, sy) r (tx, ty) =
@@ -122,8 +128,8 @@ scaleXY sx sy = Scale (sx, sy)
 
 newtype Rotation = Rotation Float
 
-noRatation :: Rotation
-noRatation = rotate 0
+noRotation :: Rotation
+noRotation = rotate 0
 
 rotate :: Float -> Rotation
 rotate = Rotation
@@ -132,10 +138,13 @@ rotateDegree :: Float -> Rotation
 rotateDegree r = rotate $ r * (2 * pi / 360)
 
 translate :: (Vec v, Element v ~ Float) => v -> Affine
-translate = srt noScale noRatation
+translate = srt noScale noRotation
+
+translateX :: Float -> Affine
+translateX x = srt3 (1, 1) 0 (x, 0)
 
 origin :: (Vec v, Element v ~ Float) => v -> Affine
 origin o = translate (neg o)
 
 scale :: Scale -> Affine
-scale s = sr s noRatation
+scale s = sr s noRotation

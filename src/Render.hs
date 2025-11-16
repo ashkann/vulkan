@@ -1,76 +1,67 @@
+{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE StrictData #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Render
   ( Render (..),
-    In (..),
-    putIn,
-    setRotation,
-    setScale,
     projection,
     world,
     screen,
-    setOrigin,
-    srtPutIn,
+    applyObject,
   )
 where
 
-import Affine (Affine, Rotation, Scale, noRatation, noScale, scaleXY, sr, srt, srt3, translate)
-import qualified Affine
+import Affine (Affine, scale, scaleXY, srt3)
 import Camera (Camera, view)
-import qualified Data.Vector.Storable as SV
-import Measure
-import Vertex (Vertex)
+import Measure hiding (transform)
+import Vertex (Vertex, applyVert)
 
 class Render obj where
-  render :: obj -> Affine -> SV.Vector Vertex -- TODO any Traversable would do ?
+  render :: obj -> [Vertex PixelVec]
+  {-# MINIMAL render #-}
+
+instance (Render a) => Render [a] where
+  render :: [a] -> [Vertex PixelVec]
+  render = (render =<<)
+
+applyObject :: (Render obj, Vec v, Element v ~ Float) => Affine -> obj -> [Vertex v] -- TODO simplify types
+applyObject m obj = applyVert m <$> render obj
 
 scalePixelToWorld :: PPU -> Affine
 scalePixelToWorld = withRecipPPU (\ppu_1 -> Affine.scale $ scaleXY ppu_1 (-ppu_1))
 
-data In obj vec = In {object :: obj, position :: vec, rotation :: Rotation, scale :: Scale, origin :: PixelVec}
+-- instance Render Node where
+--   render
+--     Node
+--       { content,
+--         position,
+--         scale,
+--         rotation,
+--         origin
+--       } =
+--       render content
 
-putIn :: obj -> vec -> In obj vec
-putIn obj pos = In {object = obj, position = pos, rotation = noRatation, scale = noScale, origin = vec 0 0}
+-- instance Render [Node] where
+--   render ns = concatMap render ns
 
-srtPutIn :: obj -> Scale -> Rotation -> vec -> PixelVec -> In obj vec
-srtPutIn obj s r pos o = In {object = obj, position = pos, rotation = r, scale = s, origin = o}
+-- render object (tr <> translate position <> scalePixelToWorld (ppu 100) <> sr scale rotation <> Affine.origin origin)
+-- render content (tr <> translate position <> scalePixelToWorld (ppu 100) <> sr scale rotation <> Affine.origin origin)
 
-setRotation :: Rotation -> In obj vec -> In obj vec
-setRotation r s = s {rotation = r}
-
-setScale :: Scale -> In obj vec -> In obj vec
-setScale k s = s {scale = k}
-
-setOrigin :: PixelVec -> In obj vec -> In obj vec
-setOrigin o s = s {origin = o}
-
-instance (Render obj) => Render (In obj WorldVec) where
-  render
-    In
-      { object,
-        position,
-        scale,
-        rotation,
-        origin
-      }
-    tr =
-      render object (tr <> translate position <> scalePixelToWorld (ppu 100) <> sr scale rotation <> Affine.origin origin)
-
-instance (Render obj) => Render (In obj PixelVec) where
-  render
-    In
-      { object,
-        position,
-        scale,
-        rotation,
-        origin
-      }
-    tr =
-      render object (tr <> srt scale rotation position <> Affine.origin origin)
+-- instance Render Node where
+--   render
+--     Node
+--       { content,
+--         position,
+--         scale,
+--         rotation,
+--         origin
+--       }
+--     tr =
+--       render content (tr <> srt scale rotation position <> Affine.origin origin)
 
 world :: Camera -> PPU -> ViewportSize -> Affine
 world cam ppu vps = projection vps ppu <> view cam

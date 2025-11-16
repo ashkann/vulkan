@@ -4,6 +4,7 @@
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE StrictData #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE NoFieldSelectors #-}
 
@@ -16,9 +17,13 @@ module Vertex
     Color,
     setColor,
     noColor,
+    defaultColor,
+    setXY,
+    applyVert,
   )
 where
 
+import Affine (Affine, applyVec)
 import Data.Maybe (fromMaybe)
 import Foreign (Storable)
 import Foreign.Storable (Storable (..), sizeOf)
@@ -41,12 +46,20 @@ newtype Color = Color G.Vec4 deriving (Show, Storable)
 opaqueColor :: Float -> Float -> Float -> Color
 opaqueColor r g b = Color $ G.vec4 r g b 1.0
 
-data Vertex = Vertex {xy :: NDCVec, uv :: UVVec, color :: Color, texture :: DescriptorIndex}
+data Vertex v = Vertex {xy :: v, uv :: UVVec, color :: Color, texture :: DescriptorIndex}
 
-setColor :: Color -> Vertex -> Vertex
+setColor :: Color -> Vertex v -> Vertex v
 setColor c v = v {color = c}
 
-vertexStore :: Store.Dictionary Vertex
+setXY :: v -> Vertex u -> Vertex v
+setXY xy vert = vert {xy = xy}
+
+applyVert :: (Vec u, Vec v, Element u ~ Float, Element v ~ Float) => Affine -> Vertex u -> Vertex v
+applyVert m vert = setXY xy' vert
+  where
+    xy' = applyVec m vert.xy
+
+vertexStore :: Store.Dictionary (Vertex NDCVec)
 vertexStore =
   Store.run $
     Vertex
@@ -56,7 +69,7 @@ vertexStore =
       <*> Store.element (.texture)
 
 -- TODO: automate the layout according to Vulkan spec
-instance Storable Vertex where
+instance Storable (Vertex NDCVec) where
   sizeOf = Store.sizeOf vertexStore
   alignment = Store.alignment vertexStore
   peek = Store.peek vertexStore
@@ -68,10 +81,10 @@ defaultColor = Color (G.vec4 1 1 1 1) -- Opaque white
 noColor :: Color
 noColor = defaultColor
 
-vertex :: NDCVec -> UVVec -> DescriptorIndex -> Vertex
+vertex :: v -> UVVec -> DescriptorIndex -> Vertex v
 vertex xy uv tex = Vertex {xy = xy, uv = uv, texture = tex, color = defaultColor}
 
-colorVertex :: NDCVec -> UVVec -> DescriptorIndex -> Maybe Color -> Vertex
+colorVertex :: v -> UVVec -> DescriptorIndex -> Maybe Color -> Vertex v
 colorVertex xy uv tex c = Vertex {xy = xy, uv = uv, texture = tex, color = fromMaybe noColor c}
 
 grpahicsPipelineVertexInputState :: Vk.SomeStruct Vk.PipelineVertexInputStateCreateInfo
@@ -81,7 +94,7 @@ grpahicsPipelineVertexInputState =
       { Vk.vertexBindingDescriptions =
           [ Vk.zero
               { VkVertexInputBindingDescription.binding = 0,
-                VkVertexInputBindingDescription.stride = fromIntegral $ sizeOf (undefined :: Vertex),
+                VkVertexInputBindingDescription.stride = fromIntegral $ sizeOf (undefined :: Vertex NDCVec),
                 VkVertexInputBindingDescription.inputRate = Vk.VERTEX_INPUT_RATE_VERTEX
               }
           ],

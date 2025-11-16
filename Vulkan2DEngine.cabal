@@ -17,10 +17,12 @@ executable atlas-parser
       Camera
       Init
       Measure
+      Node
       Render
       Sprite
       Texture
       Txt
+      Update
       Utils
       Vertex
       Paths_Vulkan2DEngine
@@ -59,10 +61,12 @@ executable memory
       Camera
       Init
       Measure
+      Node
       Render
       Sprite
       Texture
       Txt
+      Update
       Utils
       Vertex
       Paths_Vulkan2DEngine

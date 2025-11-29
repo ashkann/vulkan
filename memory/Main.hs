@@ -42,7 +42,7 @@ import qualified Init
 import Measure (PixelVec, Vec (vec), ViewportSize, WorldVec, pattern WithVec)
 import qualified Measure
 import Node (Tree, node, tree, tree0)
-import Render (applyObject)
+-- import Render (applyObject)
 import qualified Render
 import qualified SDL
 import Sprite
@@ -199,20 +199,19 @@ data Card = Card CardName Face
 
 data Grid = Grid {cells :: Map.Map Spot Card, atlas :: Atlas}
 
-instance Render.Render Grid where
-  render Grid {cells, atlas} =
-    mconcat (vert <$> Map.toList cells)
-    where
-      padding = 10
-      faceDown = Atlas.sprite atlas "back-side"
-      WithVec w h = faceDown.resolution
-      vert (Spot (Row r, Column c), crd) = applyObject (base r c <> pivot) (card crd)
-      c = 6
-      r = 6
-      pivot = let f n = n * (h + padding) - padding in origin (vec @PixelVec (f c / 2) (f r / 2))
-      base r c = translate $ vec @PixelVec (fromIntegral c * (w + padding)) (fromIntegral r * (h + padding))
-      card (Card (CardName name) FaceUp) = Atlas.sprite atlas name
-      card (Card _ FaceDown) = faceDown
+toTree :: Grid -> Tree
+toTree Grid {cells, atlas} = tree0 (f <$> Map.toList cells)
+  where
+    padding = 10
+    faceDown = Atlas.sprite atlas "back-side"
+    WithVec w h = faceDown.resolution
+    f (Spot (Row r, Column c), crd) = node (base r c <> pivot) (card crd)
+    c = 6
+    r = 6
+    pivot = let f n = n * (h + padding) - padding in origin (vec @PixelVec (f c / 2) (f r / 2))
+    base r c = translate $ vec @PixelVec (fromIntegral c * (w + padding)) (fromIntegral r * (h + padding))
+    card (Card (CardName name) FaceUp) = Atlas.sprite atlas name
+    card (Card _ FaceDown) = faceDown
 
 data World = World
   { pointer :: PixelVec,
@@ -328,9 +327,10 @@ data Frame = Frame {verts :: SV.Vector (Vert.Vertex Measure.NDCVec)}
 frameData :: Game -> World -> Frame
 frameData (Game {camera, windowSize, ppu}) w =
   Frame
-    { verts = SV.fromList $ applyObject worldTr world ++ applyObject screenTr screen
+    { verts = SV.fromList $ Render.applyObject mempty frame
     }
   where
+    frame = tree0 [node worldTr world, node screenTr screen]
     (world, screen) = scene w
     worldTr = World.world windowSize ppu camera
     screenTr = World.screen windowSize
@@ -530,36 +530,35 @@ scene :: World -> (Tree, Tree)
 -- scene World {pointer, atlas, grid, font, windowSize} = (node0 $ node0 grid : worldText, node0 ([] :: [Node])) -- screenR)
 scene World {pointer, atlas, grid, font, windowSize} = (tree0 ([] :: [Tree]), tree0 [screen2, ptr])
   where
-    ptr = node (Atlas.sprite atlas "pointer") $ Affine.translate pointer
-    screen2 = tree screenR $ Affine.srt (uniformScale 0.5) (rotateDegree 30) (vec 300 300 :: WorldVec) (vec 450 450 :: PixelVec)
+    ptr = node (Affine.translate pointer) (Atlas.sprite atlas "pointer")
+    screen2 = tree (Affine.srt (uniformScale 0.5) (rotateDegree 30) (vec 300 300 :: WorldVec) (vec 450 450 :: PixelVec)) screenR
     rect = Atlas.spriteIndexed atlas "rectangle"
     r12 =
       tree0
-        [ node (rect 0) $ Affine.srt noScale noRotation (vec 1 0 :: PixelVec) (vec 0 0 :: PixelVec) -- ,
+        [ node (Affine.srt noScale noRotation (vec 1 0 :: PixelVec) (vec 0 0 :: PixelVec)) (rect 0) -- ,
         -- node (rect 1) $ Affine.srt noScale noRotation (vec 100 50 :: PixelVec) (vec 0 0 :: PixelVec)
-          ]
+        ]
     -- \$ Affine.srt noScale noRotation (vec 100 100 :: WorldVec) (vec 0 0 :: PixelVec)
 
     str = "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`"
     worldText =
-      [ node (text "Pivoted and then Rotated 45 degrees" (color 0.0 0.0 0.0) font) $ Affine.srt noScale (rotateDegree 45) (vec 0 0 :: WorldVec) (vec 30 100 :: PixelVec),
-        node (text "Scaled diffirently on X and Y" (color 0.0 0.0 0.0) font) $ Affine.srt (scaleXY 0.7 1.5) noRotation (vec 0 0 :: WorldVec) (vec 30 100 :: PixelVec),
-        node (text "Colored" (Vert.opaqueColor 1.0 1.0 0.0) font) $ Affine.srt noScale noRotation (vec 0 0 :: WorldVec) (vec 0 0 :: PixelVec),
-        node (text str (Vert.opaqueColor 0.0 0.0 0.0) font) $ Affine.srt noScale noRotation (vec 0 0 :: WorldVec) (vec 0 0 :: PixelVec)
+      [ node (Affine.srt noScale (rotateDegree 45) (vec 0 0 :: WorldVec) (vec 30 100 :: PixelVec)) (text "Pivoted and then Rotated 45 degrees" (color 0.0 0.0 0.0) font),
+        node (Affine.srt (scaleXY 0.7 1.5) noRotation (vec 0 0 :: WorldVec) (vec 30 100 :: PixelVec)) (text "Scaled diffirently on X and Y" (color 0.0 0.0 0.0) font),
+        node (Affine.srt noScale noRotation (vec 0 0 :: WorldVec) (vec 0 0 :: PixelVec)) (text "Colored" (Vert.opaqueColor 1.0 1.0 0.0) font),
+        node (Affine.srt noScale noRotation (vec 0 0 :: WorldVec) (vec 0 0 :: PixelVec)) (text str (Vert.opaqueColor 0.0 0.0 0.0) font)
       ] ::
         [Tree]
     screenR =
-      [ node r1 $ Affine.srt noScale (rotateDegree 45) (vec 0 0 :: PixelVec) (vec 0 0 :: PixelVec),
-        node r2 $ Affine.srt noScale (rotateDegree (-30)) (vec sw 0 :: PixelVec) (vec 100 0 :: PixelVec),
-        node r3 $ Affine.srt noScale (rotateDegree 30) (vec sw sh :: PixelVec) (vec 100 50 :: PixelVec),
-        node r4 $ Affine.srt (scaleXY 0.5 2) (rotateDegree 20) (vec 0 sh :: PixelVec) (vec 0 50 :: PixelVec),
-        node r5 $ Affine.srt (scaleXY 2 0.5) (rotateDegree 20) (vec (sw / 2) (sh / 2) :: PixelVec) (vec 50 25 :: PixelVec),
-        node (text "Move the camera: Arrow keys" (color 1.0 1.0 1.0) font) $ t (y0 0),
-        node (text "Rotate: E and R " (color 1.0 0.0 0.0) font) $ t (y0 1),
-        node (text "Zoom in and out: + and -" (color 0.0 1.0 0.0) font) $ t (y0 2),
-        node (text "Reset: 0" (color 0.0 0.0 1.0) font) $ t (y0 3)
-      ] ::
-        [Tree]
+      [ node (Affine.srt noScale (rotateDegree 45) (vec 0 0 :: PixelVec) (vec 0 0 :: PixelVec)) r1,
+        node (Affine.srt noScale (rotateDegree (-30)) (vec sw 0 :: PixelVec) (vec 100 0 :: PixelVec)) r2,
+        node (Affine.srt noScale (rotateDegree 30) (vec sw sh :: PixelVec) (vec 100 50 :: PixelVec)) r3,
+        node (Affine.srt (scaleXY 0.5 2) (rotateDegree 20) (vec 0 sh :: PixelVec) (vec 0 50 :: PixelVec)) r4,
+        node (Affine.srt (scaleXY 2 0.5) (rotateDegree 20) (vec (sw / 2) (sh / 2) :: PixelVec) (vec 50 25 :: PixelVec)) r5,
+        node (t (y0 0)) (text "Move the camera: Arrow keys" (color 1.0 1.0 1.0) font),
+        node (t (y0 1)) (text "Rotate: E and R " (color 1.0 0.0 0.0) font),
+        node (t (y0 2)) (text "Zoom in and out: + and -" (color 0.0 1.0 0.0) font),
+        node (t (y0 3)) (text "Reset: 0" (color 0.0 0.0 1.0) font)
+      ]
       where
         WithVec _w _h = windowSize
         sw = fromIntegral _w

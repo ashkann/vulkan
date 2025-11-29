@@ -28,13 +28,13 @@ instance Render Tree where
   render (Parent (Node children tr)) = applyVert tr <$> (render =<< children)
 
 node0 :: (Render c) => c -> Tree
-node0 c = node c mempty
+node0 = node mempty
 
 tree0 :: [Tree] -> Tree
-tree0 children = tree children mempty
+tree0 = tree mempty
 
-node :: (Render c) => c -> Affine -> Tree
-node c tr = Leaf (Node {content = c, transform = tr})
+node :: (Render c) => Affine -> c -> Tree
+node tr c = Leaf (Node {content = c, transform = tr})
 
-tree :: [Tree] -> Affine -> Tree
-tree children tr = Parent (Node {content = children, transform = tr})
+tree :: Affine -> [Tree] -> Tree
+tree tr children = Parent (Node {content = children, transform = tr})

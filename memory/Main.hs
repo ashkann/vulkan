@@ -39,8 +39,7 @@ import qualified Data.Vector.Storable as SV
 import Foreign (Ptr, Word32)
 import Foreign.Storable (Storable (..), sizeOf)
 import qualified Init
-import Measure (PixelVec, Vec (vec), ViewportSize, WorldVec, pattern WithVec)
-import qualified Measure
+import Measure (PixelVec, Vec (vec), ViewportSize, WorldVec, pattern WithVec, NDCVec)
 import Node (Tree, node, tree, tree0)
 -- import Render (applyObject)
 import qualified Render
@@ -69,6 +68,7 @@ import qualified VulkanMemoryAllocator as Vma
 import World (PPU)
 import qualified World
 import Prelude hiding (init)
+import Vertex (Vertex)
 
 data VulkanFrame = VulkanFrame
   { pool :: Vk.CommandPool,
@@ -322,7 +322,7 @@ world0 atlas font = do
         windowSize = vec 900 900
       }
 
-data Frame = Frame {verts :: SV.Vector (Vert.Vertex Measure.NDCVec)}
+data Frame = Frame {verts :: SV.Vector (Vertex NDCVec)}
 
 frameData :: Game -> World -> Frame
 frameData (Game {camera, windowSize, ppu}) w =

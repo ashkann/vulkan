@@ -17,11 +17,11 @@ module Camera
     rotateCw,
     rotateCcw,
     zoomIn,
-    zoomOut
+    zoomOut,
   )
 where
 
-import Affine hiding (rotate)
+import Affine (Affine, applyXY, srt3, translateXY)
 import Measure
 
 data Camera = Camera {position :: WorldVec, rotation :: Float, zoom :: Float}
@@ -67,12 +67,9 @@ zoomIn = cameraZoom
 zoomOut :: Float -> Camera -> Camera
 zoomOut dz = cameraZoom (-dz)
 
+-- | world (world units) -> cam (world units)
 view :: Camera -> Affine
-view Camera {position = WithVec x y, rotation, zoom = z} = rotateAndZoom <> lookAt
+view Camera {position = WithVec x y, rotation, zoom} = rotateAndZoom <> lookAt
   where
-    lookAt = srt3 (1, 1) 0 (-x, -y)
-    rotateAndZoom = srt3 (z, z) (-rotation) (0, 0)
-
-
--- worldTime :: (Monad io) => TimeSeconds -> World -> io World
--- worldTime (TimeSeconds dt) w = return $ w {camera = foldl (\cam act -> act cam) w.camera cameraActions}
+    lookAt = translateXY (-x) (-y)
+    rotateAndZoom = srt3 (zoom, zoom) rotation (0, 0)

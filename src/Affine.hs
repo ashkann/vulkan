@@ -29,10 +29,12 @@ module Affine
     scale,
     applyVec,
     translateX,
+    translateXY,
+    uniformScale,
   )
 where
 
-import Measure (NDCVec, PixelVec, Vec (Element, neg, vec), WorldVec, unvec, pattern WithVec)
+import Measure (NDCVec, PixelVec, Vec (Element, neg, vec), WorldVec, pattern WithVec)
 
 -- TODO Input i, Output o => Affine i o
 -- TODO
@@ -82,7 +84,9 @@ applyXY Affine {xx, xy, yx, yy, tx, ty} (x, y) = (x', y')
     y' = xy * x + yy * y + ty
 
 applyVec :: (Vec u, Vec v, Element u ~ Float, Element v ~ Float) => Affine -> u -> v
-applyVec m v = let (x', y') = applyXY m (unvec v) in vec x' y'
+applyVec tr (WithVec ux uy) = vec vx vy
+  where
+    (vx, vy) = applyXY tr (ux, uy)
 
 srt3 :: (Float, Float) -> Float -> (Float, Float) -> Affine
 srt3 s r t = srt4 s r t (0, 0)
@@ -133,6 +137,9 @@ noScale = Scale (1.0, 1.0)
 scaleXY :: Float -> Float -> Scale
 scaleXY sx sy = Scale (sx, sy)
 
+uniformScale :: Float -> Scale
+uniformScale s = scaleXY s s
+
 newtype Rotation = Rotation Float
 
 noRotation :: Rotation
@@ -146,6 +153,9 @@ rotateDegree r = rotate $ r * (pi / 180)
 
 translate :: (Vec p, Element p ~ Float) => p -> Affine
 translate p = srt noScale noRotation p (vec 0 0 :: PixelVec)
+
+translateXY :: Float -> Float -> Affine
+translateXY x y = srt3 (1, 1) 0 (x, y)
 
 translateX :: Float -> Affine
 translateX x = srt3 (1, 1) 0 (x, 0)

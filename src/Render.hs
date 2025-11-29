@@ -20,9 +20,5 @@ class Render obj where
   render :: obj -> [Vertex PixelVec]
   {-# MINIMAL render #-}
 
-instance (Render a) => Render [a] where
-  render :: [a] -> [Vertex PixelVec]
-  render = (render =<<)
-
 applyObject :: (Render obj, Vec v, Element v ~ Float) => Affine -> obj -> [Vertex v] -- TODO simplify types
-applyObject m obj = applyVert m <$> render obj
+applyObject tr obj = applyVert tr <$> render obj

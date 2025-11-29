@@ -19,7 +19,7 @@
 
 module Main (main) where
 
-import Affine (Affine, Tr (tr), inverse, noRotation, noScale, origin, rotateDegree, scaleXY, srt, srt3, translate)
+import Affine (Affine, Tr (tr), inverse, noRotation, noScale, origin, rotateDegree, scaleXY, srt, srt3, translate, uniformScale)
 import Atlas (Atlas)
 import qualified Atlas
 import qualified Camera as Cam
@@ -41,7 +41,7 @@ import Foreign.Storable (Storable (..), sizeOf)
 import qualified Init
 import Measure (PixelVec, Vec (vec), ViewportSize, WorldVec, pattern WithVec)
 import qualified Measure
-import Node (Node, node, node0)
+import Node (Tree, node, tree, tree0)
 import Render (applyObject)
 import qualified Render
 import qualified SDL
@@ -87,6 +87,7 @@ data VulkanFrame = VulkanFrame
 -- TODO: run inside a MonadError instance
 main :: IO ()
 main = runManaged $ do
+  let windowSize = vec 900 900
   (window, vulkan, surface) <- withSDL2VulkanWindow windowSize
   (gpu, gfx, present, portability, gpuName) <- Init.pickGPU vulkan surface
   say "Vulkan" $ "GPU: " ++ gpuName ++ ", present: " ++ show present.index ++ ", graphics: " ++ show gfx.index
@@ -135,10 +136,10 @@ main = runManaged $ do
   let stagingBufferSize = 1048576
       maxVertCount = 10000
       vertexBufferSize = fromIntegral $ sizeOf (undefined :: Vert.Vertex Measure.NDCVec) * maxVertCount
-  frames <- withFrames device gfx.index allocator stagingBufferSize vertexBufferSize frameCount
+  frames <- withFrames device gfx.index allocator stagingBufferSize vertexBufferSize frameCount windowSize
   w0 <- liftIO $ world0 atlas font
   let shutdown = say "Engine" "Shutting down ..." *> Vk.deviceWaitIdle device
-      game w = Game {windowSize = windowSize, font = Font font, camera = w.camera, ppu = ppu, atlas = atlas} -- TODO move 'World' into 'Game'
+      game w = Game {windowSize = w.windowSize, font = Font font, camera = w.camera, ppu = w.ppu, atlas = atlas} -- TODO move 'World' into 'Game'
    in say "Engine" "Entering the main loop"
         *> mainLoop
           shutdown
@@ -220,13 +221,15 @@ data World = World
     grid :: Grid,
     cardSize :: WorldVec,
     pressedKeys :: Set.Set SDL.Scancode,
-    camera :: Cam.Camera
+    camera :: Cam.Camera,
+    ppu :: World.PPU,
+    windowSize :: ViewportSize
   }
 
 instance Update World where
   event = foldl' f
     where
-      f w@(World {grid, pointer, cardSize, camera}) e = w {pressedKeys = update w.pressedKeys, grid = grid', pointer = pointer'}
+      f w@(World {grid, pointer, cardSize, camera, ppu, windowSize}) e = w {pressedKeys = update w.pressedKeys, grid = grid', pointer = pointer'}
         where
           grid' = if mouseClicked then flip else grid
           pointer' = fromMaybe w.pointer mouseMoved
@@ -315,7 +318,9 @@ world0 atlas font = do
         grid = mkGrid (V.toList deck) atlas,
         cardSize = vec 1.0 1.0,
         camera = Cam.defaultCamera,
-        pressedKeys = Set.empty
+        pressedKeys = Set.empty,
+        ppu = World.ppu 100,
+        windowSize = vec 900 900
       }
 
 data Frame = Frame {verts :: SV.Vector (Vert.Vertex Measure.NDCVec)}
@@ -327,7 +332,7 @@ frameData (Game {camera, windowSize, ppu}) w =
     }
   where
     (world, screen) = scene w
-    worldTr = World.projection windowSize ppu <> Cam.view camera
+    worldTr = World.world windowSize ppu camera
     screenTr = World.screen windowSize
 
 frame ::
@@ -427,8 +432,9 @@ withFrames ::
   Vk.DeviceSize ->
   Vk.DeviceSize ->
   Int ->
+  ViewportSize ->
   Managed (V.Vector VulkanFrame)
-withFrames device gfx allocator stagingBufferSize vertexBufferSize frameCount = V.replicateM frameCount singleFrame
+withFrames device gfx allocator stagingBufferSize vertexBufferSize frameCount vps = V.replicateM frameCount singleFrame
   where
     singleFrame =
       do
@@ -455,7 +461,7 @@ withFrames device gfx allocator stagingBufferSize vertexBufferSize frameCount = 
           let info = Vk.zero {VkFenceCreateInfo.flags = Vk.FENCE_CREATE_SIGNALED_BIT}
            in managed $ Vk.withFence device info Nothing bracket
         vertexBuffer <- withGPUBuffer allocator vertexBufferSize Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
-        let WithVec w h = windowSize
+        let WithVec w h = vps
         (image, view) <- Tex.withImageAndView allocator device (vec (fromIntegral w) (fromIntegral h)) Init.imageFormat
         return
           VulkanFrame
@@ -513,12 +519,6 @@ cardFlip :: Card -> Card
 cardFlip (Card name FaceUp) = Card name FaceDown
 cardFlip (Card name FaceDown) = Card name FaceUp
 
-windowSize :: ViewportSize
-windowSize = vec 900 900
-
-ppu :: PPU
-ppu = World.ppu 100
-
 screenToWorld :: ViewportSize -> PPU -> Cam.Camera -> Affine
 screenToWorld vps@(WithVec w h) ppu cam = ndc2World <> pixels2Ndc
   where
@@ -526,9 +526,20 @@ screenToWorld vps@(WithVec w h) ppu cam = ndc2World <> pixels2Ndc
     pixels2Ndc = srt3 (s w, s h) 0 (-1, -1)
     s x = 2 / fromIntegral x
 
-scene :: World -> (Node, Node)
-scene World {pointer, atlas, grid, font} = (node0 $ node0 grid : worldText, node0 screenR)
+scene :: World -> (Tree, Tree)
+-- scene World {pointer, atlas, grid, font, windowSize} = (node0 $ node0 grid : worldText, node0 ([] :: [Node])) -- screenR)
+scene World {pointer, atlas, grid, font, windowSize} = (tree0 ([] :: [Tree]), tree0 [screen2, ptr])
   where
+    ptr = node (Atlas.sprite atlas "pointer") $ Affine.translate pointer
+    screen2 = tree screenR $ Affine.srt (uniformScale 0.5) (rotateDegree 30) (vec 300 300 :: WorldVec) (vec 450 450 :: PixelVec)
+    rect = Atlas.spriteIndexed atlas "rectangle"
+    r12 =
+      tree0
+        [ node (rect 0) $ Affine.srt noScale noRotation (vec 1 0 :: PixelVec) (vec 0 0 :: PixelVec) -- ,
+        -- node (rect 1) $ Affine.srt noScale noRotation (vec 100 50 :: PixelVec) (vec 0 0 :: PixelVec)
+          ]
+    -- \$ Affine.srt noScale noRotation (vec 100 100 :: WorldVec) (vec 0 0 :: PixelVec)
+
     str = "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`"
     worldText =
       [ node (text "Pivoted and then Rotated 45 degrees" (color 0.0 0.0 0.0) font) $ Affine.srt noScale (rotateDegree 45) (vec 0 0 :: WorldVec) (vec 30 100 :: PixelVec),
@@ -536,7 +547,7 @@ scene World {pointer, atlas, grid, font} = (node0 $ node0 grid : worldText, node
         node (text "Colored" (Vert.opaqueColor 1.0 1.0 0.0) font) $ Affine.srt noScale noRotation (vec 0 0 :: WorldVec) (vec 0 0 :: PixelVec),
         node (text str (Vert.opaqueColor 0.0 0.0 0.0) font) $ Affine.srt noScale noRotation (vec 0 0 :: WorldVec) (vec 0 0 :: PixelVec)
       ] ::
-        [Node]
+        [Tree]
     screenR =
       [ node r1 $ Affine.srt noScale (rotateDegree 45) (vec 0 0 :: PixelVec) (vec 0 0 :: PixelVec),
         node r2 $ Affine.srt noScale (rotateDegree (-30)) (vec sw 0 :: PixelVec) (vec 100 0 :: PixelVec),
@@ -546,10 +557,9 @@ scene World {pointer, atlas, grid, font} = (node0 $ node0 grid : worldText, node
         node (text "Move the camera: Arrow keys" (color 1.0 1.0 1.0) font) $ t (y0 0),
         node (text "Rotate: E and R " (color 1.0 0.0 0.0) font) $ t (y0 1),
         node (text "Zoom in and out: + and -" (color 0.0 1.0 0.0) font) $ t (y0 2),
-        node (text "Reset: 0" (color 0.0 0.0 1.0) font) $ t (y0 3),
-        node (Atlas.sprite atlas "pointer") $ t pointer
+        node (text "Reset: 0" (color 0.0 0.0 1.0) font) $ t (y0 3)
       ] ::
-        [Node]
+        [Tree]
       where
         WithVec _w _h = windowSize
         sw = fromIntegral _w

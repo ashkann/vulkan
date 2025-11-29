@@ -55,9 +55,9 @@ setXY :: v -> Vertex u -> Vertex v
 setXY xy vert = vert {xy = xy}
 
 applyVert :: (Vec u, Vec v, Element u ~ Float, Element v ~ Float) => Affine -> Vertex u -> Vertex v
-applyVert m vert = setXY xy' vert
+applyVert tr vert = setXY xy' vert
   where
-    xy' = applyVec m vert.xy
+    xy' = applyVec tr vert.xy
 
 vertexStore :: Store.Dictionary (Vertex NDCVec)
 vertexStore =

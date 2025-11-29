@@ -5,7 +5,6 @@
 
 module Node
   ( Tree,
-    Node,
     node0,
     node,
     tree0,
@@ -18,23 +17,21 @@ import Measure (PixelVec)
 import Render (Render (..))
 import Vertex (Vertex, applyVert)
 
-data Node c = Node {content :: c, transform :: Affine}
-
-data Tree = forall c. (Render c) => Leaf (Node c) | Parent (Node [Tree])
+data Tree = forall a. (Render a) => Leaf a | Parent Affine [Tree]
 
 instance Render Tree where
   render :: Tree -> [Vertex PixelVec]
-  render (Leaf (Node obj tr)) = applyVert tr <$> render obj
-  render (Parent (Node children tr)) = applyVert tr <$> (render =<< children)
+  render (Leaf a) = render a
+  render (Parent tr a) = applyVert tr <$> (render =<< a)
 
-node0 :: (Render c) => c -> Tree
-node0 = node mempty
+node0 :: (Render a) => a -> Tree
+node0 = Leaf
 
 tree0 :: [Tree] -> Tree
 tree0 = tree mempty
 
 node :: (Render c) => Affine -> c -> Tree
-node tr c = Leaf (Node {content = c, transform = tr})
+node tr c = tree tr [node0 c]
 
 tree :: Affine -> [Tree] -> Tree
-tree tr children = Parent (Node {content = children, transform = tr})
+tree = Parent

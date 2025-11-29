@@ -38,13 +38,7 @@ module Measure
     transform,
     ViewportSize,
     mkWindowSize,
-    pattern UVReg2,
-    pixelSizeToWorld,
-    PPU (),
-    ppu1,
-    withPPU,
-    ppu,
-    withRecipPPU,
+    pattern UVReg2
   )
 where
 
@@ -190,27 +184,6 @@ localPosToNdc size origin position =
    in vec lx ly
   where
     localToNdc ndcWidth factor x = x - ndcWidth * factor
-
-newtype PPU = PPU Float deriving (Num, Fractional)
-
-ppu :: Float -> PPU
-ppu = PPU
-
-ppu1 :: PPU -> Float
-ppu1 ppu = let PPU rcp = recip ppu in rcp
-
-withPPU :: (Float -> t) -> PPU -> t
-withPPU f ppu = let PPU x = ppu in f x
-
-withRecipPPU :: (Float -> t) -> PPU -> t
-withRecipPPU f ppu = let PPU x = ppu in f (recip x)
-
-pixelSizeToWorld :: PPU -> PixelVec -> WorldVec
-pixelSizeToWorld (PPU ppu) (WithVec w h) =
-  let x = w / ppu
-      y = h / ppu
-   in vec x y
-
 class (Vec v, Element v ~ Float) => Normalized v where
   top :: Element v
   left :: Element v

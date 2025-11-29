@@ -25,6 +25,7 @@ executable atlas-parser
       Update
       Utils
       Vertex
+      World
       Paths_Vulkan2DEngine
   hs-source-dirs:
       font-atlas
@@ -69,6 +70,7 @@ executable memory
       Update
       Utils
       Vertex
+      World
       Paths_Vulkan2DEngine
   hs-source-dirs:
       memory

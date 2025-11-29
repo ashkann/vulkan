@@ -39,10 +39,10 @@ import qualified Data.Vector.Storable as SV
 import Foreign (Ptr, Word32)
 import Foreign.Storable (Storable (..), sizeOf)
 import qualified Init
-import Measure (PPU, PixelVec, Vec (vec), ViewportSize, WorldVec, pattern WithVec)
+import Measure (PixelVec, Vec (vec), ViewportSize, WorldVec, pattern WithVec)
 import qualified Measure
 import Node (Node, node, node0)
-import Render (applyObject, projection)
+import Render (applyObject)
 import qualified Render
 import qualified SDL
 import Sprite
@@ -66,6 +66,8 @@ import qualified Vulkan as VkSubmitInfo (SubmitInfo (..))
 import qualified Vulkan.CStruct.Extends as Vk
 import qualified Vulkan.Zero as Vk
 import qualified VulkanMemoryAllocator as Vma
+import World (PPU)
+import qualified World
 import Prelude hiding (init)
 
 data VulkanFrame = VulkanFrame
@@ -325,8 +327,8 @@ frameData (Game {camera, windowSize, ppu}) w =
     }
   where
     (world, screen) = scene w
-    worldTr = Render.world camera ppu windowSize
-    screenTr = Render.screen windowSize
+    worldTr = World.projection windowSize ppu <> Cam.view camera
+    screenTr = World.screen windowSize
 
 frame ::
   (MonadIO io) =>
@@ -515,12 +517,12 @@ windowSize :: ViewportSize
 windowSize = vec 900 900
 
 ppu :: PPU
-ppu = Measure.ppu 100
+ppu = World.ppu 100
 
 screenToWorld :: ViewportSize -> PPU -> Cam.Camera -> Affine
 screenToWorld vps@(WithVec w h) ppu cam = ndc2World <> pixels2Ndc
   where
-    ndc2World = Affine.inverse (projection vps ppu <> Cam.view cam)
+    ndc2World = Affine.inverse (World.projection vps ppu <> Cam.view cam)
     pixels2Ndc = srt3 (s w, s h) 0 (-1, -1)
     s x = 2 / fromIntegral x
 

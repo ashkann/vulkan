@@ -7,6 +7,7 @@ module World
     projection,
     screen,
     world,
+    pixelToWorld,
   )
 where
 
@@ -18,6 +19,11 @@ newtype PPU = PPU Float deriving (Num, Fractional)
 
 ppu :: Float -> PPU
 ppu = PPU
+
+pixelToWorld :: PPU -> Affine
+pixelToWorld (PPU ppu) = srt3 (s, -s) 0 (0, 0)
+  where
+    s = 1 / ppu
 
 -- | world (world units) -> ndc
 world :: ViewportSize -> PPU -> Cam.Camera -> Affine

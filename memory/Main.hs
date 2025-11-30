@@ -19,7 +19,7 @@
 
 module Main (main) where
 
-import Affine (Affine, Tr (tr), inverse, noRotation, noScale, origin, rotateDegree, scaleXY, srt, srt3, translate, uniformScale)
+import Affine (Affine, Tr (tr), inverse, noRotation, noScale, originXY, rotateDegree, scaleXY, srt, srt3, translate, translateXY, uniformScale)
 import Atlas (Atlas)
 import qualified Atlas
 import qualified Camera as Cam
@@ -39,9 +39,8 @@ import qualified Data.Vector.Storable as SV
 import Foreign (Ptr, Word32)
 import Foreign.Storable (Storable (..), sizeOf)
 import qualified Init
-import Measure (PixelVec, Vec (vec), ViewportSize, WorldVec, pattern WithVec, NDCVec)
+import Measure (NDCVec, PixelVec, Vec (vec), ViewportSize, WorldVec, pattern WithVec)
 import Node (Tree, node, tree, tree0)
--- import Render (applyObject)
 import qualified Render
 import qualified SDL
 import Sprite
@@ -50,6 +49,7 @@ import qualified Texture as Tex
 import Txt (text)
 import Update (TimeSeconds (..), Update (..), timeSecondsFromMillis)
 import Utils
+import Vertex (Vertex)
 import qualified Vertex as Vert
 import qualified Vulkan as Vk
 import qualified Vulkan as VkCommandPoolCreateInfo (CommandPoolCreateInfo (..))
@@ -65,10 +65,9 @@ import qualified Vulkan as VkSubmitInfo (SubmitInfo (..))
 import qualified Vulkan.CStruct.Extends as Vk
 import qualified Vulkan.Zero as Vk
 import qualified VulkanMemoryAllocator as Vma
-import World (PPU)
+import World (PPU, pixelToWorld)
 import qualified World
 import Prelude hiding (init)
-import Vertex (Vertex)
 
 data VulkanFrame = VulkanFrame
   { pool :: Vk.CommandPool,
@@ -208,8 +207,8 @@ toTree Grid {cells, atlas} = tree0 (f <$> Map.toList cells)
     f (Spot (Row r, Column c), crd) = node (base r c <> pivot) (card crd)
     c = 6
     r = 6
-    pivot = let f n = n * (h + padding) - padding in origin (vec @PixelVec (f c / 2) (f r / 2))
-    base r c = translate $ vec @PixelVec (fromIntegral c * (w + padding)) (fromIntegral r * (h + padding))
+    pivot = let f n = n * (h + padding) - padding in originXY (f c / 2) (f r / 2)
+    base r c = translateXY (fromIntegral c * (w + padding)) (fromIntegral r * (h + padding)) -- use world units ?
     card (Card (CardName name) FaceUp) = Atlas.sprite atlas name
     card (Card _ FaceDown) = faceDown
 
@@ -527,8 +526,7 @@ screenToWorld vps@(WithVec w h) ppu cam = ndc2World <> pixels2Ndc
     s x = 2 / fromIntegral x
 
 scene :: World -> (Tree, Tree)
--- scene World {pointer, atlas, grid, font, windowSize} = (node0 $ node0 grid : worldText, node0 ([] :: [Node])) -- screenR)
-scene World {pointer, atlas, grid, font, windowSize} = (tree0 ([] :: [Tree]), tree0 [screen2, ptr])
+scene World {pointer, atlas, grid, font, windowSize, ppu} = (tree0 $ tree (pixelToWorld ppu) [toTree grid] : worldText, tree0 [screen2, ptr])
   where
     ptr = node (Affine.translate pointer) (Atlas.sprite atlas "pointer")
     screen2 = tree (Affine.srt (uniformScale 0.5) (rotateDegree 30) (vec 300 300 :: WorldVec) (vec 450 450 :: PixelVec)) screenR
@@ -544,10 +542,9 @@ scene World {pointer, atlas, grid, font, windowSize} = (tree0 ([] :: [Tree]), tr
     worldText =
       [ node (Affine.srt noScale (rotateDegree 45) (vec 0 0 :: WorldVec) (vec 30 100 :: PixelVec)) (text "Pivoted and then Rotated 45 degrees" (color 0.0 0.0 0.0) font),
         node (Affine.srt (scaleXY 0.7 1.5) noRotation (vec 0 0 :: WorldVec) (vec 30 100 :: PixelVec)) (text "Scaled diffirently on X and Y" (color 0.0 0.0 0.0) font),
-        node (Affine.srt noScale noRotation (vec 0 0 :: WorldVec) (vec 0 0 :: PixelVec)) (text "Colored" (Vert.opaqueColor 1.0 1.0 0.0) font),
-        node (Affine.srt noScale noRotation (vec 0 0 :: WorldVec) (vec 0 0 :: PixelVec)) (text str (Vert.opaqueColor 0.0 0.0 0.0) font)
-      ] ::
-        [Tree]
+        node (Affine.srt noScale noRotation (vec 0 0 :: WorldVec) (vec 0 0 :: PixelVec)) (text "Colored" (color 1.0 1.0 0.0) font),
+        node (Affine.srt noScale noRotation (vec 0 0 :: WorldVec) (vec 0 0 :: PixelVec)) (text str (color 0.0 0.0 0.0) font)
+      ]
     screenR =
       [ node (Affine.srt noScale (rotateDegree 45) (vec 0 0 :: PixelVec) (vec 0 0 :: PixelVec)) r1,
         node (Affine.srt noScale (rotateDegree (-30)) (vec sw 0 :: PixelVec) (vec 100 0 :: PixelVec)) r2,

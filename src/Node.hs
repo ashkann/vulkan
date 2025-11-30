@@ -6,7 +6,7 @@ module Node
   ( Tree,
     node,
     tree0,
-    tree
+    tree,
   )
 where
 
@@ -20,7 +20,7 @@ data Tree = forall a. (Render a) => Leaf a | Tree Affine [Tree]
 instance Render Tree where
   render :: Tree -> [Vertex PixelVec]
   render (Leaf a) = render a
-  render (Tree tr a) = applyVert tr <$> (render =<< a)
+  render (Tree tr as) = applyVert tr <$> (render =<< as)
 
 tree0 :: [Tree] -> Tree
 tree0 = tree mempty

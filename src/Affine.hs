@@ -31,6 +31,7 @@ module Affine
     translateX,
     translateXY,
     uniformScale,
+    originXY,
   )
 where
 
@@ -91,7 +92,17 @@ applyVec tr (WithVec ux uy) = vec vx vy
 srt3 :: (Float, Float) -> Float -> (Float, Float) -> Affine
 srt3 s r t = srt4 s r t (0, 0)
 
-srt4 :: (Float, Float) -> Float -> (Float, Float) -> (Float, Float) -> Affine
+-- | `t` and `o` are in world units
+srt4 ::
+  -- | Scale x and y
+  (Float, Float) ->
+  -- | Rotatoin in gradiants, positive is from +x to +y
+  Float ->
+  -- | Translation x and y
+  (Float, Float) ->
+  -- | Origin x and y
+  (Float, Float) ->
+  Affine
 srt4 (sx, sy) r (tx, ty) (ox, oy) =
   Affine
     { xx = _xx,
@@ -162,6 +173,9 @@ translateX x = srt3 (1, 1) 0 (x, 0)
 
 origin :: (Vec v, Element v ~ Float) => v -> Affine
 origin o = translate (neg o)
+
+originXY :: Float -> Float -> Affine
+originXY ox oy = translateXY (-ox) (-oy)
 
 scale :: Scale -> Affine
 scale s = sr s noRotation

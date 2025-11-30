@@ -526,7 +526,7 @@ screenToWorld vps@(WithVec w h) ppu cam = ndc2World <> pixels2Ndc
     s x = 2 / fromIntegral x
 
 scene :: World -> (Tree, Tree)
-scene World {pointer, atlas, grid, font, windowSize, ppu} = (tree0 $ tree (pixelToWorld ppu) [toTree grid] : worldText, tree0 [screen2, ptr])
+scene World {pointer, atlas, grid, font, windowSize, ppu} = (tree (pixelToWorld ppu) $ toTree grid : worldText, tree0 [screen2, ptr])
   where
     ptr = node (Affine.translate pointer) (Atlas.sprite atlas "pointer")
     screen2 = tree (Affine.srt (uniformScale 0.5) (rotateDegree 30) (vec 300 300 :: WorldVec) (vec 450 450 :: PixelVec)) screenR

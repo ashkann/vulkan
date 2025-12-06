@@ -29,8 +29,9 @@ instance Render Sprite where
   render s = [va, vb, vc, vc, vd, va]
     where
       Vec w h = s.resolution
-      va = vert 0 0 (vec s.region.x1 s.region.y1)
-      vb = vert w 0 (vec s.region.x2 s.region.y1)
-      vc = vert w h (vec s.region.x2 s.region.y2)
-      vd = vert 0 h (vec s.region.x1 s.region.y2)
+      r = s.region
+      va = vert 0 0 (vec r.topLeft.x r.topLeft.y)
+      vb = vert w 0 (vec r.bottomRight.x r.topLeft.y)
+      vc = vert w h (vec r.bottomRight.x r.bottomRight.y)
+      vd = vert 0 h (vec r.topLeft.x r.bottomRight.y)
       vert x y uv = colorVertex (vec x y) uv s.texture (Just s.color)

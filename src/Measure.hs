@@ -20,7 +20,6 @@ module Measure
     Vec (..),
     vec,
     UVRegion (..),
-    uvReg,
     ViewportSize (..),
     mkWindowSize,
     Space,
@@ -83,10 +82,4 @@ mkWindowSize w h
   | w >= 0 && h >= 0 = Just $ ViewportSize w h
   | otherwise = Nothing
 
-data UVRegion = UVRegion {x1 :: Float, y1 :: Float, x2 :: Float, y2 :: Float}
-
-uvReg :: Float -> Float -> Float -> Float -> UVRegion
-uvReg = UVRegion
-
--- pattern UVReg2 :: UVVec -> UVVec -> UVVec -> UVVec -> UVRegion
--- pattern UVReg2 a b c d <- (uvRegCorners -> (a, b, c, d))
+data UVRegion = UVRegion {topLeft :: Vec UV, bottomRight :: Vec UV}

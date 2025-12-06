@@ -30,10 +30,10 @@ import Text.Parsec.Char (spaces)
 import Text.Parsec.String (Parser, parseFromFile)
 import qualified Texture as Tex
 import Utils (sayErr)
+import Vertex (noColor)
 import qualified Vulkan as Vk
 import qualified VulkanMemoryAllocator as Vk
 import Prelude hiding (lookup)
-import Vertex (noColor)
 
 newtype Key = Key (String, Maybe Word32)
   deriving (Show)
@@ -44,15 +44,15 @@ data Region = Region {region :: UVRegion, size :: PixelVec}
 newtype Regions = Regions (M.Map Key Region)
 
 mkRegion ::
-  -- | Size of the atlas
+  -- | atlas size
   PixelVec ->
-  -- | Position of the region
+  -- | region top-left
   PixelVec ->
-  -- | Size of the region
+  -- | region size
   PixelVec ->
   Region
 mkRegion (Vec aw ah) (Vec rx ry) size@(Vec rw rh) =
-  Region {region = uvReg (u rx) (v ry) (u $ rx + rw) (v $ ry + rh), size = size}
+  Region {region = UVRegion (vec (u rx) (v ry)) (vec (u $ rx + rw) (v $ ry + rh)), size = size}
   where
     u x = x / aw
     v y = y / ah
@@ -161,7 +161,7 @@ sprite atlas name = lookupOrFail (mkSprite atlas.texture)
 spriteIndexed :: Atlas -> String -> Word32 -> Sprite
 spriteIndexed (Atlas {texture = tex, regions = atlas}) name index =
   let reg = lookupIndexed atlas name index
-   in mkSprite tex reg 
+   in mkSprite tex reg
 
 mkSprite :: Tex.DescriptorIndex -> Region -> Sprite
 mkSprite tex Region {region = reg, size = res} =

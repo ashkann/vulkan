@@ -9,7 +9,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Sprite
-  ( Sprite (..)
+  ( Sprite (..),
   )
 where
 
@@ -28,10 +28,9 @@ data Sprite = Sprite
 instance Render Sprite where
   render s = [va, vb, vc, vc, vd, va]
     where
-      WithVec w h = s.resolution
-      UVReg2 a b c d = s.region
-      va = vert 0 0 a
-      vb = vert w 0 b
-      vc = vert w h c
-      vd = vert 0 h d
+      Vec w h = s.resolution
+      va = vert 0 0 (vec s.region.x1 s.region.y1)
+      vb = vert w 0 (vec s.region.x2 s.region.y1)
+      vc = vert w h (vec s.region.x2 s.region.y2)
+      vd = vert 0 h (vec s.region.x1 s.region.y2)
       vert x y uv = colorVertex (vec x y) uv s.texture (Just s.color)

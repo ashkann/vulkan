@@ -4,7 +4,6 @@
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE StrictData #-}
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE NoFieldSelectors #-}
 
@@ -46,20 +45,22 @@ newtype Color = Color G.Vec4 deriving (Show, Storable)
 opaqueColor :: Float -> Float -> Float -> Color
 opaqueColor r g b = Color $ G.vec4 r g b 1.0
 
-data Vertex v = Vertex {xy :: v, uv :: UVVec, color :: Color, texture :: DescriptorIndex}
+data Vertex v = Vertex {xy :: Vec v, uv :: UVVec, color :: Color, texture :: DescriptorIndex}
 
 setColor :: Color -> Vertex v -> Vertex v
 setColor c v = v {color = c}
 
-setXY :: v -> Vertex u -> Vertex v
+setXY :: Vec v -> Vertex u -> Vertex v
 setXY xy vert = vert {xy = xy}
 
-applyVert :: (Vec u, Vec v, Element u ~ Float, Element v ~ Float) => Affine -> Vertex u -> Vertex v
+applyVert :: Affine -> Vertex u -> Vertex v
 applyVert tr vert = setXY xy' vert
   where
     xy' = applyVec tr vert.xy
 
-vertexStore :: Store.Dictionary (Vertex NDCVec)
+-- instance Storable (Vec s) where
+
+vertexStore :: Store.Dictionary (Vertex s)
 vertexStore =
   Store.run $
     Vertex
@@ -69,7 +70,7 @@ vertexStore =
       <*> Store.element (.texture)
 
 -- TODO: automate the layout according to Vulkan spec
-instance Storable (Vertex NDCVec) where
+instance Storable (Vertex NDC) where
   sizeOf = Store.sizeOf vertexStore
   alignment = Store.alignment vertexStore
   peek = Store.peek vertexStore
@@ -81,10 +82,10 @@ defaultColor = Color (G.vec4 1 1 1 1) -- Opaque white
 noColor :: Color
 noColor = defaultColor
 
-vertex :: v -> UVVec -> DescriptorIndex -> Vertex v
+vertex :: Vec v -> UVVec -> DescriptorIndex -> Vertex v
 vertex xy uv tex = Vertex {xy = xy, uv = uv, texture = tex, color = defaultColor}
 
-colorVertex :: v -> UVVec -> DescriptorIndex -> Maybe Color -> Vertex v
+colorVertex :: Vec v -> UVVec -> DescriptorIndex -> Maybe Color -> Vertex v
 colorVertex xy uv tex c = Vertex {xy = xy, uv = uv, texture = tex, color = fromMaybe noColor c}
 
 grpahicsPipelineVertexInputState :: Vk.SomeStruct Vk.PipelineVertexInputStateCreateInfo
@@ -94,7 +95,7 @@ grpahicsPipelineVertexInputState =
       { Vk.vertexBindingDescriptions =
           [ Vk.zero
               { VkVertexInputBindingDescription.binding = 0,
-                VkVertexInputBindingDescription.stride = fromIntegral $ sizeOf (undefined :: Vertex NDCVec),
+                VkVertexInputBindingDescription.stride = fromIntegral $ sizeOf (undefined :: Vertex NDC),
                 VkVertexInputBindingDescription.inputRate = Vk.VERTEX_INPUT_RATE_VERTEX
               }
           ],

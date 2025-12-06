@@ -10,7 +10,6 @@
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -19,7 +18,7 @@
 
 module Main (main) where
 
-import Affine (Affine, Tr (tr), inverse, noRotation, noScale, originXY, rotateDegree, scaleXY, srt, srt3, translate, translateXY, uniformScale)
+import Affine (Affine, applyVec, inverse, noRotation, noScale, originXY, rotateDegree, scaleXY, srt, srt3, translateXY, uniformScale, translate)
 import Atlas (Atlas)
 import qualified Atlas
 import qualified Camera as Cam
@@ -39,7 +38,7 @@ import qualified Data.Vector.Storable as SV
 import Foreign (Ptr, Word32)
 import Foreign.Storable (Storable (..), sizeOf)
 import qualified Init
-import Measure (NDCVec, PixelVec, Vec (vec), ViewportSize, WorldVec, pattern WithVec)
+import Measure (PixelVec, Vec (Vec), ViewportSize (ViewportSize), WorldVec, mkWindowSize, vec, NDC)
 import Node (Tree, node, tree, tree0)
 import qualified Render
 import qualified SDL
@@ -86,7 +85,7 @@ data VulkanFrame = VulkanFrame
 -- TODO: run inside a MonadError instance
 main :: IO ()
 main = runManaged $ do
-  let windowSize = vec 900 900
+  let Just windowSize = mkWindowSize 900 900
   (window, vulkan, surface) <- withSDL2VulkanWindow windowSize
   (gpu, gfx, present, portability, gpuName) <- Init.pickGPU vulkan surface
   say "Vulkan" $ "GPU: " ++ gpuName ++ ", present: " ++ show present.index ++ ", graphics: " ++ show gfx.index
@@ -134,7 +133,7 @@ main = runManaged $ do
 
   let stagingBufferSize = 1048576
       maxVertCount = 10000
-      vertexBufferSize = fromIntegral $ sizeOf (undefined :: Vert.Vertex Measure.NDCVec) * maxVertCount
+      vertexBufferSize = fromIntegral $ sizeOf (undefined :: Vert.Vertex NDC) * maxVertCount
   frames <- withFrames device gfx.index allocator stagingBufferSize vertexBufferSize frameCount windowSize
   w0 <- liftIO $ world0 atlas font
   let shutdown = say "Engine" "Shutting down ..." *> Vk.deviceWaitIdle device
@@ -203,7 +202,7 @@ toTree Grid {cells, atlas} = tree0 (f <$> Map.toList cells)
   where
     padding = 10
     faceDown = Atlas.sprite atlas "back-side"
-    WithVec w h = faceDown.resolution
+    Vec w h = faceDown.resolution
     f (Spot (Row r, Column c), crd) = node (base r c <> pivot) (card crd)
     c = 6
     r = 6
@@ -235,9 +234,9 @@ instance Update World where
             | Just spot <- spot = gridFlip spot grid
             | otherwise = grid
           spot =
-            let WithVec x y = tr (screenToWorld windowSize ppu camera) pointer :: WorldVec
-                WithVec px py = vec @WorldVec 0 0
-                WithVec w h = cardSize
+            let Vec x y = applyVec (screenToWorld windowSize ppu camera) pointer -- :: WorldVec
+                Vec px py = vec @WorldVec 0 0
+                Vec w h = cardSize
                 r = floor $ (y + 1) / (h + px)
                 c = floor $ (x + 1) / (w + py)
              in Just (Spot (Row r, Column c))
@@ -318,10 +317,12 @@ world0 atlas font = do
         camera = Cam.defaultCamera,
         pressedKeys = Set.empty,
         ppu = World.ppu 100,
-        windowSize = vec 900 900
+        windowSize = ws
       }
+  where
+    Just ws = mkWindowSize 900 900
 
-data Frame = Frame {verts :: SV.Vector (Vertex NDCVec)}
+data Frame = Frame {verts :: SV.Vector (Vertex NDC)}
 
 frameData :: Game -> World -> Frame
 frameData (Game {camera, windowSize, ppu}) w =
@@ -460,7 +461,7 @@ withFrames device gfx allocator stagingBufferSize vertexBufferSize frameCount vp
           let info = Vk.zero {VkFenceCreateInfo.flags = Vk.FENCE_CREATE_SIGNALED_BIT}
            in managed $ Vk.withFence device info Nothing bracket
         vertexBuffer <- withGPUBuffer allocator vertexBufferSize Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
-        let WithVec w h = vps
+        let ViewportSize w h = vps
         (image, view) <- Tex.withImageAndView allocator device (vec (fromIntegral w) (fromIntegral h)) Init.imageFormat
         return
           VulkanFrame
@@ -519,7 +520,7 @@ cardFlip (Card name FaceUp) = Card name FaceDown
 cardFlip (Card name FaceDown) = Card name FaceUp
 
 screenToWorld :: ViewportSize -> PPU -> Cam.Camera -> Affine
-screenToWorld vps@(WithVec w h) ppu cam = ndc2World <> pixels2Ndc
+screenToWorld vps@(ViewportSize w h) ppu cam = ndc2World <> pixels2Ndc
   where
     ndc2World = Affine.inverse (World.projection vps ppu <> Cam.view cam)
     pixels2Ndc = srt3 (s w, s h) 0 (-1, -1)
@@ -557,10 +558,10 @@ scene World {pointer, atlas, grid, font, windowSize, ppu} = (tree (pixelToWorld 
         node (t (y0 3)) (text "Reset: 0" (color 0.0 0.0 1.0) font)
       ]
       where
-        WithVec _w _h = windowSize
+        ViewportSize _w _h = windowSize
         sw = fromIntegral _w
         sh = fromIntegral _h
-        WithVec rw rh = vec 100 50 :: PixelVec
+        Vec rw rh = vec 100 50 :: PixelVec
         r1 = rect 0
         r2 = rect 1
         r3 = rect 2

@@ -13,12 +13,12 @@ module Render
 where
 
 import Affine (Affine)
-import Measure hiding (transform)
 import Vertex (Vertex, applyVert)
+import Measure (PixelVec)
 
 class Render obj where
   render :: obj -> [Vertex PixelVec]
   {-# MINIMAL render #-}
 
-applyObject :: (Render obj, Vec v, Element v ~ Float) => Affine -> obj -> [Vertex v] -- TODO simplify types
+applyObject :: (Render obj) => Affine -> obj -> [Vertex v] -- TODO simplify types
 applyObject tr obj = applyVert tr <$> render obj

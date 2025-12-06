@@ -130,7 +130,7 @@ withSurface w v@(Vk.Instance v' _) = managed $ bracket create destroy
     create = Vk.SurfaceKHR <$> SDL.vkCreateSurface w (castPtr v') <* say "SDL" "Vulkan surface created"
 
 withWindow :: ViewportSize -> Managed SDL.Window
-withWindow (WithVec w h) =
+withWindow (ViewportSize w h) =
   managed $
     bracket
       (SDL.createWindow applicationName win <* say "SDL" "Created window")

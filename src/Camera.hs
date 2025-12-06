@@ -39,7 +39,7 @@ rotateCw :: Float -> Camera -> Camera
 rotateCw dr = rotate (-dr)
 
 move :: WorldVec -> Camera -> Camera
-move (WithVec dx dy) cam = cam {position = cam.position + vec dxCam dyCam}
+move (Vec dx dy) cam = cam {position = cam.position + vec dxCam dyCam}
   where
     (dxCam, dyCam) = Affine.applyXY (srt3 (1, 1) cam.rotation (0, 0)) (dx, dy)
 
@@ -69,7 +69,7 @@ zoomOut dz = cameraZoom (-dz)
 
 -- | world (world units) -> cam (world units)
 view :: Camera -> Affine
-view Camera {position = WithVec x y, rotation, zoom} = rotateAndZoom <> lookAt
+view Camera {position = Vec x y, rotation, zoom} = rotateAndZoom <> lookAt
   where
     lookAt = translateXY (-x) (-y)
     rotateAndZoom = srt3 (zoom, zoom) rotation (0, 0)

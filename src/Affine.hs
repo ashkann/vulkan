@@ -3,15 +3,13 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
-{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StrictData #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeOperators #-}
 
 module Affine
   ( Affine,
     srt3,
+    srt4,
     applyXY,
     inverse,
     noScale,
@@ -21,21 +19,20 @@ module Affine
     rotateDegree,
     Scale,
     Rotation,
-    Tr (..),
     srt,
     sr,
     origin,
-    translate,
     scale,
     applyVec,
     translateX,
     translateXY,
     uniformScale,
     originXY,
+    translate,
   )
 where
 
-import Measure (NDCVec, PixelVec, Vec (Element, neg, vec), WorldVec, pattern WithVec)
+import Measure (Vec (..), vec)
 
 -- TODO Input i, Output o => Affine i o
 -- TODO
@@ -44,22 +41,6 @@ data Affine = Affine
   { xx, yx, tx :: Float,
     xy, yy, ty :: Float
   }
-
-class (Vec u, Vec v, Element v ~ Float, Element u ~ Float) => Tr u v where
-  tr :: Affine -> u -> v
-  tr m (WithVec x y) = trXY @u m x y
-  trXY :: Affine -> Element u -> Element u -> v
-  trXY m x y = let (x', y') = Affine.applyXY m (x, y) in vec x' y'
-
-instance Tr NDCVec NDCVec
-
-instance Tr WorldVec NDCVec
-
-instance Tr WorldVec WorldVec
-
-instance Tr PixelVec WorldVec
-
-instance Tr PixelVec NDCVec
 
 inverse :: Affine -> Affine
 inverse m =
@@ -84,8 +65,8 @@ applyXY Affine {xx, xy, yx, yy, tx, ty} (x, y) = (x', y')
     x' = xx * x + yx * y + tx
     y' = xy * x + yy * y + ty
 
-applyVec :: (Vec u, Vec v, Element u ~ Float, Element v ~ Float) => Affine -> u -> v
-applyVec tr (WithVec ux uy) = vec vx vy
+applyVec :: Affine -> Vec u -> Vec v
+applyVec tr (Vec ux uy) = vec vx vy
   where
     (vx, vy) = applyXY tr (ux, uy)
 
@@ -120,8 +101,8 @@ srt4 (sx, sy) r (tx, ty) (ox, oy) =
     c = cos r
     s = sin r
 
-srt :: (Vec p, Vec o, Element p ~ Float, Element o ~ Float) => Scale -> Rotation -> p -> o -> Affine
-srt (Scale (sx, sy)) (Rotation r) (WithVec tx ty) (WithVec ox oy) = srt4 (sx, sy) r (tx, ty) (ox, oy)
+srt :: Scale -> Rotation -> Vec t -> Vec o -> Affine
+srt (Scale (sx, sy)) (Rotation r) (Vec tx ty) (Vec ox oy) = srt4 (sx, sy) r (tx, ty) (ox, oy)
 
 sr :: Scale -> Rotation -> Affine
 sr (Scale (sx, sy)) (Rotation r) = srt3 (sx, sy) r (0, 0)
@@ -162,8 +143,8 @@ rotate = Rotation
 rotateDegree :: Float -> Rotation
 rotateDegree r = rotate $ r * (pi / 180)
 
-translate :: (Vec p, Element p ~ Float) => p -> Affine
-translate p = srt noScale noRotation p (vec 0 0 :: PixelVec)
+translate :: Vec x -> Affine
+translate p = srt noScale noRotation p (vec 0 0)
 
 translateXY :: Float -> Float -> Affine
 translateXY x y = srt3 (1, 1) 0 (x, y)
@@ -171,8 +152,8 @@ translateXY x y = srt3 (1, 1) 0 (x, y)
 translateX :: Float -> Affine
 translateX x = srt3 (1, 1) 0 (x, 0)
 
-origin :: (Vec v, Element v ~ Float) => v -> Affine
-origin o = translate (neg o)
+origin :: Vec o -> Affine
+origin (Vec ox oy) = translateXY (-ox) (-oy)
 
 originXY :: Float -> Float -> Affine
 originXY ox oy = translateXY (-ox) (-oy)

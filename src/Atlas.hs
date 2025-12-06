@@ -39,9 +39,9 @@ newtype Key = Key (String, Maybe Word32)
   deriving (Show)
   deriving (Ord, Eq)
 
-data Region = Region {region :: UVRegion, size :: PixelVec} deriving (Show)
+data Region = Region {region :: UVRegion, size :: PixelVec}
 
-newtype Regions = Regions (M.Map Key Region) deriving (Show)
+newtype Regions = Regions (M.Map Key Region)
 
 mkRegion ::
   -- | Size of the atlas
@@ -51,7 +51,7 @@ mkRegion ::
   -- | Size of the region
   PixelVec ->
   Region
-mkRegion (WithVec aw ah) (WithVec rx ry) size@(WithVec rw rh) =
+mkRegion (Vec aw ah) (Vec rx ry) size@(Vec rw rh) =
   Region {region = uvReg (u rx) (v ry) (u $ rx + rw) (v $ ry + rh), size = size}
   where
     u x = x / aw

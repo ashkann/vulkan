@@ -44,7 +44,7 @@ import Measure
 import Utils
 import qualified Vulkan as Ft (PhysicalDeviceVulkan12Features (..))
 import qualified Vulkan as Vk
-import qualified Vulkan as VkDescriptorBufferInfo (DescriptorBufferInfo (..))
+-- import qualified Vulkan as VkDescriptorBufferInfo (DescriptorBufferInfo (..))
 import qualified Vulkan as VkDescriptorPoolCreateInfo (DescriptorPoolCreateInfo (..))
 import qualified Vulkan as VkDescriptorPoolSize (DescriptorPoolSize (..))
 import qualified Vulkan as VkDescriptorSetAllocateInfo (DescriptorSetAllocateInfo (..))
@@ -71,7 +71,7 @@ import qualified Vulkan as VkSurfaceCaps (SurfaceCapabilitiesKHR (..))
 import qualified Vulkan as VkSurfaceFormat (SurfaceFormatKHR (..))
 import qualified Vulkan as VkSwapchainCreateInfo (SwapchainCreateInfoKHR (..))
 import qualified Vulkan as VkViewport (Viewport (..))
-import qualified Vulkan as VkWriteDescriptorSet (WriteDescriptorSet (..))
+-- import qualified Vulkan as VkWriteDescriptorSet (WriteDescriptorSet (..))
 import Vulkan.CStruct.Extends (pattern (:&), pattern (::&))
 import qualified Vulkan.CStruct.Extends as Vk
 import qualified Vulkan.Dynamic as Vk
@@ -213,7 +213,7 @@ withSwapChain
   surface
   (QueueFamilyIndex gfx)
   (QueueFamilyIndex present)
-  (WithVec width height) =
+  (ViewportSize width height) =
     do
       caps <- Vk.getPhysicalDeviceSurfaceCapabilitiesKHR gpu surface
       let minImageCount = VkSurfaceCaps.minImageCount caps
@@ -393,26 +393,26 @@ descriptorSet dev layout pool =
           }
    in V.head <$> managed (Vk.withDescriptorSets dev info bracket)
 
-bindViewport :: (MonadIO io) => Vk.Device -> Vk.DescriptorSet -> Vk.Buffer -> io ()
-bindViewport dev set viewport =
-  let info =
-        Vk.SomeStruct
-          Vk.zero
-            { VkWriteDescriptorSet.dstSet = set,
-              VkWriteDescriptorSet.dstBinding = 2, -- TODO: magic number, use a configurable value
-              VkWriteDescriptorSet.descriptorType = Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-              VkWriteDescriptorSet.descriptorCount = 1,
-              VkWriteDescriptorSet.bufferInfo = [bufferInfo],
-              VkWriteDescriptorSet.dstArrayElement = 0
-            }
-   in Vk.updateDescriptorSets dev [info] []
-  where
-    bufferInfo =
-      Vk.zero
-        { VkDescriptorBufferInfo.buffer = viewport,
-          VkDescriptorBufferInfo.offset = 0,
-          VkDescriptorBufferInfo.range = Vk.WHOLE_SIZE -- TODO: better value ?
-        }
+-- bindViewport :: (MonadIO io) => Vk.Device -> Vk.DescriptorSet -> Vk.Buffer -> io ()
+-- bindViewport dev set viewport =
+--   let info =
+--         Vk.SomeStruct
+--           Vk.zero
+--             { VkWriteDescriptorSet.dstSet = set,
+--               VkWriteDescriptorSet.dstBinding = 2, -- TODO: magic number, use a configurable value
+--               VkWriteDescriptorSet.descriptorType = Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+--               VkWriteDescriptorSet.descriptorCount = 1,
+--               VkWriteDescriptorSet.bufferInfo = [bufferInfo],
+--               VkWriteDescriptorSet.dstArrayElement = 0
+--             }
+--    in Vk.updateDescriptorSets dev [info] []
+--   where
+--     bufferInfo =
+--       Vk.zero
+--         { VkDescriptorBufferInfo.buffer = viewport,
+--           VkDescriptorBufferInfo.offset = 0,
+--           VkDescriptorBufferInfo.range = Vk.WHOLE_SIZE -- TODO: better value ?
+--         }
 
 createPipeline ::
   Vk.Device ->

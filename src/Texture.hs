@@ -73,7 +73,7 @@ withImageAndView allocator device size format = do
   return (image, view)
 
 withImage :: Vma.Allocator -> PixelVec -> Vk.Format -> Managed Vk.Image
-withImage allocator (WithVec width height) format = do
+withImage allocator (Vec width height) format = do
   (image, _, _) <-
     let dims =
           Vk.Extent3D

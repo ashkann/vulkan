@@ -1,5 +1,4 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE PatternSynonyms #-}
 
 module World
   ( PPU,
@@ -13,7 +12,7 @@ where
 
 import Affine (Affine, srt3)
 import qualified Camera as Cam
-import Measure (ViewportSize, pattern WithVec)
+import Measure (ViewportSize (..))
 
 newtype PPU = PPU Float deriving (Num, Fractional)
 
@@ -31,7 +30,7 @@ world windowSize ppu camera = projection windowSize ppu <> Cam.view camera
 
 -- | cam (world units) -> ndc
 projection :: ViewportSize -> PPU -> Affine
-projection (WithVec w h) (PPU ppu) = srt3 (sx, -sy) 0 (0, 0)
+projection (ViewportSize w h) (PPU ppu) = srt3 (sx, -sy) 0 (0, 0)
   where
     sx = ndc w
     sy = ndc h
@@ -39,7 +38,7 @@ projection (WithVec w h) (PPU ppu) = srt3 (sx, -sy) 0 (0, 0)
 
 -- | screen (pixels) -> ndc
 screen :: ViewportSize -> Affine
-screen (WithVec w h) = srt3 (sx, sy) 0 (-1, -1)
+screen (ViewportSize w h) = srt3 (sx, sy) 0 (-1, -1)
   where
     sx = ndc w
     sy = ndc h

@@ -17,12 +17,14 @@ module Measure
     NDCVec,
     UVVec,
     NDC,
+    UV,
     Vec (..),
     vec,
-    UVRegion (..),
     ViewportSize (..),
     mkWindowSize,
     Space,
+    Region(..),
+    region,
   )
 where
 
@@ -82,4 +84,7 @@ mkWindowSize w h
   | w >= 0 && h >= 0 = Just $ ViewportSize w h
   | otherwise = Nothing
 
-data UVRegion = UVRegion {topLeft :: Vec UV, bottomRight :: Vec UV}
+data Region s = Region {topLeft :: Vec s, bottomRight :: Vec s}
+
+region :: Vec s -> Vec s -> Region s
+region = Region

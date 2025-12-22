@@ -28,7 +28,7 @@ import System.FilePath (replaceFileName)
 import Text.Parsec (anyChar, char, digit, endOfLine, eof, many1, manyTill, optionMaybe, parse, string, (<?>))
 import Text.Parsec.Char (spaces)
 import Text.Parsec.String (Parser, parseFromFile)
-import qualified Texture as Tex
+import Texture (DescriptorIndex, bind, fromPngRGBA8File)
 import Utils (sayErr)
 import Vertex (noColor)
 import qualified Vulkan as Vk
@@ -39,28 +39,19 @@ newtype Key = Key (String, Maybe Word32)
   deriving (Show)
   deriving (Ord, Eq)
 
-data Region = Region {region :: UVRegion, size :: PixelVec}
+data Region2 = Region2 {region :: Region UV, size :: PixelVec}
 
-newtype Regions = Regions (M.Map Key Region)
+newtype Regions = Regions (M.Map Key Region2)
 
-mkRegion ::
-  -- | atlas size
-  PixelVec ->
-  -- | region top-left
-  PixelVec ->
-  -- | region size
-  PixelVec ->
-  Region
-mkRegion (Vec aw ah) (Vec rx ry) size@(Vec rw rh) =
-  Region {region = UVRegion (vec (u rx) (v ry)) (vec (u $ rx + rw) (v $ ry + rh)), size = size}
-  where
-    u x = x / aw
-    v y = y / ah
+data Atlas = Atlas
+  { texture :: DescriptorIndex,
+    regions :: Regions
+  }
 
-lookup :: Regions -> String -> Maybe Region
+lookup :: Regions -> String -> Maybe Region2
 lookup (Regions rs) name = let key = Key (name, Nothing) in M.lookup key rs
 
-lookupIndexed :: Regions -> String -> Word32 -> Region
+lookupIndexed :: Regions -> String -> Word32 -> Region2
 lookupIndexed (Regions rs) name index = rs M.! Key (name, Just index)
 
 atlas :: (MonadError String m, MonadIO m) => FilePath -> m (FilePath, Regions)
@@ -69,8 +60,15 @@ atlas file = liftIO (parseFromFile atlasP file) >>= either (throwError . show) r
 atlasP :: Parser (FilePath, Regions)
 atlasP = do
   (fileName, atlasSize) <- headerP <?> "header"
-  regions <- manyTill (regionP <&> \(k, pos, size) -> (k, mkRegion atlasSize pos size)) eof
+  regions <- manyTill (regionP <&> \(k, regionTopLeft, regionSize) -> (k, mkRegion atlasSize regionTopLeft regionSize)) eof
   return (fileName, Regions $ M.fromList regions)
+  where
+    mkRegion (Vec aw ah) (Vec rx ry) size@(Vec rw rh) = Region2 {region = Measure.region topLeft bottomRight, size = size}
+      where
+        topLeft = vec (u rx) (v ry)
+        bottomRight = vec (u $ rx + rw) (v $ ry + rh)
+        u x = x / aw
+        v y = y / ah
 
 -- | Parse the atlas header
 --
@@ -137,20 +135,15 @@ vec2P = do
   let v = vec (fromIntegral x) (fromIntegral y)
   return v
 
-data Atlas = Atlas
-  { texture :: Tex.DescriptorIndex,
-    regions :: Regions
-  }
-
--- TODO: find a way to reduce parameter count
+-- TODO: reduce parameter count
 withAtlas :: Vk.Allocator -> Vk.Device -> Vk.CommandPool -> Vk.Queue -> Vk.DescriptorSet -> Vk.Sampler -> [FilePath] -> Managed [Atlas]
 withAtlas allocator device cmdPool gfx set sampler atlasFiles = do
   (texs, regions) <- unzip <$> traverse (\x -> do (a, b) <- parse x; view <- f x a; return (view, b)) atlasFiles
-  idxs <- Tex.bind device set texs sampler
+  idxs <- bind device set texs sampler
   return $ zipWith Atlas idxs regions
   where
     parse f = either (sayErr "Atlas") return =<< runExceptT (atlas f)
-    f atlasFilePath imageFileName = Tex.fromPngRGBA8File allocator device cmdPool gfx $ replaceFileName atlasFilePath imageFileName
+    f atlasFilePath imageFileName = fromPngRGBA8File allocator device cmdPool gfx $ replaceFileName atlasFilePath imageFileName
 
 sprite :: Atlas -> String -> Sprite
 sprite atlas name = lookupOrFail (mkSprite atlas.texture)
@@ -163,8 +156,8 @@ spriteIndexed (Atlas {texture = tex, regions = atlas}) name index =
   let reg = lookupIndexed atlas name index
    in mkSprite tex reg
 
-mkSprite :: Tex.DescriptorIndex -> Region -> Sprite
-mkSprite tex Region {region = reg, size = res} =
+mkSprite :: DescriptorIndex -> Region2 -> Sprite
+mkSprite tex Region2 {region = reg, size = res} =
   Sprite
     { texture = tex,
       region = reg,

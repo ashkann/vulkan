@@ -18,7 +18,7 @@
 
 module Main (main) where
 
-import Affine (Affine, applyVec, inverse, noRotation, noScale, originXY, rotateDegree, scaleXY, srt, srt3, translateXY, uniformScale, translate)
+import Affine (Affine, applyVec, inverse, noRotation, noScale, originXY, rotateDegree, scaleXY, srt, srt3, translate, translateXY, uniformScale)
 import Atlas (Atlas)
 import qualified Atlas
 import qualified Camera as Cam
@@ -38,7 +38,7 @@ import qualified Data.Vector.Storable as SV
 import Foreign (Ptr, Word32)
 import Foreign.Storable (Storable (..), sizeOf)
 import qualified Init
-import Measure (PixelVec, Vec (Vec), ViewportSize (ViewportSize), WorldVec, mkWindowSize, vec, NDC)
+import Measure (NDC, PixelVec, Vec (Vec), ViewportSize (ViewportSize), WorldVec, mkWindowSize, vec)
 import Node (Tree, node, tree, tree0)
 import qualified Render
 import qualified SDL
@@ -327,13 +327,12 @@ data Frame = Frame {verts :: SV.Vector (Vertex NDC)}
 frameData :: Game -> World -> Frame
 frameData (Game {camera, windowSize, ppu}) w =
   Frame
-    { verts = SV.fromList $ Render.applyObject mempty frame
+    { verts = SV.fromList $ w2 ++ s2
     }
   where
-    frame = tree0 [node worldTr world, node screenTr screen]
+    w2 = Render.applyObject (World.world windowSize ppu camera) world :: [Vertex NDC]
+    s2 = Render.applyObject (World.screen windowSize) screen :: [Vertex NDC]
     (world, screen) = scene w
-    worldTr = World.world windowSize ppu camera
-    screenTr = World.screen windowSize
 
 frame ::
   (MonadIO io) =>
@@ -527,7 +526,10 @@ screenToWorld vps@(ViewportSize w h) ppu cam = ndc2World <> pixels2Ndc
     s x = 2 / fromIntegral x
 
 scene :: World -> (Tree, Tree)
-scene World {pointer, atlas, grid, font, windowSize, ppu} = (tree (pixelToWorld ppu) $ toTree grid : worldText, tree0 [screen2, ptr])
+scene World {pointer, atlas, grid, font, windowSize, ppu} =
+  let world = tree (pixelToWorld ppu) $ toTree grid : worldText
+      screen = tree0 [screen2, ptr]
+   in (world, screen)
   where
     ptr = node (Affine.translate pointer) (Atlas.sprite atlas "pointer")
     screen2 = tree (Affine.srt (uniformScale 0.5) (rotateDegree 30) (vec 300 300 :: WorldVec) (vec 450 450 :: PixelVec)) screenR

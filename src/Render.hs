@@ -1,22 +1,14 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Render
-  ( Render (..),
-    applyObject,
-  )
-where
+module Render (Render (..)) where
 
-import Affine (Affine)
-import Measure (PixelVec)
-import Vertex (Vertex, applyVert)
+import Vertex (Vertex)
 
-class Render obj where
-  render :: obj -> [Vertex PixelVec]
+class Render c v where
+  render :: c -> [Vertex v]
   {-# MINIMAL render #-}
-
-applyObject :: (Render obj) => Affine -> obj -> [Vertex v] -- TODO simplify types
-applyObject tr obj = applyVert tr <$> render obj

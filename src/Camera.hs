@@ -21,7 +21,7 @@ module Camera
   )
 where
 
-import Affine (Affine, applyXY, srt3, translateXY)
+import Affine (Affine, applyVec, combine, srt3, translateXY)
 import Measure
 
 data Camera = Camera {position :: WorldVec, rotation :: Float, zoom :: Float}
@@ -39,9 +39,9 @@ rotateCw :: Float -> Camera -> Camera
 rotateCw dr = rotate (-dr)
 
 move :: WorldVec -> Camera -> Camera
-move (Vec dx dy) cam = cam {position = cam.position + vec dxCam dyCam}
+move dxy cam = cam {position = cam.position + dxyCam}
   where
-    (dxCam, dyCam) = Affine.applyXY (srt3 (1, 1) cam.rotation (0, 0)) (dx, dy)
+    dxyCam = Affine.applyVec (srt3 (1, 1) cam.rotation (0, 0)) dxy
 
 moveUp :: Float -> Camera -> Camera
 moveUp d = move $ vec 0 d
@@ -68,8 +68,8 @@ zoomOut :: Float -> Camera -> Camera
 zoomOut dz = cameraZoom (-dz)
 
 -- | world (world units) -> cam (world units)
-view :: Camera -> Affine
-view Camera {position = Vec x y, rotation, zoom} = rotateAndZoom <> lookAt
+view :: Camera -> Affine World World
+view Camera {position = Vec x y, rotation, zoom} = rotateAndZoom `combine` lookAt
   where
     lookAt = translateXY (-x) (-y)
     rotateAndZoom = srt3 (zoom, zoom) rotation (0, 0)

@@ -7,16 +7,15 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE TypeApplications #-}
 
-module Sprite
-  ( Sprite (..),
-  )
-where
+module Sprite (Sprite (..)) where
 
-import Measure (PixelVec, Region(..), UV, Vec (..), vec)
+import Measure (PixelVec, Region (..), UV, Vec (..), vec, Pixel, World)
 import Render
 import Texture
-import Vertex (Color, colorVertex)
+import Vertex (Color, colorVertex, applyVert)
+import World (pixelToWorld, ppu)
 
 data Sprite = Sprite
   { texture :: DescriptorIndex,
@@ -25,7 +24,7 @@ data Sprite = Sprite
     color :: Color
   }
 
-instance Render Sprite where
+instance Render Sprite Pixel where
   render s = [a, b, c, c, d, a]
     where
       Vec w h = s.resolution
@@ -35,3 +34,6 @@ instance Render Sprite where
       c = vert (w, h) (r.bottomRight.x, r.bottomRight.y)
       d = vert (0, h) (r.topLeft.x, r.bottomRight.y)
       vert (x, y) (u, v) = colorVertex (vec x y) (vec u v) s.texture (Just s.color)
+
+instance Render Sprite Measure.World where
+  render s = applyVert (pixelToWorld (ppu 100)) <$> render @_ @Pixel s

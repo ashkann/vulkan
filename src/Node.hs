@@ -1,5 +1,7 @@
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StrictData #-}
 
 module Node
@@ -10,29 +12,28 @@ module Node
   )
 where
 
-import Affine (Affine)
-import Measure (PixelVec)
+import Affine (Affine, aff1)
 import Render (Render (..))
 import Vertex (Vertex, applyVert)
 
-data Node c = Node Affine c
+data Node c v = Node (Affine v v) c
 
-data Tree = forall c. (Render c) => Leaf (Node c) | Tree [Node Tree]
+data Tree v = forall c. (Render c v) => Leaf (Node c v) | Tree [Node (Tree v) v]
 
-instance (Render c) => Render (Node c) where
-  render :: Node c -> [Vertex PixelVec]
+instance (Render c v) => Render (Node c v) v where
+  render :: Node c v -> [Vertex v]
   render (Node tr c) = applyVert tr <$> render c
 
-instance Render Tree where
-  render :: Tree -> [Vertex PixelVec]
+instance Render (Tree v) v where
+  render :: Tree v -> [Vertex v]
   render (Leaf n) = render n
   render (Tree ns) = render =<< ns
 
-tree0 :: [Tree] -> Tree
-tree0 = tree mempty
+tree0 :: [Tree v] -> Tree v
+tree0 = tree aff1
 
-node :: (Render c) => Affine -> c -> Tree
+node :: (Render c v) => Affine v v -> c -> Tree v
 node tr c = Leaf (Node tr c)
 
-tree :: Affine -> [Tree] -> Tree
+tree :: Affine v v -> [Tree v] -> Tree v
 tree tr children = Tree (map (Node tr) children)

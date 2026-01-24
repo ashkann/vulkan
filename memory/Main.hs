@@ -18,7 +18,7 @@
 
 module Main (main) where
 
-import Affine (Affine, applyVec, inverse, noRotation, noScale, originXY, rotateDegree, scaleXY, srt, srt3, translate, translateXY, uniformScale)
+import Affine (Affine, applyVec, combine, inverse, noRotation, noScale, rotateDegree, scaleXY, srt, srt3, translate, translateXY, uniformScale)
 import Atlas (Atlas)
 import qualified Atlas
 import qualified Camera as Cam
@@ -38,17 +38,17 @@ import qualified Data.Vector.Storable as SV
 import Foreign (Ptr, Word32)
 import Foreign.Storable (Storable (..), sizeOf)
 import qualified Init
-import Measure (NDC, PixelVec, Vec (Vec), ViewportSize (ViewportSize), WorldVec, mkWindowSize, vec)
+import Measure (NDC, Pixel, PixelVec, Vec (Vec), ViewportSize (ViewportSize), WorldVec, mkWindowSize, vec)
+import qualified Measure (World)
 import Node (Tree, node, tree, tree0)
 import qualified Render
 import qualified SDL
-import Sprite
 import qualified System.Random as Random
 import qualified Texture as Tex
 import Txt (text)
 import Update (TimeSeconds (..), Update (..), timeSecondsFromMillis)
 import Utils
-import Vertex (Vertex)
+import Vertex (Vertex, applyVert)
 import qualified Vertex as Vert
 import qualified Vulkan as Vk
 import qualified Vulkan as VkCommandPoolCreateInfo (CommandPoolCreateInfo (..))
@@ -64,7 +64,7 @@ import qualified Vulkan as VkSubmitInfo (SubmitInfo (..))
 import qualified Vulkan.CStruct.Extends as Vk
 import qualified Vulkan.Zero as Vk
 import qualified VulkanMemoryAllocator as Vma
-import World (PPU, pixelToWorld)
+import World (PPU)
 import qualified World
 import Prelude hiding (init)
 
@@ -137,7 +137,7 @@ main = runManaged $ do
   frames <- withFrames device gfx.index allocator stagingBufferSize vertexBufferSize frameCount windowSize
   w0 <- liftIO $ world0 atlas font
   let shutdown = say "Engine" "Shutting down ..." *> Vk.deviceWaitIdle device
-      game w = Game {windowSize = w.windowSize, font = Font font, camera = w.camera, ppu = w.ppu, atlas = atlas} -- TODO move 'World' into 'Game'
+      game w = Game {windowSize = w.windowSize, font = Font font, camera = w.camera, ppu = World.ppu 100, atlas = atlas} -- TODO move 'World' into 'Game'
    in say "Engine" "Entering the main loop"
         *> mainLoop
           shutdown
@@ -197,17 +197,12 @@ data Card = Card CardName Face
 
 data Grid = Grid {cells :: Map.Map Spot Card, atlas :: Atlas}
 
-toTree :: Grid -> Tree
+toTree :: Grid -> Tree Measure.World
 toTree Grid {cells, atlas} = tree0 (f <$> Map.toList cells)
   where
-    padding = 10
     faceDown = Atlas.sprite atlas "back-side"
-    Vec w h = faceDown.resolution
-    f (Spot (Row r, Column c), crd) = node (base r c <> pivot) (card crd)
-    c = 6
-    r = 6
-    pivot = let f n = n * (h + padding) - padding in originXY (f c / 2) (f r / 2)
-    base r c = translateXY (fromIntegral c * (w + padding)) (fromIntegral r * (h + padding)) -- use world units ?
+    f (Spot (Row r, Column c), crd) = node (base r c) (card crd)
+    base r c = translateXY (fromIntegral c * 1.1) (fromIntegral r * 1.1)
     card (Card (CardName name) FaceUp) = Atlas.sprite atlas name
     card (Card _ FaceDown) = faceDown
 
@@ -219,14 +214,13 @@ data World = World
     cardSize :: WorldVec,
     pressedKeys :: Set.Set SDL.Scancode,
     camera :: Cam.Camera,
-    ppu :: World.PPU,
     windowSize :: ViewportSize
   }
 
 instance Update World where
   event = foldl' f
     where
-      f w@(World {grid, pointer, cardSize, camera, ppu, windowSize}) e = w {pressedKeys = update w.pressedKeys, grid = grid', pointer = pointer'}
+      f w@(World {grid, pointer, cardSize, camera, windowSize}) e = w {pressedKeys = update w.pressedKeys, grid = grid', pointer = pointer'}
         where
           grid' = if mouseClicked then flip else grid
           pointer' = fromMaybe w.pointer mouseMoved
@@ -234,7 +228,7 @@ instance Update World where
             | Just spot <- spot = gridFlip spot grid
             | otherwise = grid
           spot =
-            let Vec x y = applyVec (screenToWorld windowSize ppu camera) pointer -- :: WorldVec
+            let Vec x y = applyVec (screenToWorld windowSize (World.ppu 100) camera) pointer -- :: WorldVec
                 Vec px py = vec @WorldVec 0 0
                 Vec w h = cardSize
                 r = floor $ (y + 1) / (h + px)
@@ -316,7 +310,6 @@ world0 atlas font = do
         cardSize = vec 1.0 1.0,
         camera = Cam.defaultCamera,
         pressedKeys = Set.empty,
-        ppu = World.ppu 100,
         windowSize = ws
       }
   where
@@ -330,9 +323,10 @@ frameData (Game {camera, windowSize, ppu}) w =
     { verts = SV.fromList $ w2 ++ s2
     }
   where
-    w2 = Render.applyObject (World.world windowSize ppu camera) world :: [Vertex NDC]
-    s2 = Render.applyObject (World.screen windowSize) screen :: [Vertex NDC]
+    w2 = apply (World.world windowSize ppu camera) world
+    s2 = World.screen windowSize `apply` screen
     (world, screen) = scene w
+    apply tr obj = Vertex.applyVert tr <$> Render.render obj
 
 frame ::
   (MonadIO io) =>
@@ -518,16 +512,16 @@ cardFlip :: Card -> Card
 cardFlip (Card name FaceUp) = Card name FaceDown
 cardFlip (Card name FaceDown) = Card name FaceUp
 
-screenToWorld :: ViewportSize -> PPU -> Cam.Camera -> Affine
-screenToWorld vps@(ViewportSize w h) ppu cam = ndc2World <> pixels2Ndc
+screenToWorld :: ViewportSize -> PPU -> Cam.Camera -> Affine Pixel Measure.World
+screenToWorld vps@(ViewportSize w h) ppu cam = ndc2World `combine` pixels2Ndc
   where
-    ndc2World = Affine.inverse (World.projection vps ppu <> Cam.view cam)
+    ndc2World = Affine.inverse (World.projection vps ppu `combine` Cam.view cam)
     pixels2Ndc = srt3 (s w, s h) 0 (-1, -1)
     s x = 2 / fromIntegral x
 
-scene :: World -> (Tree, Tree)
-scene World {pointer, atlas, grid, font, windowSize, ppu} =
-  let world = tree (pixelToWorld ppu) $ toTree grid : worldText
+scene :: World -> (Tree Measure.World, Tree Pixel)
+scene World {pointer, atlas, grid, font, windowSize} =
+  let world = tree0 $ toTree grid : worldText
       screen = tree0 [screen2, ptr]
    in (world, screen)
   where
@@ -536,24 +530,24 @@ scene World {pointer, atlas, grid, font, windowSize, ppu} =
     rect = Atlas.spriteIndexed atlas "rectangle"
     r12 =
       tree0
-        [ node (Affine.srt noScale noRotation (vec 1 0 :: PixelVec) (vec 0 0 :: PixelVec)) (rect 0) -- ,
+        [ node @_ @Measure.World (Affine.srt noScale noRotation (vec 1 0 :: PixelVec) (vec 0 0 :: PixelVec)) (rect 0) -- ,
         -- node (rect 1) $ Affine.srt noScale noRotation (vec 100 50 :: PixelVec) (vec 0 0 :: PixelVec)
         ]
     -- \$ Affine.srt noScale noRotation (vec 100 100 :: WorldVec) (vec 0 0 :: PixelVec)
 
     str = "This is a sample text 0123456789!@#$%^&*()_+[]{}\";;?><,.~`"
     worldText =
-      [ node (Affine.srt noScale (rotateDegree 45) (vec 0 0 :: WorldVec) (vec 30 100 :: PixelVec)) (text "Pivoted and then Rotated 45 degrees" (color 0.0 0.0 0.0) font),
-        node (Affine.srt (scaleXY 0.7 1.5) noRotation (vec 0 0 :: WorldVec) (vec 30 100 :: PixelVec)) (text "Scaled diffirently on X and Y" (color 0.0 0.0 0.0) font),
-        node (Affine.srt noScale noRotation (vec 0 0 :: WorldVec) (vec 0 0 :: PixelVec)) (text "Colored" (color 1.0 1.0 0.0) font),
-        node (Affine.srt noScale noRotation (vec 0 0 :: WorldVec) (vec 0 0 :: PixelVec)) (text str (color 0.0 0.0 0.0) font)
+      [ node (Affine.srt noScale (rotateDegree 45) (vec 0 0) (vec 0.3 1)) (text "Pivoted and then Rotated 45 degrees" (color 0.0 0.0 0.0) font),
+        node (Affine.srt (scaleXY 0.7 1.5) noRotation (vec 0 0) (vec 0.3 1)) (text "Scaled diffirently on X and Y" (color 0.0 0.0 0.0) font),
+        node (Affine.srt noScale noRotation (vec 0 0) (vec 0 0)) (text "Colored" (color 1.0 1.0 0.0) font),
+        node (Affine.srt noScale noRotation (vec 0 0) (vec 0 0)) (text str (color 0.0 0.0 0.0) font)
       ]
     screenR =
-      [ node (Affine.srt noScale (rotateDegree 45) (vec 0 0 :: PixelVec) (vec 0 0 :: PixelVec)) r1,
-        node (Affine.srt noScale (rotateDegree (-30)) (vec sw 0 :: PixelVec) (vec 100 0 :: PixelVec)) r2,
-        node (Affine.srt noScale (rotateDegree 30) (vec sw sh :: PixelVec) (vec 100 50 :: PixelVec)) r3,
-        node (Affine.srt (scaleXY 0.5 2) (rotateDegree 20) (vec 0 sh :: PixelVec) (vec 0 50 :: PixelVec)) r4,
-        node (Affine.srt (scaleXY 2 0.5) (rotateDegree 20) (vec (sw / 2) (sh / 2) :: PixelVec) (vec 50 25 :: PixelVec)) r5,
+      [ node (Affine.srt noScale (rotateDegree 45) (vec 0 0) (vec 0 0)) r1,
+        node (Affine.srt noScale (rotateDegree (-30)) (vec sw 0) (vec 100 0)) r2,
+        node (Affine.srt noScale (rotateDegree 30) (vec sw sh) (vec 100 50)) r3,
+        node (Affine.srt (scaleXY 0.5 2) (rotateDegree 20) (vec 0 sh) (vec 0 50)) r4,
+        node (Affine.srt (scaleXY 2 0.5) (rotateDegree 20) (vec (sw / 2) (sh / 2)) (vec 50 25)) r5,
         node (t (y0 0)) (text "Move the camera: Arrow keys" (color 1.0 1.0 1.0) font),
         node (t (y0 1)) (text "Rotate: E and R " (color 1.0 0.0 0.0) font),
         node (t (y0 2)) (text "Zoom in and out: + and -" (color 0.0 1.0 0.0) font),

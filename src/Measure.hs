@@ -4,7 +4,6 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -17,13 +16,15 @@ module Measure
     NDCVec,
     UVVec,
     NDC,
+    World,
+    Pixel,
     UV,
     Vec (..),
     vec,
     ViewportSize (..),
     mkWindowSize,
     Space,
-    Region(..),
+    Region (..),
     region,
   )
 where
@@ -41,10 +42,12 @@ vec :: Float -> Float -> Vec s
 vec = Vec
 
 instance Num (Vec s) where
-  (+) :: Vec s -> Vec s -> Vec s
   (Vec x y) + (Vec a b) = vec (x + y) (a + b)
-  negate :: Vec s -> Vec s
   negate (Vec x y) = vec (-x) (-y)
+  (*) = undefined
+  abs = undefined
+  signum = undefined
+  fromInteger x = let x' = fromIntegral x in vec x' x'
 
 vecStore :: Store.Dictionary (Vec s)
 vecStore = Store.run $ Vec <$> Store.element (.x) <*> Store.element (.y)

@@ -45,7 +45,12 @@ newtype Color = Color G.Vec4 deriving (Show, Storable)
 opaqueColor :: Float -> Float -> Float -> Color
 opaqueColor r g b = Color $ G.vec4 r g b 1.0
 
-data Vertex v = Vertex {xy :: Vec v, uv :: UVVec, color :: Color, texture :: DescriptorIndex}
+data Vertex v = Vertex
+  { xy :: Vec v,
+    uv :: UVVec,
+    color :: Color,
+    texture :: DescriptorIndex
+  }
 
 setColor :: Color -> Vertex v -> Vertex v
 setColor c v = v {color = c}
@@ -53,7 +58,7 @@ setColor c v = v {color = c}
 setXY :: Vec v -> Vertex u -> Vertex v
 setXY xy vert = vert {xy = xy}
 
-applyVert :: Affine -> Vertex u -> Vertex v
+applyVert :: Affine u v -> Vertex u -> Vertex v
 applyVert tr vert = setXY xy' vert
   where
     xy' = applyVec tr vert.xy
